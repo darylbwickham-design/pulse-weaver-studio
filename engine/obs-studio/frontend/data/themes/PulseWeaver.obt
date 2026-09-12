@@ -1,0 +1,162 @@
+@OBSThemeMeta {
+    name: 'Pulse Weaver';
+    id: 'com.pulseweaver.Theme';
+    extends: 'com.obsproject.Yami';
+    author: 'Pulse Weaver';
+    dark: 'true';
+}
+@OBSThemeVars {
+    /* Backstage palette. Each preset supplies its own vector artwork and control treatment. */
+    --grey1: #697080;
+    --grey2: #464B57;
+    --grey3: #363B46;
+    --grey4: #2B303A;
+    --grey5: #232730;
+    --grey6: #1C1F27;
+    --grey7: #14161C;
+    --grey8: #0D0F14;
+    --primary: #7057AE;
+    --primary_light: #8A6ECA;
+    --primary_lighter: #C4ACF0;
+    --primary_dark: #58448B;
+    --primary_darker: #30293F;
+    --pw_accent: #C4ACF0;
+    --pw_secondary: #9DBDC8;
+    --pw_header: #191C23;
+    --pw_selection: #30293F;
+    --pw_rule: #30343E;
+    --text: #F1F0F5;
+    --text_light: #FFFFFF;
+    --text_muted: #A6ABB8;
+    --text_inactive: #F1F0F5;
+    --text_disabled: #89909E;
+    --warning: #DCAE64;
+    --danger: #D45D70;
+    --pw_live: #F18899;
+    --pw_live_bg: #45232D;
+    --pw_record: #E9BE7C;
+    --pw_record_bg: #3F3221;
+    --pw_success: #88D9B0;
+    --bg_window: var(--grey7);
+    --bg_base: var(--grey6);
+    --bg_preview: var(--grey8);
+    --input_bg: var(--grey8);
+    --input_bg_hover: var(--grey6);
+    --input_bg_focus: var(--grey8);
+    --border_color: var(--pw_rule);
+    --input_border: var(--grey2);
+    --input_border_hover: var(--text_muted);
+    --input_border_focus: var(--pw_accent);
+    --button_bg: var(--grey5);
+    --button_bg_hover: var(--grey3);
+    --button_bg_down: var(--pw_selection);
+    --button_border: var(--grey2);
+    --button_border_hover: var(--text_muted);
+    --button_border_focus: var(--pw_accent);
+    --list_item_bg_selected: var(--pw_selection);
+    --list_item_bg_hover: var(--grey5);
+    --tab_bg: var(--bg_window);
+    --tab_bg_down: var(--pw_selection);
+    --tab_border_selected: var(--pw_accent);
+    --scrollbar_handle: var(--grey2);
+    --scrollbar_hover: var(--grey1);
+    --scrollbar_bg: var(--bg_window);
+    --scrollbar_size: 10px;
+    --border_radius: 5px;
+    --border_radius_large: 6px;
+    --palette_alternateBase: var(--grey5);
+    --palette_placeholderText: var(--text_muted);
+    --palette_link: var(--pw_accent);
+    --palette_linkVisited: var(--pw_accent);
+    --palette_windowText_disabled: var(--text_disabled);
+    --palette_buttonText_disabled: var(--text_disabled);
+}
+
+/* Common native controls retain their input, focus and accessibility behaviour. */
+QWidget { font-family: "Segoe UI"; }
+QMainWindow, QDialog, #centralwidget, #PulseWeaverPage, #PulseWeaverLightsHost, #PulseWeaverActionHost { background: var(--bg_window); color: var(--text); }
+QLabel { background: transparent; }
+QGroupBox { background: var(--bg_base); border: 1px solid var(--pw_rule); border-radius: 6px; margin-top: 14px; padding: 10px; }
+QGroupBox::title { color: var(--text_muted); subcontrol-origin: margin; left: 10px; padding: 0 5px; font-weight: 600; }
+QGroupBox#ConnectionCard { padding: 14px; }
+QGroupBox#ConnectionCard::title { color: var(--pw_accent); }
+QHeaderView::section { background: var(--bg_window); color: var(--text_muted); border: none; border-bottom: 1px solid var(--pw_rule); padding: 7px; font-weight: 600; }
+QTableView, QTreeView, QListView, QTextEdit, QPlainTextEdit { border: 1px solid var(--pw_rule); border-radius: 4px; }
+QTreeView::item, QListView::item { padding: 3px; }
+QTreeView::item:selected, QListView::item:selected { background: var(--pw_selection); color: var(--text); }
+QPushButton, QToolButton { font-weight: 500; }
+QPushButton:disabled, QToolButton:disabled { color: var(--text_disabled); background: var(--bg_base); border-color: var(--pw_rule); }
+QPushButton:focus, QToolButton:focus { border-color: var(--pw_accent); }
+QPushButton#Primary { background: var(--primary_dark); border-color: var(--primary_light); color: var(--text_light); font-weight: 600; }
+QPushButton#Primary:hover { background: var(--primary); }
+QMenu { background: var(--bg_base); color: var(--text); border: 1px solid var(--grey2); padding: 5px; }
+QMenu::item { padding-top: 6px; padding-bottom: 6px; border-radius: 3px; }
+QMenu::item:selected { background: var(--pw_selection); }
+QMenu::separator { height: 1px; background: var(--pw_rule); margin: 5px 8px; }
+QToolTip { background: var(--grey5); color: var(--text); border: 1px solid var(--grey2); padding: 7px; }
+QTabWidget::pane { border: 1px solid var(--pw_rule); background: var(--bg_base); }
+QTabBar::tab { border: none; border-bottom: 2px solid transparent; background: var(--bg_window); color: var(--text_muted); padding: 8px 13px; }
+QTabBar::tab:selected { background: var(--pw_selection); color: var(--text); border-bottom-color: var(--pw_accent); }
+QTabBar::tab:hover { color: var(--text); background: var(--grey5); }
+QTabBar::tab:disabled { color: var(--text_disabled); }
+QDockWidget::title { background: var(--bg_base); color: var(--text_muted); border: none; border-bottom: 1px solid var(--pw_rule); padding: 8px 10px; font-weight: 600; }
+QSplitter::handle { background: var(--bg_window); }
+QSplitter::handle:hover { background: var(--primary_dark); }
+QStatusBar { background: var(--bg_window); color: var(--text_muted); }
+
+/* One navigation rail, with a cue light for the active workspace. */
+#PulseWeaverHeader { background: var(--pw_header); border: none; border-bottom: 1px solid var(--pw_rule); border-radius: 0; }
+#PulseWeaverBrand { color: var(--text); font-size: var(--font_large); font-weight: 700; padding: 0 8px; }
+QPushButton#PulseWeaverHome, QPushButton#PulseWeaverNav { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--text_muted); padding: 9px 10px; font-size: var(--font_base); font-weight: 600; min-height: 24px; }
+QPushButton#PulseWeaverHome:hover, QPushButton#PulseWeaverNav:hover { background: var(--grey5); color: var(--text); }
+QPushButton#PulseWeaverHome[pulseWorkspaceActive="true"], QPushButton#PulseWeaverNav[pulseWorkspaceActive="true"] { background: var(--pw_selection); color: var(--pw_accent); border-bottom-color: var(--pw_accent); }
+QPushButton#PulseWeaverHome:focus, QPushButton#PulseWeaverNav:focus { border-bottom-color: var(--pw_secondary); }
+QPushButton#PulseWeaverUtility { background: transparent; border: 1px solid transparent; color: var(--text_muted); padding: 7px 8px; font-size: var(--font_small); }
+QPushButton#PulseWeaverUtility:hover { background: var(--grey5); color: var(--text); }
+QPushButton#PulseWeaverUtility:focus { border-color: var(--pw_accent); }
+
+/* Continuous programme, audience and mixer surfaces, rather than nested boxes. */
+QFrame#PulseWeaverCard { background: var(--bg_base); border: none; border-radius: 5px; }
+QFrame#PulseWeaverStage { background: var(--bg_preview); border: none; border-top: 2px solid var(--pw_secondary); border-radius: 4px; }
+QFrame#PulseWeaverStage[pulseWeaverPreviewProvider="twitch"] { border-top-color: #B99AE9; }
+QFrame#PulseWeaverStage[pulseWeaverPreviewProvider="youtube"] { border-top-color: #EF8791; }
+QFrame#PulseWeaverStage[pulseWeaverPreviewProvider="kick"] { border-top-color: #88D9B0; }
+QFrame#PulseWeaverStage[pulseWeaverPreviewProvider="recording"] { border-top-color: var(--pw_record); }
+#PulseWeaverHeading { font-size: var(--font_xlarge); font-weight: 600; color: var(--text); }
+#PulseWeaverCardTitle { font-size: var(--font_large); font-weight: 600; color: var(--text); }
+#PulseWeaverKicker, #Kicker { font-size: var(--font_small); font-weight: 600; color: var(--pw_accent); }
+#PulseWeaverMuted, #Muted, #PulseWeaverChatStatus, #PulseWeaverDestinationStatus { color: var(--text_muted); font-size: var(--font_base); }
+#PulseWeaverBadge { background: var(--grey5); color: var(--text_muted); border: none; border-radius: 3px; padding: 3px 6px; font-size: var(--font_xsmall); font-weight: 600; }
+#PulseWeaverStatus { background: transparent; border: none; border-left: 2px solid var(--pw_success); border-radius: 0; color: var(--pw_success); padding: 6px 12px; font-size: var(--font_small); }
+#PulseWeaverWarning { color: var(--pw_record); background: var(--pw_record_bg); border: 1px solid var(--warning); border-radius: 4px; padding: 8px; }
+QPushButton#PulseWeaverControl { background: var(--grey5); border: 1px solid var(--grey2); border-radius: 4px; color: var(--text); padding: 6px 10px; font-weight: 500; }
+QPushButton#PulseWeaverControl:hover { background: var(--grey3); border-color: var(--text_muted); }
+QPushButton#PulseWeaverControl:pressed { background: var(--pw_selection); border-color: var(--pw_accent); }
+QPushButton#PulseWeaverControl:focus { border-color: var(--pw_accent); }
+QPushButton#PulseWeaverLive, QPushButton#Live, #streamButton { background: var(--primary_dark); border: 1px solid var(--primary_light); color: var(--text_light); border-radius: 5px; padding: 9px 16px; font-weight: 600; }
+QPushButton#PulseWeaverLive:hover, QPushButton#Live:hover, #streamButton:hover { background: var(--primary); }
+QPushButton#PulseWeaverRecord, #recordButton { background: var(--pw_record_bg); border: 1px solid var(--warning); color: var(--pw_record); border-radius: 5px; padding: 9px 14px; font-weight: 600; }
+QPushButton#PulseWeaverRecord:hover, #recordButton:hover { background: #54412A; }
+QPushButton#PulseWeaverLive[pulseActive="true"], QPushButton#PulseWeaverRecord[pulseActive="true"] { background: var(--pw_live_bg); border-color: var(--pw_live); color: var(--pw_live); }
+QPushButton#PulseWeaverLive:disabled, QPushButton#PulseWeaverRecord:disabled, QPushButton#PulseWeaverControl:disabled { background: var(--bg_base); border-color: var(--pw_rule); color: var(--text_disabled); }
+QPushButton#PulseWeaverLive:focus, QPushButton#PulseWeaverRecord:focus { border-color: var(--text_light); }
+QListWidget#PulseWeaverActivity, QListWidget#PulseWeaverChatFeed { background: var(--bg_base); color: var(--text); border: none; padding: 2px; }
+QToolButton#PulseWeaverChatFilter { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 5px 6px; color: var(--text_muted); font-size: var(--font_small); }
+QToolButton#PulseWeaverChatFilter:checked { background: var(--pw_selection); border-bottom-color: var(--pw_accent); color: var(--text); }
+QToolButton#PulseWeaverChatFilter:hover { background: var(--grey5); }
+QToolButton#PulseWeaverChatFilter:focus { border-bottom-color: var(--pw_secondary); }
+QPushButton#PulseWeaverChatNewMessages { background: var(--pw_selection); border: 1px solid var(--primary_light); color: var(--text); padding: 5px 8px; }
+#PulseWeaverCompactMixer, #PulseWeaverNativeMixerStrip { background: var(--bg_base); border: none; }
+#PulseWeaverMixerStrip { background: var(--bg_base); border: none; border-right: 1px solid var(--pw_rule); }
+QFrame#PulseWeaverStreamStats { background: var(--bg_base); border: none; border-left: 2px solid var(--pw_secondary); border-radius: 3px; }
+QFrame#PulseWeaverStreamStats[pulseWeaverStatsAccent="#9146FF"] { border-left-color: #B99AE9; }
+QFrame#PulseWeaverStreamStats[pulseWeaverStatsAccent="#FF3B30"] { border-left-color: #EF8791; }
+QFrame#PulseWeaverStreamStats[pulseWeaverStatsAccent="#53FC18"] { border-left-color: #88D9B0; }
+#PulseWeaverStatsTitle { color: var(--text); font-size: var(--font_small); font-weight: 600; }
+#PulseWeaverStatsLabel { color: var(--text_muted); font-size: var(--font_xsmall); font-weight: 500; }
+#PulseWeaverStatsValue { color: var(--text); font-family: "Consolas"; font-size: var(--font_large); font-weight: 600; }
+#previewContainer { background: var(--bg_preview); border: none; }
+OBSQTDisplay { qproperty-displayBackgroundColor: #0A0B0F; }
+
+#PulseWeaverWorkSurface, #PulseWeaverWorkSurface > QWidget { background: var(--bg_window); border: none; }
+#PulseWeaverTransport { background: var(--bg_window); border: none; border-top: 1px solid var(--pw_rule); }

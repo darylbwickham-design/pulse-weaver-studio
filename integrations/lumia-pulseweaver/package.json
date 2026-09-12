@@ -1,0 +1,12 @@
+{
+  "name": "pulseweaver-control-lumia-plugin",
+  "version": "1.1.1",
+  "private": true,
+  "main": "main.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@lumiastream/plugin": "^0.9.7"
+  }
+}

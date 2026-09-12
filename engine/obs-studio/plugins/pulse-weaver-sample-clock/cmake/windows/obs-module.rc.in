@@ -1,0 +1,23 @@
+#include <windows.h>
+
+1 VERSIONINFO
+FILEVERSION ${OBS_VERSION_MAJOR},${OBS_VERSION_MINOR},${OBS_VERSION_PATCH},0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Pulse Weaver"
+      VALUE "FileDescription", "Pulse Weaver Sample Clock Module"
+      VALUE "FileVersion", "${OBS_VERSION_CANONICAL}"
+      VALUE "InternalName", "pulse-weaver-sample-clock"
+      VALUE "OriginalFilename", "pulse-weaver-sample-clock.dll"
+      VALUE "ProductName", "Pulse Weaver Streaming Studio"
+      VALUE "ProductVersion", "${OBS_VERSION_CANONICAL}"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 0x04B0
+  END
+END

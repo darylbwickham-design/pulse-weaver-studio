@@ -1,0 +1,1104 @@
+{
+  "id": "pulseweavercontrol",
+  "name": "Pulse Weaver",
+  "version": "1.1.1",
+  "author": "Pulse Weaver",
+  "description": "Operate your existing Pulse Weaver show, individual platforms, sources, audio and media. Receive live operator alerts. Requires Pulse Weaver 1.11.42+.",
+  "lumiaVersion": "^9.0.0",
+  "category": "apps",
+  "license": "MIT",
+  "keywords": "Pulse Weaver,streaming,stages,OBS,multistream",
+  "config": {
+    "settings": [
+      {
+        "key": "port",
+        "label": "Pulse Weaver port",
+        "type": "number",
+        "defaultValue": 18755,
+        "validation": {
+          "min": 1024,
+          "max": 65535
+        },
+        "helperText": "Leave this at 18755 unless Pulse Weaver reports a different local port."
+      },
+      {
+        "key": "apiToken",
+        "label": "Connection token",
+        "type": "password",
+        "required": false,
+        "helperText": "Normally detected automatically. Only enter this for a custom or portable Pulse Weaver installation."
+      },
+      {
+        "key": "configPath",
+        "label": "Custom Pulse Weaver configuration path",
+        "type": "text",
+        "required": false,
+        "helperText": "Optional full path to pulse-weaver.ini when automatic detection cannot find it."
+      }
+    ],
+    "actions": [
+      {
+        "type": "go_live",
+        "label": "Start Show",
+        "description": "Start the saved Twitch, Kick and YouTube destinations. Actual live state is confirmed.",
+        "fields": []
+      },
+      {
+        "type": "end_stream",
+        "label": "End Show",
+        "description": "Stop all streaming destinations; recording remains independent.",
+        "fields": []
+      },
+      {
+        "type": "start_platform",
+        "label": "Start Platform",
+        "description": "Start only this platform using its saved output mode. Configure it inside Pulse Weaver first.",
+        "fields": [
+          {
+            "key": "platform",
+            "label": "Platform",
+            "type": "select",
+            "required": true,
+            "options": [
+              {
+                "label": "Twitch",
+                "value": "twitch"
+              },
+              {
+                "label": "Kick",
+                "value": "kick"
+              },
+              {
+                "label": "YouTube",
+                "value": "youtube"
+              }
+            ],
+            "defaultValue": "twitch"
+          }
+        ]
+      },
+      {
+        "type": "stop_platform",
+        "label": "Stop Platform",
+        "description": "Stop only this platform; other destinations continue.",
+        "fields": [
+          {
+            "key": "platform",
+            "label": "Platform",
+            "type": "select",
+            "required": true,
+            "options": [
+              {
+                "label": "Twitch",
+                "value": "twitch"
+              },
+              {
+                "label": "Kick",
+                "value": "kick"
+              },
+              {
+                "label": "YouTube",
+                "value": "youtube"
+              }
+            ],
+            "defaultValue": "twitch"
+          }
+        ]
+      },
+      {
+        "type": "select_stage",
+        "label": "Activate Stage",
+        "description": "Run an existing Stage with its saved transition and routing.",
+        "fields": [
+          {
+            "key": "stage",
+            "label": "Stage",
+            "type": "select",
+            "required": true,
+            "dynamicOptions": true,
+            "options": []
+          }
+        ]
+      },
+      {
+        "type": "next_stage",
+        "label": "Next Stage",
+        "description": "Activate the next existing Stage.",
+        "fields": []
+      },
+      {
+        "type": "previous_stage",
+        "label": "Previous Stage",
+        "description": "Activate the previous existing Stage.",
+        "fields": []
+      },
+      {
+        "type": "source_visibility",
+        "label": "Source Visibility",
+        "description": "Show or hide an existing scene item. Does not modify its layout or Stage definition.",
+        "fields": [
+          {
+            "key": "target",
+            "label": "Scene / Source",
+            "type": "select",
+            "required": true,
+            "dynamicOptions": true,
+            "options": []
+          },
+          {
+            "key": "operation",
+            "label": "Operation",
+            "type": "select",
+            "required": true,
+            "options": [
+              {
+                "label": "Show",
+                "value": "show"
+              },
+              {
+                "label": "Hide",
+                "value": "hide"
+              },
+              {
+                "label": "Toggle visibility",
+                "value": "toggle_visibility"
+              }
+            ],
+            "defaultValue": "show"
+          }
+        ]
+      },
+      {
+        "type": "source_mute",
+        "label": "Source Mute",
+        "description": "Control the existing source globally wherever its audio is used. Does not change platform audio routing.",
+        "fields": [
+          {
+            "key": "source",
+            "label": "Audio source",
+            "type": "select",
+            "required": true,
+            "dynamicOptions": true,
+            "options": []
+          },
+          {
+            "key": "operation",
+            "label": "Operation",
+            "type": "select",
+            "required": true,
+            "options": [
+              {
+                "label": "Mute",
+                "value": "mute"
+              },
+              {
+                "label": "Unmute",
+                "value": "unmute"
+              },
+              {
+                "label": "Toggle mute",
+                "value": "toggle_mute"
+              }
+            ],
+            "defaultValue": "mute"
+          }
+        ]
+      },
+      {
+        "type": "source_volume",
+        "label": "Source Volume",
+        "description": "Set the existing source volume globally, from 0 to 100 percent.",
+        "fields": [
+          {
+            "key": "source",
+            "label": "Audio source",
+            "type": "select",
+            "required": true,
+            "dynamicOptions": true,
+            "options": []
+          },
+          {
+            "key": "volume",
+            "label": "Volume (%)",
+            "type": "number",
+            "required": true,
+            "defaultValue": 100,
+            "validation": {
+              "min": 0,
+              "max": 100
+            }
+          }
+        ]
+      },
+      {
+        "type": "media_control",
+        "label": "Media Playback",
+        "description": "Operate an existing media source without replacing its file or URL.",
+        "fields": [
+          {
+            "key": "source",
+            "label": "Media source",
+            "type": "select",
+            "required": true,
+            "dynamicOptions": true,
+            "options": []
+          },
+          {
+            "key": "operation",
+            "label": "Operation",
+            "type": "select",
+            "required": true,
+            "options": [
+              {
+                "label": "Play / Resume",
+                "value": "play"
+              },
+              {
+                "label": "Pause",
+                "value": "pause"
+              },
+              {
+                "label": "Restart",
+                "value": "restart"
+              },
+              {
+                "label": "Stop",
+                "value": "stop_media"
+              },
+              {
+                "label": "Next",
+                "value": "next_media"
+              },
+              {
+                "label": "Previous",
+                "value": "previous_media"
+              }
+            ],
+            "defaultValue": "play"
+          }
+        ]
+      },
+      {
+        "type": "start_recording",
+        "label": "Start Recording",
+        "description": "Start the recording route already selected in Pulse Weaver.",
+        "fields": []
+      },
+      {
+        "type": "stop_recording",
+        "label": "Stop Recording",
+        "description": "Stop recording without ending the show.",
+        "fields": []
+      },
+      {
+        "type": "reconnect",
+        "label": "Reconnect",
+        "description": "Reconnect after opening Pulse Weaver or fixing connection settings.",
+        "fields": []
+      }
+    ],
+    "variables": [
+      {
+        "name": "stream_status",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": "OFF"
+      },
+      {
+        "name": "recording_status",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": "OFF"
+      },
+      {
+        "name": "active_stage",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": ""
+      },
+      {
+        "name": "last_result",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": ""
+      },
+      {
+        "name": "twitch_status",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": "STOPPED"
+      },
+      {
+        "name": "kick_status",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": "STOPPED"
+      },
+      {
+        "name": "youtube_status",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": "STOPPED"
+      }
+    ],
+    "alerts": [
+      {
+        "key": "stage_changed",
+        "title": "Stage Changed",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Stage Changed",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "source_shown",
+        "title": "Source Shown",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Source Shown",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "source_hidden",
+        "title": "Source Hidden",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Source Hidden",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "source_muted",
+        "title": "Source Muted",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Source Muted",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "source_unmuted",
+        "title": "Source Unmuted",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Source Unmuted",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "source_volume",
+        "title": "Source Volume Changed",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Source Volume Changed",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "media_started",
+        "title": "Media Started",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Media Started",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "media_ended",
+        "title": "Media Ended",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Media Ended",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "media_pause",
+        "title": "Media Paused",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Media Paused",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "media_play",
+        "title": "Media Playing",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Media Playing",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "media_stopped",
+        "title": "Media Stopped",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Media Stopped",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "transition_begin",
+        "title": "Transition Begin",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Transition Begin",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "transition_end",
+        "title": "Transition End",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Transition End",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "twitch_starting",
+        "title": "Twitch Starting",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Twitch Starting",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "twitch_live",
+        "title": "Twitch Live",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Twitch Live",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "twitch_stopping",
+        "title": "Twitch Stopping",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Twitch Stopping",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "twitch_stopped",
+        "title": "Twitch Stopped",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Twitch Stopped",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "twitch_failed",
+        "title": "Twitch Failed",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Twitch Failed",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "twitch_reconnecting",
+        "title": "Twitch Reconnecting",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Twitch Reconnecting",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "kick_starting",
+        "title": "Kick Starting",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Kick Starting",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "kick_live",
+        "title": "Kick Live",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Kick Live",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "kick_stopping",
+        "title": "Kick Stopping",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Kick Stopping",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "kick_stopped",
+        "title": "Kick Stopped",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Kick Stopped",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "kick_failed",
+        "title": "Kick Failed",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Kick Failed",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "kick_reconnecting",
+        "title": "Kick Reconnecting",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Kick Reconnecting",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "youtube_starting",
+        "title": "YouTube Starting",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "YouTube Starting",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "youtube_live",
+        "title": "YouTube Live",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "YouTube Live",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "youtube_stopping",
+        "title": "YouTube Stopping",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "YouTube Stopping",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "youtube_stopped",
+        "title": "YouTube Stopped",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "YouTube Stopped",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "youtube_failed",
+        "title": "YouTube Failed",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "YouTube Failed",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "youtube_reconnecting",
+        "title": "YouTube Reconnecting",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "YouTube Reconnecting",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "recording_starting",
+        "title": "Recording Starting",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Recording Starting",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "recording_live",
+        "title": "Recording Started",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Recording Started",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "recording_stopping",
+        "title": "Recording Stopping",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Recording Stopping",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "recording_stopped",
+        "title": "Recording Stopped",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Recording Stopped",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      },
+      {
+        "key": "recording_failed",
+        "title": "Recording Failed",
+        "acceptedVariables": [
+          "platform",
+          "output",
+          "state",
+          "stage",
+          "source",
+          "sourceId",
+          "scene",
+          "itemId",
+          "volume",
+          "message"
+        ],
+        "defaultMessage": "Recording Failed",
+        "variationConditions": [],
+        "defaults": {
+          "on": false
+        }
+      }
+    ]
+  },
+  "icon": "./assets/icon.png"
+}

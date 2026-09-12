@@ -1,0 +1,66 @@
+@OBSThemeMeta {
+    name: 'Electric';
+    id: 'com.pulseweaver.Electric';
+    extends: 'com.pulseweaver.Theme';
+    author: 'Pulse Weaver';
+    dark: 'true';
+}
+@OBSThemeVars {
+    --grey1: #667B96;
+    --grey2: #3B4C65;
+    --grey3: #263B53;
+    --grey4: #203149;
+    --grey5: #18283C;
+    --grey6: #111F30;
+    --grey7: #0A1220;
+    --grey8: #060D17;
+    --primary: #6740B0;
+    --primary_light: #9D72E5;
+    --primary_lighter: #D1AFFB;
+    --primary_dark: #4D2E85;
+    --primary_darker: #282140;
+    --pw_accent: #70DEED;
+    --pw_secondary: #C098F2;
+    --pw_header: #101B2D;
+    --pw_selection: #262443;
+    --pw_rule: #24354C;
+    --text: #EEF4FF;
+    --text_muted: #A2B7D0;
+    --text_inactive: #EEF4FF;
+    --text_disabled: #879BB6;
+}
+
+/* Original electric vector control surrounds and stage artwork. */
+QPushButton#PulseWeaverControl, QPushButton#PulseWeaverUtility, QPushButton#PulseWeaverOverlayButton, QPushButton#PulseWeaverDockLockToggle { padding: 1px 6px; }
+QPushButton#PulseWeaverControl, QPushButton#PulseWeaverUtility, QPushButton#PulseWeaverOverlayButton, QPushButton#PulseWeaverDockLockToggle { border-image: url(theme:PulseWeaver/electric/button.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverControl:hover, QPushButton#PulseWeaverUtility:hover, QPushButton#PulseWeaverOverlayButton:hover, QPushButton#PulseWeaverDockLockToggle:hover { border-image: url(theme:PulseWeaver/electric/hover.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverControl:pressed, QPushButton#PulseWeaverUtility:pressed, QPushButton#PulseWeaverOverlayButton:pressed, QPushButton#PulseWeaverDockLockToggle:pressed { border-image: url(theme:PulseWeaver/electric/pressed.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverControl:checked, QPushButton#PulseWeaverUtility:checked, QPushButton#PulseWeaverOverlayButton:checked, QPushButton#PulseWeaverDockLockToggle:checked { border-image: url(theme:PulseWeaver/electric/pressed.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverHome, QPushButton#PulseWeaverNav { padding: 6px 10px; border-radius: 0px; font-family: "Segoe UI"; font-size: 13px; font-weight: 600; color: var(--text); }
+QPushButton#PulseWeaverHome, QPushButton#PulseWeaverNav { border-image: url(theme:PulseWeaver/electric/button.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverHome[pulseWorkspaceActive="true"], QPushButton#PulseWeaverNav[pulseWorkspaceActive="true"] { border-image: url(theme:PulseWeaver/electric/hover.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverNav[workspace="camera"] { border-image: url(theme:PulseWeaver/electric/camera.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverNav[workspace="lights"] { border-image: url(theme:PulseWeaver/electric/lights.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverNav[workspace="action"] { border-image: url(theme:PulseWeaver/electric/action.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverHome[pulseWorkspaceActive="true"], QPushButton#PulseWeaverNav[pulseWorkspaceActive="true"] { color: var(--text_light); font-weight: 600; }
+QPushButton#PulseWeaverHome:focus, QPushButton#PulseWeaverNav:focus { text-decoration: underline; }
+QFrame#PulseWeaverBanner { background: var(--pw_header); background-image: url(theme:PulseWeaver/electric/banner.svg); background-repeat: no-repeat; background-position: center center; border: none; border-radius: 0px; }
+QFrame#PulseWeaverStage, QFrame#PulseWeaverStreamStats, QFrame#PulseWeaverCard { border-image: url(theme:PulseWeaver/electric/panel.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QFrame#PulseWeaverStage[pulseWeaverPreviewProvider="twitch"] { border-image: url(theme:PulseWeaver/electric/panel-twitch.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QFrame#PulseWeaverStreamStats[pulseWeaverStatsAccent="#9146FF"] { border-image: url(theme:PulseWeaver/electric/panel-twitch.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QFrame#PulseWeaverStage[pulseWeaverPreviewProvider="youtube"] { border-image: url(theme:PulseWeaver/electric/panel-youtube.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QFrame#PulseWeaverStreamStats[pulseWeaverStatsAccent="#FF3B30"] { border-image: url(theme:PulseWeaver/electric/panel-youtube.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QFrame#PulseWeaverStage[pulseWeaverPreviewProvider="kick"] { border-image: url(theme:PulseWeaver/electric/panel-kick.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QFrame#PulseWeaverStreamStats[pulseWeaverStatsAccent="#53FC18"] { border-image: url(theme:PulseWeaver/electric/panel-kick.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QFrame#PulseWeaverStage[pulseWeaverPreviewProvider="recording"] { border-image: url(theme:PulseWeaver/electric/panel-recording.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QFrame#PulseWeaverStreamStats[pulseWeaverStatsAccent="#FFAD38"] { border-image: url(theme:PulseWeaver/electric/panel-recording.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverLive { border-image: url(theme:PulseWeaver/electric/live.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverRecord { border-image: url(theme:PulseWeaver/electric/record.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverLive[pulseActive="true"], QPushButton#PulseWeaverRecord[pulseActive="true"] { border-image: url(theme:PulseWeaver/electric/active.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverControl:disabled, QPushButton#PulseWeaverUtility:disabled, QPushButton#PulseWeaverOverlayButton:disabled, QPushButton#PulseWeaverDockLockToggle:disabled, QPushButton#PulseWeaverLive:disabled, QPushButton#PulseWeaverRecord:disabled { border-image: none; border: 1px solid var(--pw_rule); background: var(--bg_base); color: var(--text_disabled); }
+QPushButton#PulseWeaverControl:focus, QPushButton#PulseWeaverUtility:focus, QPushButton#PulseWeaverOverlayButton:focus, QPushButton#PulseWeaverDockLockToggle:focus, QPushButton#PulseWeaverLive:focus, QPushButton#PulseWeaverRecord:focus { border-image: url(theme:PulseWeaver/electric/focus.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QPushButton#PulseWeaverLive[pulseActive="true"]:focus, QPushButton#PulseWeaverRecord[pulseActive="true"]:focus { border-image: url(theme:PulseWeaver/electric/focus-active.svg) 14 14 14 14 stretch stretch; border-width: 7px; border-style: solid; border-color: transparent; border-radius: 0; background-color: transparent; }
+QLabel#PulseWeaverHeading { font-family: "Bahnschrift"; font-size: 22px; }
+QComboBox, QLineEdit, QSpinBox { border-radius: 0; border-bottom: 2px solid var(--pw_rule); }
+QTabBar::tab:selected { border-top: 2px solid var(--pw_accent); border-bottom: none; }
+QDockWidget::title { border-bottom: 2px solid var(--pw_secondary); }

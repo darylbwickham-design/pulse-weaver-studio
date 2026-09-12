@@ -1,0 +1,15 @@
+build*/
+.deps/
+artifacts/
+dist/
+node_modules/
+bin/
+obj/
+config/
+logs/
+.env
+.env.*
+!.env.example
+*.pdb
+*.user
+app-credentials.ini

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>PulseWeaver-Public-Dist-0.01-Setup</AssemblyName>
+    <Product>Pulse Weaver Streaming Studio Setup</Product>
+    <Version>0.0.1</Version>
+    <ApplicationIcon>..\..\engine\obs-studio\frontend\cmake\windows\pulseweaver.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\dist\PulseWeaverStudio-v0.01-public.zip" LogicalName="PulseWeaver.Payload.zip" />
+  </ItemGroup>
+</Project>
+
