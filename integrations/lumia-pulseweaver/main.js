@@ -185,8 +185,8 @@ class PulseWeaverPlugin extends Plugin {
       scene: payload.scene || '', itemId: payload.itemId ?? '', volume: payload.volume ?? '', message: payload.message || ''
     }});
   }
-  async ensureState() {
-    if (!this.state) {
+  async ensureState(fresh = false) {
+    if (!this.state || fresh) {
       const state = await this.request('/state');
       if (!(state.operatorApi >= 2)) throw new Error('Install Pulse Weaver 1.11.42 or newer first.');
       this.state = state;
@@ -229,7 +229,9 @@ class PulseWeaverPlugin extends Plugin {
   async runAction(action) {
     const params = action.value || {};
     if (action.type === 'reconnect') { this.retry = 0; this.connect(); return { message: 'Connection requested.' }; }
-    await this.ensureState();
+    // Destination selectors can change while the event stream remains connected.
+    // Start commands must use the plan shown in Pulse Weaver at action time.
+    await this.ensureState(action.type === 'go_live' || action.type === 'start_platform');
     switch (action.type) {
       case 'start_platform': ++this.showAttempt; return this.destination(String(params.platform), true);
       case 'stop_platform': return this.destination(String(params.platform), false);

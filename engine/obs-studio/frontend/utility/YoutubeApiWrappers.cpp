@@ -475,6 +475,8 @@ bool YoutubeApiWrappers::StopLatestBroadcast()
 
 bool YoutubeApiWrappers::GetLiveChatId(const QString &broadcast_id, QString &chat_id)
 {
+	lastErrorMessage.clear();
+	lastErrorReason.clear();
 	Json json;
 	if (!FindBroadcast(broadcast_id, json))
 		return false;

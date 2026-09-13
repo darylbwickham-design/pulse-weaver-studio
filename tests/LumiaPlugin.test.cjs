@@ -73,6 +73,18 @@ test('Platform start waits for real live state; stopping one leaves the others a
  assert.ok(!f.requests.some(route=>route.includes('platform=twitch')));
  }finally{await f.close();}
 });
+test('Start Show refreshes a stale destination plan before choosing platforms',async()=>{
+ const f=await fixture();try{
+  f.plugin.state.destinations={twitch:'off',kick:'off',youtube:'off'};
+  f.state.destinations={twitch:'off',kick:'horizontal',youtube:'off'};
+  f.requests.length=0;
+  const result=await f.plugin.actions({actions:[{type:'go_live'}]});
+  assert.equal(result.shouldStop,false);
+  assert.deepEqual(f.requests.filter(route=>route.includes('/destination/start')),['/api/v1/lumia/destination/start?platform=kick']);
+  assert.equal(f.plugin.outputStatus('kick'),'live');
+  assert.ok(f.requests[0].endsWith('/state'),'Start Show must refresh Pulse Weaver before filtering destinations');
+ }finally{await f.close();}
+});
 test('Source controls preserve stable IDs and reject raw/editing and unsupported operations',async()=>{
  const f=await fixture();try{
  const ok=await f.plugin.actions({actions:[{type:'source_visibility',value:{target:JSON.stringify({source:'scene',item:'22'}),operation:'hide'}}]});assert.equal(ok.shouldStop,false);

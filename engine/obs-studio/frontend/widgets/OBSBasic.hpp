@@ -17,6 +17,7 @@
 
 #pragma once
 #include <QJsonObject>
+#include "../../shared/qt/PulseYouTubeChatSessions.hpp"
 
 #include "ui_OBSBasic.h"
 #include "OBSMainWindow.hpp"
@@ -44,9 +45,41 @@
 #include <QSet>
 #include <QSystemTrayIcon>
 
+#include <atomic>
+#include <condition_variable>
 #include <deque>
+#include <memory>
+#include <mutex>
 
 extern volatile bool recording_paused;
+
+struct PulseYouTubeChatWorkerBarrier {
+	void begin()
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		++inFlight;
+	}
+
+	void finish()
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		if (inFlight > 0)
+			--inFlight;
+		if (inFlight == 0)
+			idle.notify_all();
+	}
+
+	void waitUntilIdle()
+	{
+		std::unique_lock<std::mutex> lock(mutex);
+		idle.wait(lock, [this] { return inFlight == 0; });
+	}
+
+private:
+	std::mutex mutex;
+	std::condition_variable idle;
+	quint64 inFlight = 0;
+};
 
 class ColorSelect;
 class OBSAbout;
@@ -330,9 +363,24 @@ private:
 	QPointer<QPushButton> pulseChatSend;
 	QPointer<QListWidget> pulseChatFeed;
 	QPointer<QTimer> pulseYouTubeChatTimer;
-	QString pulseYouTubeLiveChatId;
-	QString pulseYouTubeChatPageToken;
-	bool pulseYouTubeChatPolling = false;
+	PulseYouTubeChat::Sessions pulseYouTubeChatSessions;
+	struct PulseYouTubePendingChatMessage {
+		quint64 id = 0;
+		QString message;
+		bool all = false;
+		QSet<QString> deliveredRoutes;
+		qint64 queuedMs = 0;
+		qint64 nextAttemptMs = 0;
+	};
+	QList<PulseYouTubePendingChatMessage> pulseYouTubeChatQueue;
+	QSet<QString> pulseYouTubeSeenMessageIds;
+	quint64 pulseYouTubeChatGeneration = 0;
+	std::shared_ptr<std::atomic<quint64>> pulseYouTubeChatCancellation =
+		std::make_shared<std::atomic<quint64>>(0);
+	std::shared_ptr<PulseYouTubeChatWorkerBarrier> pulseYouTubeChatWorkers =
+		std::make_shared<PulseYouTubeChatWorkerBarrier>();
+	quint64 pulseYouTubeChatMessageSequence = 0;
+	bool pulseYouTubeChatSending = false;
 	bool pulseYouTubeSubscribersSeeded = false;
 	qint64 pulseYouTubeNextSubscriberPoll = 0;
 	QSet<QString> pulseYouTubeSubscriberIds;
@@ -384,9 +432,14 @@ private:
 	void StartPulseWeaverRecordings();
 	void StopPulseWeaverRecordings();
 	bool PulseWeaverRecordingActive() const;
+	Q_INVOKABLE void RefreshPulseWeaverChatComposer();
+	bool PulseWeaverYouTubeChatsReady() const;
+	bool PulseWeaverYouTubeChatAvailable() const;
 	void PollPulseWeaverYouTubeChat();
 	void SendPulseWeaverYouTubeChat();
-	void ModeratePulseWeaverYouTubeChat(const QString &messageId, const QString &userId, int durationSeconds);
+	void FlushPulseWeaverYouTubeChatQueue();
+	void ModeratePulseWeaverYouTubeChat(const QString &messageId, const QString &userId, int durationSeconds,
+					 const QString &liveChatId = {});
 	void SetPulseWeaverCameraOutput(bool vertical);
 	void ImportPulseWeaverObsSetup();
 	static void RenderPulseHorizontal(void *data, uint32_t cx, uint32_t cy);

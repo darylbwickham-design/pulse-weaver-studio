@@ -28,7 +28,7 @@
 namespace PulseChat {
 enum Role {
     Platform = Qt::UserRole + 140, User, UserId, MessageId, Text,
-    Colour, Badges, Images, Fragments, Time, Deleted
+    Colour, Badges, Images, Fragments, Time, Deleted, Route
 };
 
 inline QHash<QString, QUrl> parseBadges(const QJsonObject &root)
@@ -128,6 +128,10 @@ class Delegate final : public QStyledItemDelegate {
         html += "<span style='color:" + platformColour + ";font-size:10px'>" + platform.left(1).toUpper() + "</span> ";
         if (feed->property("pulseWeaverChatTimestamps").toBool())
             html += "<span style='color:" + muted + ";font-size:11px'>" + index.data(Time).toString() + "</span> ";
+		const QString route = index.data(Route).toString();
+		if (!route.isEmpty())
+			html += "<span style='color:" + muted + ";font-size:9px'>" +
+				(route == "vertical" ? QString("9:16") : QString("16:9")) + "</span> ";
         QStringList resources;
         auto imageTag = [&resources](const QString &url, int size) {
             resources << url;
@@ -252,14 +256,15 @@ public:
     }
 };
 
-inline void append(QListWidget *feed, const QString &platform, const QString &user, const QString &message,
+inline QListWidgetItem *append(QListWidget *feed, const QString &platform, const QString &user, const QString &message,
     const QString &colour = {}, const QStringList &badges = {}, const QHash<QString, QUrl> &urls = {},
-    const QString &userId = {}, const QString &messageId = {}, bool own = false, const QJsonArray &fragments = {})
+    const QString &userId = {}, const QString &messageId = {}, bool own = false, const QJsonArray &fragments = {},
+	const QString &route = {})
 {
     Q_UNUSED(own);
-    if (!feed || message.trimmed().isEmpty()) return;
+    if (!feed || message.trimmed().isEmpty()) return nullptr;
     if (!messageId.isEmpty()) for (int i = feed->count() - 1; i >= 0; --i)
-        if (feed->item(i)->data(Platform).toString() == platform && feed->item(i)->data(MessageId).toString() == messageId) return;
+        if (feed->item(i)->data(Platform).toString() == platform && feed->item(i)->data(MessageId).toString() == messageId) return nullptr;
     const bool follow = feed->property("pulseWeaverChatAutoScroll").toBool() && atBottom(feed);
     auto *anchor = feed->itemAt(QPoint(2, 2));
     const int offset = anchor ? feed->visualItemRect(anchor).top() : 0;
@@ -267,6 +272,7 @@ inline void append(QListWidget *feed, const QString &platform, const QString &us
     item->setData(Platform, platform); item->setData(User, user); item->setData(UserId, userId);
     item->setData(MessageId, messageId); item->setData(Text, message); item->setData(Colour, colour);
     item->setData(Badges, badges);
+	item->setData(Route, route);
     item->setData(Fragments, QVariant::fromValue(platform == "kick" && fragments.isEmpty() ? kickFragments(message) : fragments));
     item->setData(Time, QDateTime::currentDateTime().toString("HH:mm"));
     QVariantMap images; for (auto it = urls.begin(); it != urls.end(); ++it) images.insert(it.key(), it.value().toString());
@@ -294,5 +300,6 @@ inline void append(QListWidget *feed, const QString &platform, const QString &us
             }
         }
     }
+	return item;
 }
 }

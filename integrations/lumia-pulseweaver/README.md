@@ -1,8 +1,8 @@
-# Pulse Weaver for Lumia Stream — 1.1.2
+# Pulse Weaver for Lumia Stream — 1.1.3
 
-Requires **Pulse Weaver 1.11.42 or newer** and Lumia Stream 9.x. Install the companion Pulse Weaver update first, then import `PulseWeaver-Lumia-1.1.2.lumiaplugin` into Lumia and enable it. The plugin includes the native neon P icon and keeps its existing `pulseweavercontrol` ID so Lumia can update the existing plugin.
+Requires **Pulse Weaver 1.11.42 or newer** and Lumia Stream 9.x. Install the companion Pulse Weaver update first, then import `PulseWeaver-Lumia-1.1.3.lumiaplugin` into Lumia and enable it. The plugin includes the native neon P icon and keeps its existing `pulseweavercontrol` ID so Lumia can update the existing plugin.
 
-Version 1.1.2 fixes End Stream opening the Go Live confirmation on private builds. It stops each platform, confirms the outputs have stopped, and waits for the studio's cached live status to update before clearing the show session. Repeated stops never request a start; a newer show command cancels pending cleanup. There is no new background polling while idle.
+Version 1.1.3 reads the current output plan immediately before a Lumia Start Show or Start Platform action, so a recently enabled Kick, Twitch or YouTube route cannot be skipped by an older cached snapshot. It retains the 1.1.2 End Stream fix: repeated stops never request a start, and a newer show command cancels pending cleanup. There is no new background polling while idle.
 
 ## Operating controls
 

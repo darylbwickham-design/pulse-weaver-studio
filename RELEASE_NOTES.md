@@ -1,11 +1,9 @@
-# Public Dist 0.02
+# Public Dist 0.03
 
-Changing stages while a cached stinger is running no longer stores the transition as its own source. Restarting settles the previous destination before starting the next stage. The engine also rejects a transition targeting itself.
+YouTube chat now follows the live chat attached to each new broadcast instead of keeping one earlier chat identity. Landscape and portrait broadcasts are discovered and polled independently, first-page messages are retained, outgoing messages reach each active route without duplicates, and moderation targets the exact chat that supplied the message. Temporary chat-ID and API failures retry with visible status feedback.
 
-Audio monitoring duplication now uses a weak source reference, retained safely for each audio render, to prevent accessing a released source during shutdown.
+Kick's visible Show Control route is now the authoritative route. The native Lumia bridge publishes route changes immediately, and the included Lumia plugin 1.1.3 refreshes the current output plan before Start Show or Start Platform. A newly enabled Kick, Twitch or YouTube route can no longer be skipped because Lumia held an older snapshot. End Show remains an explicit stop operation and all Lumia alerts remain off by default.
 
-Lumia End Stream uses explicit platform stop actions. It cannot invoke the Go Live toggle. The included Lumia plugin 1.1.2 cancels stale stop cleanup when a newer start arrives. Alerts remain off by default and the P logo is included.
+The public build contains no developer registrations, signed-in accounts or personal configuration. Testers enter their own Twitch, Kick and YouTube app details in Action → Connections; client secrets are protected locally with Windows DPAPI.
 
-This remains a public testing preview. No developer registrations, signed-in accounts or personal configuration are included. Enter your own platform app details in Action → Connections.
-
-Validation: native build passed; 2,100 interrupted transitions across seven route fixtures passed, with cuts and clean destruction; the previous engine fails the same regression. Audio lifetime test passed 1,500 source retirements and five shutdown cycles. Nine Lumia tests passed. Installer payload and layout tests passed. These fixtures do not start real streams or reproduce a particular user's stinger media.
+Validation covers the native frontend and core build, dual-route YouTube chat/session behavior, bounded chat rendering, and the Lumia action suite. These automated fixtures do not start real platform broadcasts.

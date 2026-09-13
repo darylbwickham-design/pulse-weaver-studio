@@ -1,4 +1,5 @@
 #include "../../engine/obs-studio/shared/qt/PulseChat.hpp"
+#include "../../engine/obs-studio/shared/qt/PulseYouTubeChatSessions.hpp"
 #include <QJsonDocument>
 #include <iostream>
 #include <stdexcept>
@@ -21,6 +22,28 @@ int main(int argc, char **argv)
         check(PulseChat::kickBanBody(10, 42, 0).value("user_id").isDouble() && !PulseChat::kickBanBody(10, 42, 0).contains("duration"), "Kick numeric ID and permanent ban");
         check(PulseChat::youtubeBanBody("chat", "42", 600).value("snippet").toObject().value("banDurationSeconds").toInt() == 600, "YouTube timeout duration missing");
         check(!PulseChat::youtubeBanBody("chat", "42", 0).value("snippet").toObject().contains("banDurationSeconds"), "YouTube permanent ban has a duration");
+		auto youtubeChats = PulseYouTubeChat::create("dual", "broadcast-horizontal", "broadcast-vertical");
+		check(youtubeChats.size() == 2 && youtubeChats.contains("horizontal") && youtubeChats.contains("vertical"),
+			"Dual YouTube broadcasts did not keep independent chat sessions");
+		youtubeChats["horizontal"].liveChatId = "chat-horizontal";
+		check(!PulseYouTubeChat::ready(youtubeChats), "Dual YouTube chat became ready with one unresolved broadcast");
+		check(PulseYouTubeChat::available(youtubeChats), "A healthy YouTube chat route was blocked by its companion");
+		check(PulseYouTubeChat::pendingTargets(youtubeChats, {}).size() == 1,
+			"A message could not reach the available YouTube route while its companion resolved");
+		check(PulseYouTubeChat::pendingTargets(youtubeChats, {"horizontal"}).isEmpty(),
+			"A YouTube message would be duplicated on an already delivered route");
+		youtubeChats["vertical"].liveChatId = "chat-vertical";
+		check(PulseYouTubeChat::ready(youtubeChats) && PulseYouTubeChat::targets(youtubeChats).size() == 2,
+			"Dual YouTube sends did not target both live chats");
+		const auto remainingYoutubeTarget = PulseYouTubeChat::pendingTargets(youtubeChats, {"horizontal"});
+		check(remainingYoutubeTarget.size() == 1 && remainingYoutubeTarget.contains("vertical"),
+			"The second YouTube route did not receive a queued message after resolving");
+		const auto routesOwedByEarlierMessage = PulseYouTubeChat::owedRoutes(youtubeChats, {"vertical"});
+		const auto orderedLaterTargets = PulseYouTubeChat::pendingTargets(youtubeChats, {},
+			routesOwedByEarlierMessage);
+		check(routesOwedByEarlierMessage == QSet<QString>{"horizontal"} &&
+			orderedLaterTargets.size() == 1 && orderedLaterTargets.contains("vertical"),
+			"A later message overtook an earlier message on the same YouTube route");
         PulseChat::Feed feed;
         feed.setAttribute(Qt::WA_DontShowOnScreen);
         feed.setStyleSheet("QListWidget{background:#18181b;border:0;color:#efeff1;}");
@@ -31,6 +54,8 @@ int main(int argc, char **argv)
         const QString longText = "This message must wrap naturally " + QString(180, 'W') + " <b>plain text</b> 日本語 😀";
         for (const QString platform : {"twitch", "youtube", "kick"})
             PulseChat::append(&feed, platform, "LongStreamerUsername", longText, "#59d6c7", {"moderator", "subscriber"}, {}, "42", platform + "-message");
+		PulseChat::append(&feed, "youtube", "DualViewer", "Vertical route", {}, {}, {}, "84", "youtube-vertical", false, {}, "vertical");
+		check(feed.item(feed.count() - 1)->data(PulseChat::Route).toString() == "vertical", "YouTube route label was not retained");
         app.processEvents();
         std::cerr << "Wrapping fixture ready\n";
         const int narrowHeight = feed.visualItemRect(feed.item(0)).height();
@@ -40,7 +65,7 @@ int main(int argc, char **argv)
         check(feed.visualItemRect(feed.item(0)).height() < narrowHeight, "Resize did not reflow messages");
         check(feed.itemWidget(feed.item(0)) == nullptr, "Per-message widgets reintroduced");
         PulseChat::append(&feed, "twitch", "duplicate", "duplicate", {}, {}, {}, "42", "twitch-message");
-        check(feed.count() == 3, "Duplicate EventSub message not suppressed");
+        check(feed.count() == 4, "Duplicate EventSub message not suppressed");
         PulseChat::markDeleted(&feed, "twitch", "twitch-message");
         check(feed.item(0)->data(PulseChat::Deleted).toBool() && !feed.item(1)->data(PulseChat::Deleted).toBool(), "Deletion affected another platform");
         for (int i = 0; i < 80; ++i) PulseChat::append(&feed, "youtube", "Viewer", "Message " + QString::number(i));
@@ -57,6 +82,10 @@ int main(int argc, char **argv)
         for (int i = 0; i < 510; ++i) PulseChat::append(&feed, "twitch", "Viewer", "Bounded history " + QString::number(i));
         std::cerr << "History fixture ready\n";
         check(feed.count() == 500, "History limit exceeded");
+		auto *boundedItem = PulseChat::append(&feed, "youtube", "Viewer", "Metadata after cap", {}, {}, {},
+			"viewer", "youtube-after-cap", false, {}, "horizontal");
+		check(boundedItem && boundedItem == feed.item(feed.count() - 1) &&
+			boundedItem->data(PulseChat::Route).toString() == "horizontal", "Capped chat lost new-message metadata");
         feed.clear(); feed.resize(300, 470); feed.setProperty("pulseWeaverChatAutoScroll", true);
         PulseChat::append(&feed, "twitch", "RiverRuns", "Welcome in! Great to see everyone here.", "#bf94ff");
         PulseChat::append(&feed, "kick", "TimeToDoTheTango", "The stream looks great — audio is clear too.", "#53fc18", {"moderator"});

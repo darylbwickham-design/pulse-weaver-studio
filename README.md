@@ -1,4 +1,4 @@
-# Pulse Weaver Studio — Public Dist 0.02
+# Pulse Weaver Studio — Public Dist 0.03
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
@@ -15,6 +15,10 @@ This build includes **no developer app credentials or signed-in accounts**. Test
 App details save locally when you leave a field. Disconnect before changing a registration, then reconnect. Secrets are protected with Windows DPAPI for the current Windows account. Do not share the installed `config` folder: it contains account settings and tokens.
 
 You can explore the studio without connecting a platform. Your existing private Pulse Weaver installation is separate.
+
+## Published minimum system
+
+The current conservative minimum for a multi-output 1080p60 show is **Windows 10/11 64-bit, Intel Core i5-12400F, NVIDIA GeForce RTX 3060, 32 GB RAM, and 2 GB free storage**. This is the developer's tested machine baseline. Simpler single-output shows may run on less capable hardware, but are not part of the published support floor yet.
 
 ## Source and builds
 

@@ -583,8 +583,6 @@ private:
 
 	void setStatus(const QString &message)
 	{
-		if (chatStatus)
-			chatStatus->setText(message);
 		if (connectionStatus)
 			connectionStatus->setText(message);
 	}
@@ -599,15 +597,12 @@ private:
 	void updateUi()
 	{
 		const bool ready = !userId.isEmpty() && !accessToken.isEmpty();
-		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
+		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window())) {
 			mainWindow->setProperty("pulseWeaverTwitchChatReady", ready);
-		if (shellSelected()) {
-			if (chatInput)
-				chatInput->setEnabled(ready);
-			if (chatSend)
-				chatSend->setEnabled(ready);
-			if (chatStatus)
-				chatStatus->setText(ready ? "Twitch chat connected." : "Connect Twitch in Action → Connections.");
+			/* The frontend owns the shared composer because All chats must combine
+			 * Twitch, YouTube and Kick readiness. Queue the refresh so every
+			 * provider has finished publishing its current property first. */
+			QMetaObject::invokeMethod(mainWindow, "RefreshPulseWeaverChatComposer", Qt::QueuedConnection);
 		}
 		if (chatConnect)
 			chatConnect->setText(ready ? "RECONNECT" : "CONNECT");
@@ -1259,6 +1254,8 @@ public:
 	{
 		QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window());
 		auto *selected = mainWindow ? mainWindow->findChild<QComboBox *>("PulseWeaverDestinationKick") : nullptr;
+		const QString outputMode = selected ? selected->currentData().toString() :
+			canvasRoute ? canvasRoute->currentData().toString() : QString("off");
 		if (output) {
 			if (obs_output_active(output))
 				return;
@@ -1268,13 +1265,12 @@ public:
 			setStatus("Kick cannot go live: reconnect the account to obtain its ingest destination.");
 			return;
 		}
-		if ((selected && selected->currentData().toString() == "off") ||
-		    (canvasRoute && canvasRoute->currentData().toString() == "off")) {
+		if (outputMode == "off") {
 			setStatus("Kick is connected but its output is Off.");
 			return;
 		}
 		serverUrl = normaliseIngestUrl(serverUrl);
-		const bool vertical = canvasRoute && canvasRoute->currentData().toString() == "vertical";
+		const bool vertical = outputMode == "vertical";
 		const QString route = vertical ? "vertical" : "horizontal";
 		obs_canvas_t *canvas = obs_get_canvas_by_name(("Pulse Weaver Output kick " + route).toUtf8().constData());
 		if (canvas && !obs_canvas_has_video(canvas)) {
@@ -1473,22 +1469,15 @@ private:
 	{
 		if (status) status->setText(text);
 		if (shellDestinationStatus) shellDestinationStatus->setText(text);
-		if (shellChatStatus) shellChatStatus->setText(text);
 	}
 	void updateUi()
 	{
 		const bool ready = !accessToken.isEmpty() && !streamKey.isEmpty();
 		if (accountLabel) accountLabel->setText(ready ? "Connected as " + accountName : "No Kick account connected");
 		if (chatInput) chatInput->setEnabled(ready); if (chatSend) chatSend->setEnabled(ready);
-		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
+		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window())) {
 			mainWindow->setProperty("pulseWeaverKickReady", ready);
-		if (shellSelected()) {
-			if (shellChatInput) shellChatInput->setEnabled(ready);
-			if (shellChatSend) shellChatSend->setEnabled(ready);
-			if (shellChatStatus) shellChatStatus->setText(ready ? (relaySessionToken.isEmpty() ?
-				"Kick send ready · connecting incoming chat…" :
-				"Kick incoming chat connected.") :
-				"Connect Kick in Action → Connections.");
+			QMetaObject::invokeMethod(mainWindow, "RefreshPulseWeaverChatComposer", Qt::QueuedConnection);
 		}
 	}
 	void stopRelay()

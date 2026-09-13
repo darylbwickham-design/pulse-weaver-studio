@@ -125,6 +125,10 @@ public:
 			connect(selector->model(), &QAbstractItemModel::rowsRemoved, this, [this] { catalogueChanged(); });
 			connect(selector->model(), &QAbstractItemModel::dataChanged, this, [this] { catalogueChanged(); });
 		}
+		for (const QString &provider : {QString("Twitch"), QString("YouTube"), QString("Kick")}) {
+			if (auto *route = window ? window->findChild<QComboBox *>("PulseWeaverDestination" + provider) : nullptr)
+				connect(route, &QComboBox::currentIndexChanged, this, [this] { catalogueChanged(); });
+		}
 	}
 	~PulseLumiaBridge() override
 	{

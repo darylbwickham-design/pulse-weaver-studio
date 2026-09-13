@@ -9,7 +9,7 @@ namespace PulseWeaver.Setup;
 internal static class Program
 {
     const string ProductName = "Pulse Weaver Public Preview";
-    internal const string Version = "0.02";
+    internal const string Version = "0.03";
     const string InstallManifestName = ".pulseweaver-installed-files.txt";
     internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Pulse Weaver Public Preview");
     internal static readonly string AppPath = Path.Combine(InstallDirectory, "bin", "64bit", "PulseWeaverCore.exe");
@@ -182,14 +182,19 @@ internal static class Program
     internal static string ConfiguredLanguage(string? installDirectory = null)
     {
         var path = Path.Combine(installDirectory ?? InstallDirectory, "config", "obs-studio", "global.ini");
-        if (!File.Exists(path)) return "en-US";
-        var inGeneral = false;
-        foreach (var rawLine in File.ReadLines(path))
+        try
         {
-            var line = rawLine.Trim();
-            if (line.StartsWith('[') && line.EndsWith(']')) { inGeneral = line.Equals("[General]", StringComparison.OrdinalIgnoreCase); continue; }
-            if (inGeneral && line.StartsWith("Language=", StringComparison.OrdinalIgnoreCase)) return line[9..].Trim();
+            if (!File.Exists(path)) return "en-US";
+            var inGeneral = false;
+            foreach (var rawLine in File.ReadLines(path))
+            {
+                var line = rawLine.Trim();
+                if (line.StartsWith('[') && line.EndsWith(']')) { inGeneral = line.Equals("[General]", StringComparison.OrdinalIgnoreCase); continue; }
+                if (inGeneral && line.StartsWith("Language=", StringComparison.OrdinalIgnoreCase)) return line[9..].Trim();
+            }
         }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
         return "en-US";
     }
     static void WriteLanguage(string languageCode, string? installDirectory = null)
