@@ -443,7 +443,10 @@ obs_canvas_t *pulseConfigureOutputCanvas(const QString &provider, const QJsonObj
 		obs_video_info canvasInfo = {};
 		if (transition && obs_canvas_get_video_info(canvas, &canvasInfo)) {
 			obs_transition_set_size(transition, canvasInfo.base_width, canvasInfo.base_height);
-			obs_transition_set(transition, current);
+			// The canvas still owns this cached stinger during an interrupted
+			// stage. start() settles its old destination before restarting it.
+			if (current != transition)
+				obs_transition_set(transition, current);
 			started = obs_transition_start(transition, OBS_TRANSITION_MODE_AUTO, transitionDuration, target);
 			if (started)
 				obs_canvas_set_channel(canvas, 0, transition);
@@ -3339,7 +3342,8 @@ void OBSBasic::ApplyPulseWeaverStage(int index, bool runTransitions)
 			obs_source_t *transition = cachedStinger ? cachedStinger : ownedTransition.Get();
 			if (transition) {
 				obs_transition_set_size(transition, 1080, 1920);
-				obs_transition_set(transition, current);
+				if (current != transition)
+					obs_transition_set(transition, current);
 				verticalTransitionStarted = obs_transition_start(transition, OBS_TRANSITION_MODE_AUTO, verticalDuration, scene);
 				if (verticalTransitionStarted)
 					obs_canvas_set_channel(canvas, 0, transition);

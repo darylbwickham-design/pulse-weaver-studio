@@ -231,7 +231,7 @@ class PulseWeaverPlugin extends Plugin {
     if (action.type === 'reconnect') { this.retry = 0; this.connect(); return { message: 'Connection requested.' }; }
     await this.ensureState();
     switch (action.type) {
-      case 'start_platform': return this.destination(String(params.platform), true);
+      case 'start_platform': ++this.showAttempt; return this.destination(String(params.platform), true);
       case 'stop_platform': return this.destination(String(params.platform), false);
       case 'go_live': {
 	    const showAttempt = ++this.showAttempt;
@@ -246,11 +246,28 @@ class PulseWeaverPlugin extends Plugin {
         return { message: 'All configured show destinations are live.' };
       }
       case 'end_stream': {
-	    ++this.showAttempt;
+	    const stopAttempt = ++this.showAttempt;
         const errors = [];
-        for (const platform of ['twitch','kick','youtube']) { try { await this.destination(platform, false); } catch (error) { errors.push(error.message); } }
+        for (const platform of ['twitch','kick','youtube']) {
+          if (stopAttempt !== this.showAttempt) throw new Error('Show stop superseded by a newer show command.');
+          try { await this.destination(platform, false); } catch (error) { errors.push(error.message); }
+        }
         if (errors.length) throw new Error(`Show stop incomplete. ${errors.join(' ')}`);
-	    await this.request('/end-stream', 'POST');
+	    // Private builds through v50 route this last cleanup through a UI toggle
+	    // using a one-second cached live flag. Only clear the show session after
+	    // that flag is explicitly false, or leave it alone if it stays stale.
+	    const deadline = Date.now() + 5000;
+	    while (stopAttempt === this.showAttempt) {
+	      const snapshot = await this.request('/state');
+	      this.state = snapshot;
+	      if (snapshot.live === false) {
+	        if (stopAttempt === this.showAttempt) await this.request('/end-stream', 'POST');
+	        break;
+	      }
+	      if (Date.now() >= deadline) throw new Error('Outputs stopped, but Pulse Weaver has not refreshed its show status. Cleanup was skipped to avoid restarting the show.');
+	      await new Promise(resolve => setTimeout(resolve, 100));
+	    }
+        if (stopAttempt !== this.showAttempt) throw new Error('Show stop superseded by a newer show command.');
         return { message: 'All show destinations are stopped.' };
       }
       case 'select_stage': return this.request(`/stage?name=${encodeURIComponent(String(params.stage || ''))}`, 'POST');

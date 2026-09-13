@@ -4227,7 +4227,19 @@ private:
 						auto *button = mainWindow ? mainWindow->findChild<QPushButton *>("PulseWeaverLive") : nullptr;
 						const bool currentlyLive = mainWindow && mainWindow->property("pulseWeaverAnyLive").toBool();
 						const bool start = path.endsWith("/go-live");
-						if (!start && mainWindow) mainWindow->setProperty("pulseWeaverGoLiveSession", false);
+						if (!start && mainWindow) {
+							mainWindow->setProperty("pulseWeaverGoLiveSession", false);
+							bool stopped = true;
+							for (const QString &provider : {QString("twitch"), QString("kick"), QString("youtube")}) {
+								QJsonObject result;
+								const bool invoked = QMetaObject::invokeMethod(mainWindow, "PulseWeaverLumiaDestination", Qt::DirectConnection,
+									Q_RETURN_ARG(QJsonObject, result), Q_ARG(QString, provider), Q_ARG(bool, false));
+								stopped = invoked && result.value("ok").toBool() && stopped;
+							}
+							respond(socket, stopped ? 200 : 400, QJsonObject{{"ok", stopped}, {"accepted", stopped},
+								{"message", stopped ? "Stop requested for all show destinations." : "One or more destinations could not be stopped."}});
+							return;
+						}
 						if (button && start != currentlyLive) {
 							mainWindow->setProperty("pulseWeaverLumiaGoLiveConfirmed", start);
 							button->click();

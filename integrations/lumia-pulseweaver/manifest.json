@@ -1,7 +1,7 @@
 {
   "id": "pulseweavercontrol",
   "name": "Pulse Weaver",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "author": "Pulse Weaver",
   "description": "Operate your existing Pulse Weaver show, individual platforms, sources, audio and media. Receive live operator alerts. Requires Pulse Weaver 1.11.42+.",
   "lumiaVersion": "^9.0.0",

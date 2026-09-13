@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$Version = '0.01-public')
+param([string]$Version = '0.02-public')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $runtimeRoot = Join-Path $projectRoot 'engine/obs-studio/build_pw_vs1714_sdk22621/rundir/RelWithDebInfo'

@@ -423,7 +423,10 @@ void obs_source_audio_output_capture_device_changed(obs_source_t *src, const cha
 		     "\nDeduplication logic is being applied to all monitored sources.",
 		     src->context.name);
 	} else {
-		if (src == audio->monitoring_duplicating_source) {
+		pthread_mutex_lock(&audio->monitoring_mutex);
+		bool duplicating = obs_weak_source_references_source(audio->monitoring_duplicating_source, src);
+		pthread_mutex_unlock(&audio->monitoring_mutex);
+		if (duplicating) {
 			calldata_set_ptr(&cd, "source", NULL);
 			signal_handler_disconnect(src->context.signals, "activate",
 						  obs_source_audio_output_capture_device_activated, NULL);

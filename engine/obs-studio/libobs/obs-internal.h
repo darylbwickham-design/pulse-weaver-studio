@@ -460,7 +460,9 @@ struct obs_core_audio {
 	pthread_mutex_t task_mutex;
 	struct deque tasks;
 
-	struct obs_source *monitoring_duplicating_source;
+	/* Protected by monitoring_mutex. A weak reference must not keep a removed
+	 * capture source alive, or outlive it as an unchecked raw pointer. */
+	obs_weak_source_t *monitoring_duplicating_source;
 };
 
 /* user sources, output channels, and displays */

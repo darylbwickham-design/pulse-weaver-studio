@@ -1,4 +1,4 @@
-# Build Public Dist 0.01 on Windows
+# Build Public Dist 0.02 on Windows
 
 Install Visual Studio 2022 17.14 with C++ desktop development, MSVC 14.44, ATL and Windows SDK 10.0.22621.0; CMake 3.28 or later; Git; and .NET 8 SDK for the installer. Node.js is needed only to regenerate visual assets.
 
@@ -18,8 +18,8 @@ Do not set compile-time OAuth credentials for this public build. Platform regist
 To package the clean runtime and installer:
 
 ```powershell
-./packaging/Build-NativePreview.ps1 -Version 0.01-public
-dotnet publish packaging/PulseWeaver.Setup/PulseWeaver.Setup.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishTrimmed=false -o artifacts/setup-public-0.01
+./packaging/Build-NativePreview.ps1 -Version 0.02-public
+dotnet publish packaging/PulseWeaver.Setup/PulseWeaver.Setup.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishTrimmed=false -o artifacts/setup-public-0.02
 ```
 
 The installer supports `/test` to validate its embedded payload without installing or launching the studio. Keep installers on GitHub Releases; never commit the runtime, configuration or build caches to Git.

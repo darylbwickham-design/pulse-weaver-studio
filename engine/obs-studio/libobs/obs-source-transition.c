@@ -335,8 +335,13 @@ bool obs_transition_start(obs_source_t *transition, enum obs_transition_mode mod
 	if (!transition_valid(transition, "obs_transition_start"))
 		return false;
 
+	if (dest == transition)
+		return false;
+
 	if (transition_active(transition)) {
-		obs_transition_set(transition, transition->transition_sources[1]);
+		obs_source_t *previous_dest = obs_transition_get_active_source(transition);
+		obs_transition_set(transition, previous_dest);
+		obs_source_release(previous_dest);
 	}
 
 	lock_transition(transition);
@@ -410,6 +415,13 @@ void obs_transition_set(obs_source_t *transition, obs_source_t *source)
 	bool active[2];
 
 	if (!transition_valid(transition, "obs_transition_set"))
+		return;
+
+	/* A canvas can still contain its cached transition when a new stage is
+	 * selected. Keep its existing children: storing itself here creates a
+	 * render/size recursion before active-child validation can reject it.
+	 * A following start() safely settles the old destination first. */
+	if (source == transition)
 		return;
 
 	source = obs_source_get_ref(source);
