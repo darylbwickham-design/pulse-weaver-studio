@@ -27,3 +27,7 @@ set_target_properties_obs(
              PREFIX ""
              AUTOMOC ON
 )
+
+if(OS_MACOS)
+  target_link_libraries(pulse-weaver-core PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Security.framework>")
+endif()

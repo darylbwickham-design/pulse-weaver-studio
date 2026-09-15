@@ -28,6 +28,7 @@ endif()
 target_link_libraries(
   obs-studio
   PRIVATE
+    "$<LINK_LIBRARY:FRAMEWORK,Security.framework>"
     "$<LINK_LIBRARY:FRAMEWORK,AppKit.framework>"
     "$<LINK_LIBRARY:FRAMEWORK,ApplicationServices.framework>"
     "$<LINK_LIBRARY:FRAMEWORK,AVFoundation.framework>"

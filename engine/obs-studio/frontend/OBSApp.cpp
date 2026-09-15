@@ -16,6 +16,9 @@
 ******************************************************************************/
 
 #include "OBSApp.hpp"
+#ifdef __APPLE__
+#include "../shared/qt/PulseMacPaths.hpp"
+#endif
 
 #include <components/Multiview.hpp>
 #include <dialogs/LogUploadDialog.hpp>
@@ -1732,6 +1735,10 @@ vector<pair<string, string>> GetLocaleNames()
 
 int GetAppConfigPath(char *path, size_t size, const char *name)
 {
+#ifdef __APPLE__
+	const QByteArray isolated = PulseMacPaths::path(name).toUtf8();
+	return snprintf(path, size, "%s", isolated.constData());
+#endif
 #if ALLOW_PORTABLE_MODE
 	if (portable_mode) {
 		if (name && *name) {
@@ -1749,6 +1756,9 @@ int GetAppConfigPath(char *path, size_t size, const char *name)
 
 char *GetAppConfigPathPtr(const char *name)
 {
+#ifdef __APPLE__
+	return bstrdup(PulseMacPaths::path(name).toUtf8().constData());
+#endif
 #if ALLOW_PORTABLE_MODE
 	if (portable_mode) {
 		char path[512];

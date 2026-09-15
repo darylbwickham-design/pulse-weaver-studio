@@ -1,0 +1,45 @@
+name: Mac Apple Silicon Preview
+on:
+  push:
+    branches: [codex/macos-apple-silicon]
+    paths-ignore: ['**/*.md']
+permissions:
+  contents: write
+concurrency:
+  group: pulse-mac-preview
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      PULSE_MAC_TAG: mac-v0.1.0-alpha.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select supported Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Build, verify and package
+        run: bash packaging/macos/build-preview.sh
+      - name: Preserve verified packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-mac-preview-apple-silicon
+          path: |
+            artifacts/macos/${{ env.PULSE_MAC_TAG }}/*.dmg
+            artifacts/macos/${{ env.PULSE_MAC_TAG }}/*.zip
+            artifacts/macos/${{ env.PULSE_MAC_TAG }}/*.tar.gz
+            artifacts/macos/${{ env.PULSE_MAC_TAG }}/SHA256SUMS.txt
+            artifacts/macos/${{ env.PULSE_MAC_TAG }}/README-MAC.txt
+          if-no-files-found: error
+      - name: Publish separate Mac prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="artifacts/macos/$PULSE_MAC_TAG"
+          gh release create "$PULSE_MAC_TAG" --target "$GITHUB_SHA" --title "Pulse Weaver Mac Preview 0.1.0 alpha 1 — Apple Silicon" --notes-file packaging/macos/README-MAC.txt --draft --prerelease --latest=false
+          gh release upload "$PULSE_MAC_TAG" "$out"/*.dmg "$out"/*.zip "$out"/*.tar.gz "$out/SHA256SUMS.txt" "$out/README-MAC.txt"
+          gh release edit "$PULSE_MAC_TAG" --draft=false --latest=false

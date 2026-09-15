@@ -121,6 +121,25 @@
       }
     },
     {
+      "name": "pulse-macos-arm64",
+      "inherits": [
+        "macos"
+      ],
+      "cacheVariables": {
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "SPARKLE_APPCAST_URL": "",
+        "SPARKLE_PUBLIC_KEY": "",
+        "ENABLE_VIRTUALCAM": false,
+        "ENABLE_AJA": false,
+        "ENABLE_VLC": false,
+        "ENABLE_WEBSOCKET": true,
+        "YOUTUBE_CLIENTID": "",
+        "YOUTUBE_SECRET": "",
+        "YOUTUBE_CLIENTID_HASH": "0",
+        "YOUTUBE_SECRET_HASH": "0"
+      }
+    },
+    {
       "name": "ubuntu",
       "displayName": "Ubuntu",
       "description": "obs-studio for Ubuntu",

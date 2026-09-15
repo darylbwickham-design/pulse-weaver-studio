@@ -43,7 +43,7 @@ function(set_target_properties_obs target)
       set_target_properties(
         ${target}
         PROPERTIES
-          OUTPUT_NAME OBS
+          OUTPUT_NAME "Pulse Weaver Mac Preview"
           MACOSX_BUNDLE TRUE
           MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/Info.plist.in"
           XCODE_EMBED_FRAMEWORKS_REMOVE_HEADERS_ON_COPY YES
@@ -54,8 +54,8 @@ function(set_target_properties_obs target)
 
       set_target_xcode_properties(
         ${target}
-        PROPERTIES PRODUCT_BUNDLE_IDENTIFIER com.obsproject.obs-studio
-                   PRODUCT_NAME OBS
+        PROPERTIES PRODUCT_BUNDLE_IDENTIFIER studio.pulseweaver.macpreview
+                   PRODUCT_NAME "Pulse Weaver Mac Preview"
                    ASSETCATALOG_COMPILER_APPICON_NAME AppIcon
                    CURRENT_PROJECT_VERSION ${OBS_BUILD_NUMBER}
                    MARKETING_VERSION ${OBS_VERSION_CANONICAL}
@@ -64,7 +64,7 @@ function(set_target_properties_obs target)
                    CLANG_ENABLE_OBJC_ARC YES
                    SKIP_INSTALL NO
                    INSTALL_PATH "$(LOCAL_APPS_DIR)"
-                   INFOPLIST_KEY_CFBundleDisplayName "OBS Studio"
+                   INFOPLIST_KEY_CFBundleDisplayName "Pulse Weaver Mac Preview"
                    INFOPLIST_KEY_NSHumanReadableCopyright "(c) 2012-${CURRENT_YEAR} Lain Bailey"
                    INFOPLIST_KEY_NSCameraUsageDescription "OBS needs to access the camera to enable camera sources to work."
                    INFOPLIST_KEY_NSMicrophoneUsageDescription "OBS needs to access the microphone to enable audio input."

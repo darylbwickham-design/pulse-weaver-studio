@@ -508,6 +508,9 @@ obs_canvas_t *pulseConfigureOutputCanvas(const QString &provider, const QJsonObj
 
 QString pulseDefaultObsDataPath()
 {
+#ifdef __APPLE__
+	return QDir::homePath() + "/Library/Application Support/obs-studio";
+#endif
 	const QString roaming = qEnvironmentVariable("APPDATA");
 	return roaming.isEmpty() ? QString() : QDir(roaming).filePath("obs-studio");
 }

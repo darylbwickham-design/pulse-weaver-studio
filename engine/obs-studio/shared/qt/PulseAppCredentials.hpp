@@ -4,6 +4,11 @@
 #include <QDir>
 #include <QSettings>
 #include <QString>
+#ifdef __APPLE__
+#include "PulseMacPaths.hpp"
+#include <QUuid>
+#include <Security/Security.h>
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -20,7 +25,11 @@
 namespace PulseAppCredentials {
 inline QString path()
 {
+#ifdef __APPLE__
+    const QString directory = PulseMacPaths::root() + "/pulseweaver";
+#else
     const QString directory = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../config/pulseweaver");
+#endif
     QDir().mkpath(directory);
     return directory + "/app-credentials.ini";
 }
@@ -35,6 +44,17 @@ inline QString protect(const QString &value)
     QByteArray encoded(reinterpret_cast<char *>(output.pbData), int(output.cbData));
     LocalFree(output.pbData);
     return "dpapi:" + QString::fromLatin1(encoded.toBase64());
+#elif defined(__APPLE__)
+    const QByteArray account = QUuid::createUuid().toString(QUuid::WithoutBraces).toUtf8();
+    const QByteArray bytes = value.toUtf8();
+    CFStringRef key = CFStringCreateWithCString(nullptr, account.constData(), kCFStringEncodingUTF8);
+    CFDataRef data = CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(bytes.constData()), bytes.size());
+    const void *keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData};
+    const void *values[] = {kSecClassGenericPassword, CFSTR("studio.pulseweaver.macpreview.app-credentials"), key, data};
+    CFDictionaryRef query = CFDictionaryCreate(nullptr, keys, values, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    const OSStatus status = SecItemAdd(query, nullptr);
+    CFRelease(query); CFRelease(data); CFRelease(key);
+    return status == errSecSuccess ? "keychain:" + QString::fromUtf8(account) : QString();
 #else
     return {};
 #endif
@@ -49,6 +69,21 @@ inline QString reveal(const QString &value)
     const QString result = QString::fromUtf8(reinterpret_cast<char *>(output.pbData), int(output.cbData));
     LocalFree(output.pbData);
     return result;
+#elif defined(__APPLE__)
+    if (!value.startsWith("keychain:")) return {};
+    const QByteArray account = value.mid(9).toUtf8();
+    CFStringRef key = CFStringCreateWithCString(nullptr, account.constData(), kCFStringEncodingUTF8);
+    const void *keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData, kSecMatchLimit};
+    const void *values[] = {kSecClassGenericPassword, CFSTR("studio.pulseweaver.macpreview.app-credentials"), key, kCFBooleanTrue, kSecMatchLimitOne};
+    CFDictionaryRef query = CFDictionaryCreate(nullptr, keys, values, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFTypeRef result = nullptr;
+    const OSStatus status = SecItemCopyMatching(query, &result);
+    CFRelease(query); CFRelease(key);
+    if (status != errSecSuccess || !result) return {};
+    const CFDataRef data = static_cast<CFDataRef>(result);
+    const QString decoded = QString::fromUtf8(reinterpret_cast<const char *>(CFDataGetBytePtr(data)), CFDataGetLength(data));
+    CFRelease(result);
+    return decoded;
 #else
     return {};
 #endif
