@@ -1,11 +1,9 @@
-# Pulse Weaver 1.12.0
+# Pulse Weaver 1.12.1
 
-The Stage exclusion picker now lists audio inputs from other scenes and global devices, marked (audio), alongside sources in the selected programme scene. Sources appear once, including inactive audio inputs that a future Stage may activate. Exclusions save the original OBS source name and use existing output audio routing. Private internal sources remain hidden.
+Fixes portrait output scenes shrinking or moving sources when Stage exclusions are enabled. Private scene copies now retain the original canvas dimensions and relative camera transforms. The preview and broadcast encoder use this same repaired output canvas.
 
-For YouTube Dual, exclude Spotify on the 16:9 row and leave it included on 9:16. Kick and routed recordings also use Stage audio exclusions. Twitch Dual currently shares one audio exclusion mix across its two formats.
+Audio-only and stale exclusions no longer create unnecessary video scene copies. The Stage picker still lists global and inactive audio inputs with (audio) labels and saves their original names. For YouTube Dual, exclude Spotify on 16:9 and leave it included on 9:16. Twitch Dual continues to share its audio exclusion mix.
 
-Version 1.12.0 marks the baseline for the next development focus: improving the Camera tab. Camera improvements follow in subsequent changes.
+This is a repair of the 1.12.0 baseline; the next development focus remains the Camera tab. Public and private installers retain their existing installation folders and preserve user configuration. Lumia companion 1.1.3 remains compatible.
 
-The public preview retains its separate installation folder and tester-owned platform app registrations. Lumia companion 1.1.3 remains compatible.
-
-Validation: native frontend build, StageExclusions libobs regression, release archive parity, credential audit and installer payload verification.
+Validation: reproduced the coordinate-space failure against the 1.12.0 runtime; native build; GPU regression covering portrait dimensions, position, scale and actual local output frames; audio exclusions; archive parity; credential audit; installer checks. No live platform broadcast was started.

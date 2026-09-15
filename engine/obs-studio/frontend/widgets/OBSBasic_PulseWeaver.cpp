@@ -449,10 +449,11 @@ obs_canvas_t *pulseConfigureOutputCanvas(const QString &provider, const QJsonObj
 	 * directly preserves the vertical canvas' exact coordinate space and
 	 * avoids reinterpreting portrait transforms through a private scene that
 	 * has no owning canvas.  A private duplicate is only necessary when this
-	 * platform deliberately excludes sources. */
+	 * platform deliberately excludes video sources in this scene. Audio-only
+	 * exclusions are applied by the output mixer and need no video copy. */
 	obs_scene_t *duplicate = nullptr;
 	obs_source_t *target = source;
-	if (!excluded.isEmpty()) {
+	if (PulseStageNeedsVideoExclusion(base, excluded)) {
 		const QByteArray duplicateName = QString("Pulse Weaver %1 %2 programme").arg(provider, route).toUtf8();
 		duplicate = obs_scene_duplicate(base, duplicateName.constData(), OBS_SCENE_DUP_PRIVATE_REFS);
 		if (!duplicate) {

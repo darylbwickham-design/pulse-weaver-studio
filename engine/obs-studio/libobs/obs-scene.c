@@ -1952,6 +1952,14 @@ obs_scene_t *obs_scene_duplicate(obs_scene_t *scene, const char *name, enum obs_
 	new_scene->custom_size = scene->custom_size;
 	new_scene->cx = scene->cx;
 	new_scene->cy = scene->cy;
+	/* Private scenes have no owning canvas. Freeze the original coordinate
+	 * space before copying relative transforms, otherwise portrait scenes
+	 * fall back to the main landscape canvas when rendered or encoded. */
+	if (make_private && !scene->custom_size) {
+		new_scene->cx = scene_getwidth(scene);
+		new_scene->cy = scene_getheight(scene);
+		new_scene->custom_size = new_scene->cx != 0 && new_scene->cy != 0;
+	}
 	new_scene->absolute_coordinates = scene->absolute_coordinates;
 	new_scene->last_width = scene->last_width;
 	new_scene->last_height = scene->last_height;
