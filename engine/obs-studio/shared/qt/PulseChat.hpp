@@ -34,9 +34,9 @@ enum Role {
 inline QHash<QString, QUrl> parseBadges(const QJsonObject &root)
 {
     QHash<QString, QUrl> result;
-    for (const auto &value : root.value("data").toArray()) {
+    for (const auto value : root.value("data").toArray()) {
         const auto set = value.toObject();
-        for (const auto &version : set.value("versions").toArray()) {
+        for (const auto version : set.value("versions").toArray()) {
             const auto badge = version.toObject();
             const QUrl url(badge.value("image_url_2x").toString(badge.value("image_url_1x").toString()));
             if (!set.value("set_id").toString().isEmpty() && !badge.value("id").toString().isEmpty() &&
@@ -158,7 +158,7 @@ class Delegate final : public QStyledItemDelegate {
         } else {
             const auto fragments = index.data(Fragments).value<QJsonArray>();
             if (fragments.isEmpty()) html += index.data(Text).toString().toHtmlEscaped();
-            else for (const auto &value : fragments) {
+            else for (const auto value : fragments) {
                 const auto fragment = value.toObject();
                 const QString emote = fragment.value("emote").toObject().value("id").toString();
                 if (fragment.contains("image_url")) html += imageTag(fragment.value("image_url").toString(), 24);

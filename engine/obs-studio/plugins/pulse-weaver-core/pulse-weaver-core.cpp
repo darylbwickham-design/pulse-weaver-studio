@@ -221,7 +221,7 @@ QString protectCredential(const QString &plain)
 		return {};
 #ifdef __APPLE__
 	return PulseAppCredentials::protect(plain);
-#endif
+#else
 #ifdef _WIN32
 	const QByteArray input = plain.toUtf8();
 	DATA_BLOB in{DWORD(input.size()), reinterpret_cast<BYTE *>(const_cast<char *>(input.constData()))};
@@ -234,6 +234,7 @@ QString protectCredential(const QString &plain)
 	}
 #endif
 	return {};
+#endif
 }
 
 QString unprotectCredential(const QString &stored)
@@ -242,7 +243,7 @@ QString unprotectCredential(const QString &stored)
 		return {};
 #ifdef __APPLE__
 	return PulseAppCredentials::reveal(stored);
-#endif
+#else
 #ifdef _WIN32
 	QByteArray input = QByteArray::fromBase64(stored.toLatin1());
 	DATA_BLOB in{DWORD(input.size()), reinterpret_cast<BYTE *>(input.data())};
@@ -255,6 +256,7 @@ QString unprotectCredential(const QString &stored)
 	}
 #endif
 	return {};
+#endif
 }
 
 QByteArray formBody(const QList<QPair<QString, QString>> &fields)
@@ -742,7 +744,7 @@ private:
 			return;
 		QStringList badges;
 		QHash<QString, QUrl> badgeImages;
-		for (const QJsonValue &badgeValue : event.value("badges").toArray()) {
+		for (const QJsonValue badgeValue : event.value("badges").toArray()) {
 			const QJsonObject badge = badgeValue.toObject();
 			const QString label = badge.value("set_id").toString(badge.value("name").toString());
 			const QString key = label + "/" + badge.value("id").toString();
@@ -819,7 +821,7 @@ private:
 			userId = json.value("user_id").toString();
 			accountName = json.value("login").toString();
 			grantedScopes.clear();
-			for (const auto &scope : json.value("scopes").toArray()) grantedScopes << scope.toString();
+			for (const auto scope : json.value("scopes").toArray()) grantedScopes << scope.toString();
 			loadChatBadges();
 			saveLogin();
 			updateUi();
@@ -1557,7 +1559,7 @@ private:
 			if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
 				mainWindow->setProperty("pulseWeaverKickReceiveReady", true);
 			const QJsonObject json = QJsonDocument::fromJson(body).object();
-			for (const QJsonValue &value : json.value("events").toArray()) {
+			for (const QJsonValue value : json.value("events").toArray()) {
 				const QJsonObject envelope = value.toObject();
 				const QString type = envelope.value("type").toString();
 				const QJsonObject payload = envelope.value("payload").toObject();
@@ -2009,7 +2011,7 @@ public:
 					QStringList badges;
 					QHash<QString, QUrl> badgeImages;
 					const QJsonObject identity = sender.value("identity").toObject();
-					for (const QJsonValue &value : identity.value("badges").toArray(sender.value("badges").toArray())) {
+					for (const QJsonValue value : identity.value("badges").toArray(sender.value("badges").toArray())) {
 						const QJsonObject badge = value.toObject();
 						const QString name = badge.value("type").toString(badge.value("name").toString(badge.value("text").toString(value.toString())));
 						if (name.isEmpty())
@@ -2543,7 +2545,7 @@ private:
 					return;
 				streamCategory->blockSignals(true);
 				streamCategory->clear();
-				for (const QJsonValue &value : results) {
+				for (const QJsonValue value : results) {
 					const QJsonObject category = value.toObject();
 					streamCategory->addItem(category.value("name").toString(), category.value("id").toString());
 				}
@@ -3350,7 +3352,7 @@ private:
 			aiStatus->setText("No AI restore point is available.");
 			return;
 		}
-		for (const QJsonValue &value : lastAiRestore.value("changedSources").toArray()) {
+		for (const QJsonValue value : lastAiRestore.value("changedSources").toArray()) {
 			const QJsonObject before = value.toObject();
 			obs_source_t *sceneSource = obs_get_source_by_name(before.value("scene").toString().toUtf8().constData());
 			obs_scene_t *scene = sceneSource ? obs_scene_from_source(sceneSource) : nullptr;
@@ -3370,10 +3372,10 @@ private:
 		const int ruleCount = lastAiRestore.value("ruleCount").toInt(int(rules.size()));
 		if (ruleCount >= 0 && ruleCount <= int(rules.size()))
 			rules.resize(size_t(ruleCount));
-		for (const QJsonValue &value : lastAiRestore.value("createdOverlays").toArray())
+		for (const QJsonValue value : lastAiRestore.value("createdOverlays").toArray())
 			if (overlays)
 				overlays->removeOverlay(value.toString());
-		for (const QJsonValue &value : lastAiRestore.value("createdScenes").toArray()) {
+		for (const QJsonValue value : lastAiRestore.value("createdScenes").toArray()) {
 			obs_source_t *source = obs_get_source_by_name(value.toString().toUtf8().constData());
 			if (source) {
 				obs_source_remove(source);
@@ -3439,7 +3441,7 @@ private:
 					{"createdScenes", QJsonArray{}}, {"createdOverlays", QJsonArray{}}, {"changedSources", QJsonArray{}}};
 				QStringList applied;
 				int appliedCount = 0;
-				for (const QJsonValue &value : response.object().value("operations").toArray())
+				for (const QJsonValue value : response.object().value("operations").toArray())
 					appliedCount += applyAiOperation(value.toObject(), restore, applied) ? 1 : 0;
 				if (appliedCount > 0) {
 					saveAiRestore(restore);

@@ -1738,7 +1738,7 @@ int GetAppConfigPath(char *path, size_t size, const char *name)
 #ifdef __APPLE__
 	const QByteArray isolated = PulseMacPaths::path(name).toUtf8();
 	return snprintf(path, size, "%s", isolated.constData());
-#endif
+#else
 #if ALLOW_PORTABLE_MODE
 	if (portable_mode) {
 		if (name && *name) {
@@ -1752,13 +1752,14 @@ int GetAppConfigPath(char *path, size_t size, const char *name)
 #else
 	return os_get_config_path(path, size, name);
 #endif
+#endif
 }
 
 char *GetAppConfigPathPtr(const char *name)
 {
 #ifdef __APPLE__
 	return bstrdup(PulseMacPaths::path(name).toUtf8().constData());
-#endif
+#else
 #if ALLOW_PORTABLE_MODE
 	if (portable_mode) {
 		char path[512];
@@ -1773,6 +1774,7 @@ char *GetAppConfigPathPtr(const char *name)
 	}
 #else
 	return os_get_config_path_ptr(name);
+#endif
 #endif
 }
 

@@ -443,7 +443,7 @@ obs_canvas_t *pulseConfigureOutputCanvas(const QString &provider, const QJsonObj
 		return nullptr;
 	}
 	QSet<QString> excluded;
-	for (const QJsonValue &value : assignment.value("excluded").toArray())
+	for (const QJsonValue value : assignment.value("excluded").toArray())
 		excluded.insert(value.toString());
 	/* The common path needs no scene copy at all.  Routing the native scene
 	 * directly preserves the vertical canvas' exact coordinate space and
@@ -510,9 +510,10 @@ QString pulseDefaultObsDataPath()
 {
 #ifdef __APPLE__
 	return QDir::homePath() + "/Library/Application Support/obs-studio";
-#endif
+#else
 	const QString roaming = qEnvironmentVariable("APPDATA");
 	return roaming.isEmpty() ? QString() : QDir(roaming).filePath("obs-studio");
+#endif
 }
 
 QString pulseNormaliseObsDataPath(QString path)
@@ -1240,9 +1241,9 @@ void OBSBasic::InitPulseWeaverShell()
 	if (!chatFixture.isEmpty()) QTimer::singleShot(800, chatFeed, [chatFeed, chatFixture] {
 		QFile file(chatFixture);
 		if (!file.open(QIODevice::ReadOnly)) return;
-		for (const auto &value : QJsonDocument::fromJson(file.readAll()).array()) {
+		for (const auto value : QJsonDocument::fromJson(file.readAll()).array()) {
 			const auto row = value.toObject();
-			QStringList badges; for (const auto &badge : row.value("badges").toArray()) badges << badge.toString();
+			QStringList badges; for (const auto badge : row.value("badges").toArray()) badges << badge.toString();
 			QHash<QString, QUrl> images;
 			const auto urls = row.value("images").toObject();
 			for (auto it = urls.begin(); it != urls.end(); ++it) images.insert(it.key(), QUrl(it.value().toString()));
@@ -2348,7 +2349,7 @@ void OBSBasic::SetPulseWeaverCameraOutput(bool vertical)
 static void pulseRestoreImportedVerticalTransforms(const QJsonObject &root)
 {
 	QStringList verticalCanvasUuids;
-	for (const QJsonValue &value : root.value("canvases").toArray()) {
+	for (const QJsonValue value : root.value("canvases").toArray()) {
 		const QJsonObject info = value.toObject().value("info").toObject();
 		const QString name = info.value("name").toString();
 		if (name.contains("vertical", Qt::CaseInsensitive))
@@ -2357,7 +2358,7 @@ static void pulseRestoreImportedVerticalTransforms(const QJsonObject &root)
 	obs_canvas_t *canvas = PulseWeaverGetVerticalCanvas();
 	if (!canvas)
 		return;
-	for (const QJsonValue &sourceValue : root.value("sources").toArray()) {
+	for (const QJsonValue sourceValue : root.value("sources").toArray()) {
 		const QJsonObject sourceJson = sourceValue.toObject();
 		if (!verticalCanvasUuids.contains(sourceJson.value("canvas_uuid").toString()))
 			continue;
@@ -2368,7 +2369,7 @@ static void pulseRestoreImportedVerticalTransforms(const QJsonObject &root)
 			obs_source_release(sceneSource);
 			continue;
 		}
-		for (const QJsonValue &itemValue : sourceJson.value("settings").toObject().value("items").toArray()) {
+		for (const QJsonValue itemValue : sourceJson.value("settings").toObject().value("items").toArray()) {
 			const QJsonObject itemJson = itemValue.toObject();
 			const QByteArray uuid = itemJson.value("source_uuid").toString().toUtf8();
 			struct Match { QByteArray uuid; obs_sceneitem_t *item = nullptr; } match{uuid};
@@ -2943,7 +2944,7 @@ void OBSBasic::RefreshPulseWeaverStages()
 	QSignalBlocker blocker(pulseStageSelector);
 	pulseStageUpdating = true;
 	pulseStageSelector->clear();
-	for (const QJsonValue &value : stages) {
+	for (const QJsonValue value : stages) {
 		const QJsonObject stage = value.toObject();
 		const QString name = stage.value("name").toString("Stage");
 		QStringList summary;
@@ -3464,7 +3465,7 @@ void OBSBasic::ConfigurePulseWeaverAudioRouting(const QJsonObject &stage)
 	};
 	auto exclusions = [&stage](const QString &provider, const QString &route) {
 		QSet<QString> result;
-		for (const QJsonValue &value : pulseStageAssignment(stage, provider, route).value("excluded").toArray())
+		for (const QJsonValue value : pulseStageAssignment(stage, provider, route).value("excluded").toArray())
 			result.insert(value.toString());
 		return result;
 	};
@@ -3726,7 +3727,7 @@ void OBSBasic::ManagePulseWeaverStages()
 				exclude->setObjectName("StageOutputExclude" + suffix);
 				exclude->setMaximumWidth(84);
 				QStringList excluded;
-				for (const QJsonValue &value : assignment.value("excluded").toArray()) excluded << value.toString();
+				for (const QJsonValue value : assignment.value("excluded").toArray()) excluded << value.toString();
 				exclude->setProperty("excluded", excluded);
 				auto refreshExclude = [exclude] {
 					const int count = exclude->property("excluded").toStringList().size();
@@ -3849,7 +3850,7 @@ void OBSBasic::ManagePulseWeaverStages()
 		addTransitionControls(5, 6, "horizontalTransition", "horizontalDurationMs");
 		addTransitionControls(7, 8, "verticalTransition", "verticalDurationMs");
 	};
-	for (const QJsonValue &value : loadPulseWeaverStages())
+	for (const QJsonValue value : loadPulseWeaverStages())
 		addRow(value.toObject());
 	connect(table, &QTableWidget::itemChanged, &dialog, [saveTable](QTableWidgetItem *) { saveTable(); });
 
