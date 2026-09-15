@@ -24,7 +24,7 @@ exe="$app/Contents/MacOS/Pulse Weaver Mac Preview"
 # Synthetic Keychain round-trip and isolated path tests on the actual Mac builder.
 cmake -S tests/MacPreview -B tests/MacPreview/build -DCMAKE_PREFIX_PATH="$project_root/engine/obs-studio/.deps/obs-deps-qt6-2026-07-15-universal"
 cmake --build tests/MacPreview/build --parallel 3
-tests/MacPreview/build/PulseMacPreviewTests
+tests/MacPreview/build/PulseMacPreviewTests "$app"
 codesign --force --deep --sign - --preserve-metadata=entitlements,requirements,flags "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 "$exe" --version

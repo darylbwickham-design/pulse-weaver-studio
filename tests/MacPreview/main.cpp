@@ -1,5 +1,6 @@
 #include "../../engine/obs-studio/shared/qt/PulseAppCredentials.hpp"
 #include <QCoreApplication>
+#include <QSslSocket>
 #include <cstdio>
 #include <cstdlib>
 static void check(bool ok, const char *message) {
@@ -7,6 +8,9 @@ static void check(bool ok, const char *message) {
 }
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
+    check(argc == 2, "pass the staged application bundle");
+    QCoreApplication::setLibraryPaths({QString::fromUtf8(argv[1]) + "/Contents/PlugIns"});
+    check(QSslSocket::supportsSsl(), "TLS works using bundled Qt plugins");
     const QString root = PulseMacPaths::root();
     check(root == QDir::homePath() + "/Library/Application Support/Pulse Weaver Mac Preview", "separate settings root");
     check(PulseMacPaths::path(nullptr) == root, "null path");

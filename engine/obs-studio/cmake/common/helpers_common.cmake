@@ -234,6 +234,9 @@ function(find_qt_plugins)
     imageformats
     iconengines
   )
+  if(OS_MACOS)
+    list(APPEND qt_plugins_Network tls)
+  endif()
   list(APPEND qt_plugins_Gui platforminputcontexts)
   list(APPEND qt_plugins_Sql sqldrivers)
   list(APPEND qt_plugins_3dRender sceneparsers geometryloaders)
