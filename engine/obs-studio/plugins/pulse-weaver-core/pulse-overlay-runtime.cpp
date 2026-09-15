@@ -152,7 +152,7 @@ OverlayDocument documentFromJson(const QJsonObject &json)
 	document.customHtml = json.value("customHtml").toString();
 	document.customCss = json.value("customCss").toString();
 	document.customJs = json.value("customJs").toString();
-	for (const QJsonValue &value : json.value("elements").toArray())
+	for (const QJsonValue value : json.value("elements").toArray())
 		document.elements.push_back(elementFromJson(value.toObject()));
 	return document;
 }
@@ -335,7 +335,7 @@ struct PulseOverlayRuntime::Impl {
 		QFile file(storePath);
 		if (file.open(QIODevice::ReadOnly)) {
 			const QJsonDocument json = QJsonDocument::fromJson(file.readAll());
-			for (const QJsonValue &value : json.object().value("overlays").toArray())
+			for (const QJsonValue value : json.object().value("overlays").toArray())
 				documents.push_back(documentFromJson(value.toObject()));
 		}
 		if (documents.empty()) {
