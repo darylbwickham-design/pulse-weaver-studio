@@ -58,8 +58,8 @@ add_obs_plugin(
     PLATFORMS WINDOWS MACOS LINUX
     WITH_MESSAGE
 )
-add_obs_plugin(pulse-weaver-core PLATFORMS WINDOWS)
-add_obs_plugin(pulse-weaver-sample-clock PLATFORMS WINDOWS)
+add_obs_plugin(pulse-weaver-core PLATFORMS WINDOWS MACOS)
+add_obs_plugin(pulse-weaver-sample-clock PLATFORMS WINDOWS MACOS)
 add_obs_plugin(image-source)
 add_obs_plugin(linux-alsa PLATFORMS LINUX FREEBSD OPENBSD)
 add_obs_plugin(linux-capture PLATFORMS LINUX FREEBSD OPENBSD)
