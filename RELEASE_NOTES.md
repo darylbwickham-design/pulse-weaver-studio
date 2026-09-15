@@ -1,9 +1,11 @@
-# Public Dist 0.03
+# Pulse Weaver 1.12.0
 
-YouTube chat now follows the live chat attached to each new broadcast instead of keeping one earlier chat identity. Landscape and portrait broadcasts are discovered and polled independently, first-page messages are retained, outgoing messages reach each active route without duplicates, and moderation targets the exact chat that supplied the message. Temporary chat-ID and API failures retry with visible status feedback.
+The Stage exclusion picker now lists audio inputs from other scenes and global devices, marked (audio), alongside sources in the selected programme scene. Sources appear once, including inactive audio inputs that a future Stage may activate. Exclusions save the original OBS source name and use existing output audio routing. Private internal sources remain hidden.
 
-Kick's visible Show Control route is now the authoritative route. The native Lumia bridge publishes route changes immediately, and the included Lumia plugin 1.1.3 refreshes the current output plan before Start Show or Start Platform. A newly enabled Kick, Twitch or YouTube route can no longer be skipped because Lumia held an older snapshot. End Show remains an explicit stop operation and all Lumia alerts remain off by default.
+For YouTube Dual, exclude Spotify on the 16:9 row and leave it included on 9:16. Kick and routed recordings also use Stage audio exclusions. Twitch Dual currently shares one audio exclusion mix across its two formats.
 
-The public build contains no developer registrations, signed-in accounts or personal configuration. Testers enter their own Twitch, Kick and YouTube app details in Action → Connections; client secrets are protected locally with Windows DPAPI.
+Version 1.12.0 marks the baseline for the next development focus: improving the Camera tab. Camera improvements follow in subsequent changes.
 
-Validation covers the native frontend and core build, dual-route YouTube chat/session behavior, bounded chat rendering, and the Lumia action suite. These automated fixtures do not start real platform broadcasts.
+The public preview retains its separate installation folder and tester-owned platform app registrations. Lumia companion 1.1.3 remains compatible.
+
+Validation: native frontend build, StageExclusions libobs regression, release archive parity, credential audit and installer payload verification.

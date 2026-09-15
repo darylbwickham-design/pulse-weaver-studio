@@ -3,6 +3,7 @@
 #include "../../shared/qt/PulseWindowChrome.hpp"
 #include <QActionGroup>
 #include "../../shared/qt/PulseLumiaOutput.hpp"
+#include "../../shared/qt/PulseStageExclusions.hpp"
 #include <obs-output-timing.h>
 /******************************************************************************
     Pulse Weaver native product shell
@@ -3744,24 +3745,22 @@ void OBSBasic::ManagePulseWeaverStages()
 					sceneSource = obs_get_source_by_name(sceneName.toUtf8().constData());
 				}
 				obs_scene_t *scene = sceneSource ? obs_scene_from_source(sceneSource) : nullptr;
-				QStringList names;
-				if (scene)
-					obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
-						obs_source_t *source = obs_sceneitem_get_source(item);
-						if (source) static_cast<QStringList *>(opaque)->append(QString::fromUtf8(obs_source_get_name(source)));
-						return true;
-					}, &names);
+				const auto sources = PulseStageExclusionSources(scene);
 				obs_source_release(sceneSource);
 				QDialog picker(table);
 				picker.setWindowTitle("Exclude sources from this output");
 				picker.resize(440, 480);
 				auto *pickerLayout = new QVBoxLayout(&picker);
-				pickerLayout->addWidget(new QLabel("Checked sources stay in the editable base scene but are omitted from this platform output."));
+				auto *explanation = new QLabel("Checked sources are excluded from this output. Sources marked (audio) also include audio inputs from other scenes and global devices.");
+				explanation->setWordWrap(true);
+				pickerLayout->addWidget(explanation);
 				auto *list = new QListWidget(&picker);
 				const QStringList currentExcluded = exclude->property("excluded").toStringList();
 				const QSet<QString> selectedNames(currentExcluded.cbegin(), currentExcluded.cend());
-				for (const QString &name : names) {
-					auto *item = new QListWidgetItem(name, list);
+				for (auto source = sources.cbegin(); source != sources.cend(); ++source) {
+					const QString &name = source.key();
+					auto *item = new QListWidgetItem(name + (source.value() ? " (audio)" : ""), list);
+					item->setData(Qt::UserRole, name);
 					item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
 					item->setCheckState(selectedNames.contains(name) ? Qt::Checked : Qt::Unchecked);
 				}
@@ -3772,7 +3771,9 @@ void OBSBasic::ManagePulseWeaverStages()
 				pickerLayout->addWidget(buttons);
 				if (picker.exec() == QDialog::Accepted) {
 					QStringList result;
-					for (int i = 0; i < list->count(); ++i) if (list->item(i)->checkState() == Qt::Checked) result << list->item(i)->text();
+					for (int i = 0; i < list->count(); ++i)
+						if (list->item(i)->checkState() == Qt::Checked)
+							result << list->item(i)->data(Qt::UserRole).toString();
 					exclude->setProperty("excluded", result);
 					refreshExclude();
 					saveTable();
