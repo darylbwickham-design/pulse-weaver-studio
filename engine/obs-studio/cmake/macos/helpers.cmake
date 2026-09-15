@@ -58,7 +58,7 @@ function(set_target_properties_obs target)
                    PRODUCT_NAME "Pulse Weaver Mac Preview"
                    ASSETCATALOG_COMPILER_APPICON_NAME AppIcon
                    CURRENT_PROJECT_VERSION ${OBS_BUILD_NUMBER}
-                   MARKETING_VERSION ${OBS_VERSION_CANONICAL}
+                   MARKETING_VERSION 0.1.0
                    GENERATE_INFOPLIST_FILE YES
                    COPY_PHASE_STRIP NO
                    CLANG_ENABLE_OBJC_ARC YES
@@ -243,7 +243,7 @@ function(set_target_properties_obs target)
                    PRODUCT_NAME ${target}
                    PRODUCT_BUNDLE_IDENTIFIER com.obsproject.${target}
                    CURRENT_PROJECT_VERSION ${OBS_BUILD_NUMBER}
-                   MARKETING_VERSION ${OBS_VERSION_CANONICAL}
+                   MARKETING_VERSION 0.1.0
                    GENERATE_INFOPLIST_FILE YES
                    INFOPLIST_FILE ""
                    INFOPLIST_KEY_CFBundleDisplayName ${target}
@@ -278,7 +278,7 @@ function(set_target_properties_obs target)
         PROPERTIES PRODUCT_NAME ${target}
                    PRODUCT_BUNDLE_IDENTIFIER com.obsproject.${target}
                    CURRENT_PROJECT_VERSION ${OBS_BUILD_NUMBER}
-                   MARKETING_VERSION ${OBS_VERSION_CANONICAL}
+                   MARKETING_VERSION 0.1.0
                    GENERATE_INFOPLIST_FILE YES
                    INFOPLIST_KEY_CFBundleDisplayName ${target}
                    INFOPLIST_KEY_NSHumanReadableCopyright "(c) 2012-${CURRENT_YEAR} Lain Bailey"

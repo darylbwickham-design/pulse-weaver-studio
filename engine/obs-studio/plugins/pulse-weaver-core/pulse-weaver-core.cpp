@@ -219,6 +219,9 @@ QString protectCredential(const QString &plain)
 {
 	if (plain.isEmpty())
 		return {};
+#ifdef __APPLE__
+	return PulseAppCredentials::protect(plain);
+#endif
 #ifdef _WIN32
 	const QByteArray input = plain.toUtf8();
 	DATA_BLOB in{DWORD(input.size()), reinterpret_cast<BYTE *>(const_cast<char *>(input.constData()))};
@@ -237,6 +240,9 @@ QString unprotectCredential(const QString &stored)
 {
 	if (stored.isEmpty())
 		return {};
+#ifdef __APPLE__
+	return PulseAppCredentials::reveal(stored);
+#endif
 #ifdef _WIN32
 	QByteArray input = QByteArray::fromBase64(stored.toLatin1());
 	DATA_BLOB in{DWORD(input.size()), reinterpret_cast<BYTE *>(input.data())};
