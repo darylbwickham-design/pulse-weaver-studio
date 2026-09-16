@@ -13,7 +13,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 120
     env:
-      PULSE_MAC_TAG: mac-v0.1.0-alpha.1
+      PULSE_MAC_TAG: mac-v0.1.0-alpha.2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,6 +30,7 @@ jobs:
             artifacts/macos/${{ env.PULSE_MAC_TAG }}/*.dmg
             artifacts/macos/${{ env.PULSE_MAC_TAG }}/*.zip
             artifacts/macos/${{ env.PULSE_MAC_TAG }}/*.tar.gz
+            artifacts/macos/${{ env.PULSE_MAC_TAG }}/*.lumiaplugin
             artifacts/macos/${{ env.PULSE_MAC_TAG }}/SHA256SUMS.txt
             artifacts/macos/${{ env.PULSE_MAC_TAG }}/README-MAC.txt
           if-no-files-found: error
@@ -40,6 +41,6 @@ jobs:
         run: |
           set -euo pipefail
           out="artifacts/macos/$PULSE_MAC_TAG"
-          gh release create "$PULSE_MAC_TAG" --target "$GITHUB_SHA" --title "Pulse Weaver Mac Preview 0.1.0 alpha 1 — Apple Silicon" --notes-file packaging/macos/README-MAC.txt --draft --prerelease --latest=false
-          gh release upload "$PULSE_MAC_TAG" "$out"/*.dmg "$out"/*.zip "$out"/*.tar.gz "$out/SHA256SUMS.txt" "$out/README-MAC.txt"
+          gh release create "$PULSE_MAC_TAG" --target "$GITHUB_SHA" --title "Pulse Weaver Mac Preview 0.1.0 alpha 2 — Apple Silicon" --notes-file packaging/macos/README-MAC.txt --draft --prerelease --latest=false
+          gh release upload "$PULSE_MAC_TAG" "$out"/*.dmg "$out"/*.zip "$out"/*.tar.gz "$out"/*.lumiaplugin "$out/SHA256SUMS.txt" "$out/README-MAC.txt"
           gh release edit "$PULSE_MAC_TAG" --draft=false --latest=false

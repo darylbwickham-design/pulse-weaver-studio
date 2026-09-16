@@ -1,4 +1,4 @@
-Pulse Weaver Mac Preview 0.1.0 alpha 1 — Apple Silicon
+Pulse Weaver Mac Preview 0.1.0 alpha 2 — Apple Silicon
 
 Requires an Apple Silicon Mac (M1/M2/M3/M4 or newer), macOS 13 or later.
 This is an experimental Mac branch based on Windows 1.12.1. It has its own
@@ -33,3 +33,10 @@ Build verification is not a guarantee of a successful live platform stream.
 
 To remove the app, move only Pulse Weaver Mac Preview.app to Trash.
 Keep its settings folder if you want to reinstall. Existing OBS data is separate.
+
+New in alpha 2: Studio > Updates checks the separate Apple Silicon preview
+channel and verifies GitHub downloads. Install this alpha manually once to
+enable future checks. Updating opens a verified DMG; close the app and drag
+the new copy to Applications. Your settings remain in your Library folder.
+The Lumia 1.1.3 companion is included in the DMG and as a release download.
+Import its .lumiaplugin file into Lumia Stream; its alerts default to off.
