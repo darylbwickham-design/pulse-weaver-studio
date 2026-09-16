@@ -5,15 +5,15 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>PulseWeaver-Public-Dist-1.12.2-Setup</AssemblyName>
+    <AssemblyName>PulseWeaver-Public-Dist-1.12.3-Setup</AssemblyName>
     <Product>Pulse Weaver Streaming Studio Setup</Product>
-    <Version>1.12.2</Version>
+    <Version>1.12.3</Version>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
     <ApplicationIcon>..\..\engine\obs-studio\frontend\cmake\windows\pulseweaver.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="..\..\dist\PulseWeaverStudio-v1.12.2-public.zip" LogicalName="PulseWeaver.Payload.zip" />
+    <EmbeddedResource Include="..\..\dist\PulseWeaverStudio-v1.12.3-public.zip" LogicalName="PulseWeaver.Payload.zip" />
   </ItemGroup>
 </Project>

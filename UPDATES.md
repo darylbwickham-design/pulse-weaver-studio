@@ -12,8 +12,8 @@ without this identity do not guess an installation channel.
 
 | Channel | Release tag | Required asset |
 | --- | --- | --- |
-| windows-public | v1.12.2 | PulseWeaver-Public-Dist-1.12.2-Setup.exe |
-| windows-private | v1.12.2 | PulseWeaver-Setup-1.12.2-BETA.exe |
+| windows-public | v1.12.3 | PulseWeaver-Public-Dist-1.12.3-Setup.exe |
+| windows-private | v1.12.3 | PulseWeaver-Setup-1.12.3-BETA.exe |
 | mac-arm64-preview | mac-v0.1.0-alpha.2 | PulseWeaver-Mac-mac-v0.1.0-alpha.2-AppleSilicon.dmg |
 
 Windows 1.12.2 and Mac alpha 2 introduce the updater. Windows installers use

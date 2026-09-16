@@ -4,6 +4,7 @@
 #include <QActionGroup>
 #include "../../shared/qt/PulseLumiaOutput.hpp"
 #include "../../shared/qt/PulseStageExclusions.hpp"
+#include "../../shared/qt/PulseOutputSceneSync.hpp"
 #include "../../shared/qt/PulseGitHubUpdater.hpp"
 #include <obs-output-timing.h>
 /******************************************************************************
@@ -143,6 +144,7 @@ obs_encoder_t *pulseYouTubeSecondAudioEncoder = nullptr;
 QString pulseYouTubePreparedMode;
 QHash<QString, obs_canvas_t *> pulseOutputCanvases;
 QHash<QString, OBSSource> pulseCanvasStingerTransitions;
+QHash<QString, std::shared_ptr<PulseOutputSceneTransformSync>> pulseOutputSceneTransformSyncs;
 QHash<QString, uint32_t> pulseAudioMixerBaselines;
 uint32_t pulseOwnedAudioMixerMask = 0;
 obs_output_t *pulseRecordingHorizontalOutput = nullptr;
@@ -157,6 +159,7 @@ obs_encoder_t *pulseRecordingVerticalAudioEncoder = nullptr;
  * while no encoder can still be bound to its video context. */
 static void pulseReleaseOutputCanvas(const QString &key)
 {
+	pulseOutputSceneTransformSyncs.remove(key);
 	if (obs_canvas_t *canvas = pulseOutputCanvases.take(key)) {
 		obs_canvas_remove(canvas);
 		obs_canvas_release(canvas);
@@ -469,6 +472,10 @@ obs_canvas_t *pulseConfigureOutputCanvas(const QString &provider, const QJsonObj
 			return true;
 		}, &excluded);
 		target = obs_scene_get_source(duplicate);
+		pulseOutputSceneTransformSyncs.insert(
+			key, std::make_shared<PulseOutputSceneTransformSync>(base, duplicate));
+	} else {
+		pulseOutputSceneTransformSyncs.remove(key);
 	}
 
 	/* Stingers create an internal media source. Reusing one private copy per
@@ -2679,6 +2686,7 @@ void OBSBasic::ShutdownPulseWeaverShell()
 		pulseKickOutputControl->setProperty("command", "stop");
 		pulseKickOutputControl->click();
 	}
+	pulseOutputSceneTransformSyncs.clear();
 	for (obs_canvas_t *canvas : std::as_const(pulseOutputCanvases)) {
 		obs_canvas_remove(canvas);
 		obs_canvas_release(canvas);

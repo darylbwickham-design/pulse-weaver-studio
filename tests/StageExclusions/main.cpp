@@ -1,4 +1,5 @@
 #include "../../engine/obs-studio/shared/qt/PulseStageExclusions.hpp"
+#include "../../engine/obs-studio/shared/qt/PulseOutputSceneSync.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <atomic>
@@ -63,7 +64,7 @@ int main(int argc, char **argv)
 	obs_source_t *visual = obs_source_create("exclusion_video", "Camera", nullptr, nullptr);
 	obs_source_t *unrelated = obs_source_create("exclusion_video", "Unrelated camera", nullptr, nullptr);
 	check(scene && audio && inactive && internal && visual && unrelated, "create fixtures");
-	obs_scene_add(scene, visual);
+	obs_sceneitem_t *landscapeCamera = obs_scene_add(scene, visual);
 	check(!PulseStageNeedsVideoExclusion(scene, {"spotifysound (audio)"}), "global audio needs no video duplicate");
 	check(!PulseStageNeedsVideoExclusion(scene, {"Missing source"}), "stale exclusion needs no video duplicate");
 	check(PulseStageNeedsVideoExclusion(scene, {"Camera"}), "scene camera requires video exclusion");
@@ -80,6 +81,25 @@ int main(int argc, char **argv)
 	obs_scene_add(scene, audio);
 	check(PulseStageExclusionSources(scene).size() == 3, "repeated scene/global audio appears once");
 	check(PulseStageExclusionSources(nullptr).size() == 2, "audio collection works without a scene");
+	obs_scene_t *landscapeCopy = obs_scene_duplicate(scene, "Excluded landscape", OBS_SCENE_DUP_PRIVATE_REFS);
+	check(landscapeCopy != nullptr, "private landscape exclusion scene");
+	obs_sceneitem_t *copiedLandscapeCamera = obs_scene_find_source(landscapeCopy, "Camera");
+	{
+		PulseOutputSceneTransformSync transformSync(scene, landscapeCopy);
+		vec2 livePosition{420.0f, 260.0f}, liveScale{0.65f, 0.65f};
+		obs_sceneitem_set_pos(landscapeCamera, &livePosition);
+		obs_sceneitem_set_scale(landscapeCamera, &liveScale);
+		vec2 copiedPosition{}, copiedScale{};
+		obs_sceneitem_get_pos(copiedLandscapeCamera, &copiedPosition);
+		obs_sceneitem_get_scale(copiedLandscapeCamera, &copiedScale);
+		check(std::fabs(copiedPosition.x - livePosition.x) < 0.01f &&
+			      std::fabs(copiedPosition.y - livePosition.y) < 0.01f,
+		      "live 16:9 camera position reaches the active exclusion copy");
+		check(std::fabs(copiedScale.x - liveScale.x) < 0.001f &&
+			      std::fabs(copiedScale.y - liveScale.y) < 0.001f,
+		      "live 16:9 camera scale reaches the active exclusion copy");
+	}
+	obs_scene_release(landscapeCopy);
 	videoInfo.base_width = videoInfo.output_width = 1080;
 	videoInfo.base_height = videoInfo.output_height = 1920;
 	obs_canvas_t *portrait = obs_canvas_create("Portrait regression", &videoInfo, ACTIVATE | EPHEMERAL);
@@ -102,6 +122,33 @@ int main(int argc, char **argv)
 	      "portrait copy preserves camera position");
 	check(std::fabs(copiedScale.x - scale.x) < 0.001f && std::fabs(copiedScale.y - scale.y) < 0.001f,
 	      "portrait copy preserves camera scale");
+	{
+		PulseOutputSceneTransformSync transformSync(portraitScene, copy);
+		vec2 livePosition{360.0f, 480.0f}, liveScale{0.5f, 0.5f};
+		obs_sceneitem_crop liveCrop{8, 16, 24, 32};
+		/* Crop setters are folded into the next item-transform notification by
+		 * libobs, just as the editor's deferred transform update does. */
+		obs_sceneitem_set_crop(camera, &liveCrop);
+		obs_sceneitem_set_pos(camera, &livePosition);
+		obs_sceneitem_set_scale(camera, &liveScale);
+		obs_sceneitem_get_pos(copiedCamera, &copiedPosition);
+		obs_sceneitem_get_scale(copiedCamera, &copiedScale);
+		obs_sceneitem_crop copiedCrop{};
+		obs_sceneitem_get_crop(copiedCamera, &copiedCrop);
+		check(std::fabs(copiedPosition.x - livePosition.x) < 0.01f &&
+			      std::fabs(copiedPosition.y - livePosition.y) < 0.01f,
+		      "live camera position reaches the active exclusion copy");
+		check(std::fabs(copiedScale.x - liveScale.x) < 0.001f &&
+			      std::fabs(copiedScale.y - liveScale.y) < 0.001f,
+		      "live camera scale reaches the active exclusion copy");
+		check(copiedCrop.left == liveCrop.left && copiedCrop.top == liveCrop.top &&
+			      copiedCrop.right == liveCrop.right && copiedCrop.bottom == liveCrop.bottom,
+		      "live camera crop reaches the active exclusion copy");
+		obs_sceneitem_crop noCrop{};
+		obs_sceneitem_set_crop(camera, &noCrop);
+		obs_sceneitem_set_pos(camera, &position);
+		obs_sceneitem_set_scale(camera, &scale);
+	}
 	obs_sceneitem_set_visible(copiedCamera, false);
 	check(obs_sceneitem_visible(camera), "output exclusions leave original scene visible");
 	obs_sceneitem_set_visible(copiedCamera, true);
@@ -148,5 +195,5 @@ int main(int argc, char **argv)
 	}
 	check(destroyed.load() == 5, "fixture sources released before shutdown");
 	obs_shutdown();
-	std::puts("PASS: audio picker and exclusions, portrait copy dimensions/position/scale, output video and scene isolation.");
+	std::puts("PASS: exclusions, portrait output, scene isolation, and live transform synchronisation.");
 }
