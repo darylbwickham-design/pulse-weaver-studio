@@ -4,6 +4,7 @@
 #include <QActionGroup>
 #include "../../shared/qt/PulseLumiaOutput.hpp"
 #include "../../shared/qt/PulseStageExclusions.hpp"
+#include "../../shared/qt/PulseGitHubUpdater.hpp"
 #include <obs-output-timing.h>
 /******************************************************************************
     Pulse Weaver native product shell
@@ -987,6 +988,20 @@ void OBSBasic::InitPulseWeaverShell()
 	studioMenuButton->setObjectName("PulseWeaverUtility");
 	pulseIcon(studioMenuButton, "studio");
 	auto *studioMenu = new QMenu(studioMenuButton);
+	new PulseUpdates::Updater(this, studioMenu, [] {
+		bool active = false;
+		obs_enum_outputs([](void *state, obs_output_t *output) {
+			if (obs_output_active(output))
+				*static_cast<bool *>(state) = true;
+			return true;
+		}, &active);
+		return active;
+	});
+	// These upstream actions would contact OBS's update/repair service.
+	ui->actionCheckForUpdates->setVisible(false);
+#ifdef _WIN32
+	ui->actionRepair->setVisible(false);
+#endif
 	auto *appearanceMenu = studioMenu->addMenu("Appearance");
 	appearanceMenu->setObjectName("PulseWeaverAppearanceMenu");
 	auto *themeActions = new QActionGroup(appearanceMenu);

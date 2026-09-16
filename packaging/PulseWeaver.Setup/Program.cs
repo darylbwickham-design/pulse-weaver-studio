@@ -34,6 +34,8 @@ internal static class Program
         var payloadFiles = PayloadFiles();
         progress(14, "Removing obsolete runtime files…"); CleanInstalledPayload(InstallDirectory, payloadFiles);
         progress(18, "Installing the Pulse Weaver native studio…"); ExtractPayload();
+        WriteUpdateIdentity(InstallDirectory);
+        payloadFiles.Add(Path.Combine("bin", "64bit", "pulseweaver-update.json"));
         File.WriteAllLines(Path.Combine(InstallDirectory, InstallManifestName), payloadFiles.OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
         progress(70, "Verifying the isolated portable runtime…"); if (!File.Exists(AppPath)) throw new InvalidOperationException("The native application payload is incomplete.");
         progress(75, "Applying the interface language…"); WriteLanguage(languageCode);
@@ -41,6 +43,13 @@ internal static class Program
         progress(80, "Creating shortcuts…"); var startMenu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", "Pulse Weaver Public Preview.lnk"); CreateShortcut(startMenu, AppPath, "Pulse Weaver Public Preview"); if (desktopShortcut) CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Pulse Weaver Public Preview.lnk"), AppPath, "Pulse Weaver Public Preview");
         progress(90, "Registering maintenance and update support…"); using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PulseWeaverPublicPreview")) { key.SetValue("DisplayName", ProductName); key.SetValue("DisplayVersion", Version); key.SetValue("Publisher", "Pulse Weaver"); key.SetValue("InstallLocation", InstallDirectory); key.SetValue("DisplayIcon", AppPath); key.SetValue("UninstallString", '"' + UninstallerPath + '"' + " /uninstall"); key.SetValue("ModifyPath", '"' + UninstallerPath + '"'); key.SetValue("NoModify", 0, RegistryValueKind.DWord); key.SetValue("NoRepair", 0, RegistryValueKind.DWord); key.SetValue("EstimatedSize", InstalledSizeKb(InstallDirectory), RegistryValueKind.DWord); }
         progress(100, "Pulse Weaver is ready."); if (launch) Process.Start(new ProcessStartInfo(AppPath) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(AppPath)! });
+    }
+
+    static void WriteUpdateIdentity(string destination)
+    {
+        var identity = new { schema = 1, channel = "windows-public", tag = "v" + Version };
+        File.WriteAllText(Path.Combine(destination, "bin", "64bit", "pulseweaver-update.json"),
+            System.Text.Json.JsonSerializer.Serialize(identity));
     }
 
     internal static int Uninstall()
@@ -67,6 +76,10 @@ internal static class Program
             CleanInstalledPayload(root, payloadFiles);
             if (File.Exists(staleBinary) || !File.Exists(savedConfig)) return 4;
             ExtractPayload(root);
+            WriteUpdateIdentity(root);
+            using (var identity = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "bin", "64bit", "pulseweaver-update.json"))))
+                if (identity.RootElement.GetProperty("channel").GetString() != "windows-public" ||
+                    identity.RootElement.GetProperty("tag").GetString() != "v" + Version) return 7;
             var app = Path.Combine(root, "bin", "64bit", "PulseWeaverCore.exe");
             using (var stream = File.OpenRead(app))
                 if (stream.Length <= 1_000_000 || stream.ReadByte() != 'M' || stream.ReadByte() != 'Z') return 2;

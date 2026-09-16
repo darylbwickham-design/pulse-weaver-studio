@@ -977,12 +977,13 @@ int main(int argc, char *argv[])
 	base_get_log_handler(&def_log_handler, nullptr);
 
 	obs_set_cmdline_args(argc, argv);
+	// Pulse Weaver uses its own GitHub release channels on every platform.
+	opt_disable_updater = true;
 
 #if ALLOW_PORTABLE_MODE
 	/* The Pulse Weaver fork never shares OBS's roaming profile.  Portable
 	 * isolation is enforced by the executable itself, not by a launcher. */
 	portable_mode = true;
-	opt_disable_updater = true;
 #endif
 
 	for (int i = 1; i < argc; i++) {
