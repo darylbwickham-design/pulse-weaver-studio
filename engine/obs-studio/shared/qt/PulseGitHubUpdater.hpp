@@ -81,7 +81,7 @@ class Updater : public QObject {
 				return;
 			}
 			const auto items = document.array();
-			for (const auto &item : items)
+			for (const QJsonValue item : items)
 				releases.append(item);
 			if (items.size() == 100) {
 				if (page >= 10)

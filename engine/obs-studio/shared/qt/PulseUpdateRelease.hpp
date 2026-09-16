@@ -63,7 +63,7 @@ inline std::optional<Release> selectRelease(const QJsonArray &releases, const Id
 	if (!bestVersion)
 		return {};
 	std::optional<Release> best;
-	for (const auto &item : releases) {
+	for (const QJsonValue item : releases) {
 		const auto release = item.toObject();
 		if (!release.contains("draft") || release.value("draft").toBool(true))
 			continue;
@@ -73,7 +73,7 @@ inline std::optional<Release> selectRelease(const QJsonArray &releases, const Id
 			continue;
 		const QString name = assetName(candidate);
 		const QString expectedUrl = repository + "/releases/download/" + candidate.tag + "/" + name;
-		for (const auto &value : release.value("assets").toArray()) {
+		for (const QJsonValue value : release.value("assets").toArray()) {
 			const auto asset = value.toObject();
 			const QString digest = asset.value("digest").toString();
 			const auto size = asset.value("size").toInteger();
