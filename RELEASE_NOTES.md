@@ -1,9 +1,18 @@
-# Pulse Weaver 1.12.1
+# Pulse Weaver 1.12.2 — GitHub updates
 
-Fixes portrait output scenes shrinking or moving sources when Stage exclusions are enabled. Private scene copies now retain the original canvas dimensions and relative camera transforms. The preview and broadcast encoder use this same repaired output canvas.
+Adds Studio > Updates with daily automatic checks, a manual check and verified
+GitHub downloads. Checks stay on the installation's Windows public/private
+channel. Installation requires confirmation and all outputs must be stopped.
+The setup preserves shows, connections and local settings.
 
-Audio-only and stale exclusions no longer create unnecessary video scene copies. The Stage picker still lists global and inactive audio inputs with (audio) labels and saves their original names. For YouTube Dual, exclude Spotify on 16:9 and leave it included on 9:16. Twitch Dual continues to share its audio exclusion mix.
+Install this build manually once to enable updates for future releases.
+Existing private installations use PulseWeaver-Setup-1.12.2-BETA.exe.
+Public Preview installations use PulseWeaver-Public-Dist-1.12.2-Setup.exe.
+Both installers contain no developer registrations or personal account tokens.
+Lumia companion 1.1.3 is included. Portrait output and audio exclusions retain
+the fixes from 1.12.1. Mac remains on its separate mac-v preview release line.
 
-This is a repair of the 1.12.0 baseline; the next development focus remains the Camera tab. Public and private installers retain their existing installation folders and preserve user configuration. Lumia companion 1.1.3 remains compatible.
-
-Validation: reproduced the coordinate-space failure against the 1.12.0 runtime; native build; GPU regression covering portrait dimensions, position, scale and actual local output frames; audio exclusions; archive parity; credential audit; installer checks. No live platform broadcast was started.
+Validation: native Windows build; release-channel and asset-validation tests;
+bundled HTTPS backend; installer configuration preservation, identity, layout,
+language and private migration checks; credential and archive-parity audits.
+No live broadcast was started as part of release verification.

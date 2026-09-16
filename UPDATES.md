@@ -1,4 +1,4 @@
-# GitHub updates (next build)
+# GitHub updates
 
 Studio → Updates offers a manual check and a daily automatic-check preference.
 Checks read public GitHub Releases without a GitHub token. Failed background
@@ -12,11 +12,11 @@ without this identity do not guess an installation channel.
 
 | Channel | Release tag | Required asset |
 | --- | --- | --- |
-| windows-public | v1.12.2 (example) | PulseWeaver-Public-Dist-1.12.2-Setup.exe |
-| windows-private | v1.12.2 (example) | PulseWeaver-Setup-1.12.2-BETA.exe |
-| mac-arm64-preview | mac-v0.1.0-alpha.2 (example) | PulseWeaver-Mac-mac-v0.1.0-alpha.2-AppleSilicon.dmg |
+| windows-public | v1.12.2 | PulseWeaver-Public-Dist-1.12.2-Setup.exe |
+| windows-private | v1.12.2 | PulseWeaver-Setup-1.12.2-BETA.exe |
+| mac-arm64-preview | mac-v0.1.0-alpha.2 | PulseWeaver-Mac-mac-v0.1.0-alpha.2-AppleSilicon.dmg |
 
-The versions above are examples, not published releases. Windows installers use
+Windows 1.12.2 and Mac alpha 2 introduce the updater. Windows installers use
 their Program.Version constant; Mac uses PULSE_MAC_TAG. Update both installer
 project/payload versions when making the next Windows release. Increment the Mac
 workflow's tag before publishing its next build; never replace a released tag.
@@ -44,7 +44,7 @@ left in the user's temporary folder so setup can finish after the app exits.
 
 Existing 1.12.1 and Mac alpha 1 installations need one manual installation of a
 new build containing the updater. They cannot acquire this feature retroactively.
-There is currently no private Windows installer asset on GitHub. When shipping
+Each release must include the matching installer for every supported channel. When shipping
 the next private build, upload its credential-free installer under the exact
 private asset name after the normal credential audit. Never publish configuration,
 app registration secrets, account tokens or the private handoff file. Missing
