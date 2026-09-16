@@ -63,7 +63,9 @@ static void ConfigurePulseWeaverProcessTree()
 		return;
 
 	JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
-	limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+	// Ordinary helpers still die with the studio. The verified update installer
+	// explicitly requests breakaway so it can survive the update handoff.
+	limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
 	if (!SetInformationJobObject(pulse_weaver_job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) ||
 	    !AssignProcessToJobObject(pulse_weaver_job, GetCurrentProcess())) {
 		CloseHandle(pulse_weaver_job);

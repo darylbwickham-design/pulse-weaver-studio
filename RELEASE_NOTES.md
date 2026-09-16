@@ -1,17 +1,21 @@
-# Pulse Weaver 1.12.3 — Live 16:9 transforms
+# Pulse Weaver 1.12.4 — Update installer survives shutdown
 
-Camera scene selection remains preview-only, so selecting another scene does not
-put it on air. Source transforms within the active 16:9 scene now propagate live
-to destination-specific Stage copies, including copies used for source exclusions.
-Position, scale, bounds, rotation and crop changes—and Move plugin animations—no
-longer wait for a Stage change. Vertical behaviour is unchanged.
+Fixes accepting an update closing both Pulse Weaver and the installer. The verified
+Windows installer now explicitly leaves the studio's process-cleanup job before
+the studio exits. Ordinary browser and capture helpers still close with the studio.
+Includes the live 16:9 source-transform fix from 1.12.3.
 
-Public Preview installations use PulseWeaver-Public-Dist-1.12.3-Setup.exe.
-Private beta installations use PulseWeaver-Setup-1.12.3-BETA.exe. Both installers
-contain no developer registrations or personal account tokens. Lumia companion
-1.1.3 remains compatible. Mac remains on its separate mac-v preview release line.
+**Updating from 1.12.2 or 1.12.3:** those versions still contain the old handoff code.
+Close Pulse Weaver and run the downloaded installer manually once. Subsequent
+updates launched from 1.12.4 use the corrected handoff.
 
-Validation: native Windows frontend build; live 16:9 and portrait transform
-synchronisation; rendered portrait output; Stage exclusion isolation; installer
-payload/configuration preservation; channel identity; and credential/archive audit.
-No live broadcast was started during release verification.
+- Existing private beta: PulseWeaver-Setup-1.12.4-BETA.exe.
+- Public Preview: PulseWeaver-Public-Dist-1.12.4-Setup.exe.
+
+Both installers preserve configuration and contain no personal credentials.
+Corresponding source archives, Lumia 1.1.3 and SHA-256 checksums are included.
+Mac remains on its separate preview release line.
+
+Validation: native Windows build; actual process-exit regression confirming the
+installer survives while ordinary helpers terminate; updater channel tests;
+installer payload/configuration checks; credential and archive-parity audit.

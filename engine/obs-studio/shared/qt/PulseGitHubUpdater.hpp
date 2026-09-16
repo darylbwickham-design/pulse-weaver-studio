@@ -22,8 +22,24 @@
 #include <QTimer>
 #include <functional>
 #include <memory>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace PulseUpdates {
+inline bool startUpdateInstaller(const QString &path, const QStringList &arguments = {})
+{
+	QProcess installer;
+	installer.setProgram(path);
+	installer.setArguments(arguments);
+#ifdef Q_OS_WIN
+	installer.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
+		args->flags |= CREATE_BREAKAWAY_FROM_JOB;
+	});
+#endif
+	return installer.startDetached();
+}
+
 // Deliberately independent of the upstream OBS/Sparkle updater and OBS version.
 class Updater : public QObject {
 	QWidget *window;
@@ -229,7 +245,7 @@ class Updater : public QObject {
 #ifdef Q_OS_MACOS
 			const bool started = QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 #else
-			const bool started = QProcess::startDetached(path, QStringList{});
+			const bool started = startUpdateInstaller(path);
 #endif
 			if (!started) {
 				message("The verified installer could not be opened. Nothing was installed.");
