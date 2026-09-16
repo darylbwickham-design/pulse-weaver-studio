@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.28)
+project(PulseUpdateTests LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets)
+add_executable(PulseUpdateTests main.cpp)
+target_link_libraries(PulseUpdateTests PRIVATE Qt6::Core Qt6::Network Qt6::Widgets)
+enable_testing()
+add_test(NAME UpdateChannels COMMAND PulseUpdateTests)

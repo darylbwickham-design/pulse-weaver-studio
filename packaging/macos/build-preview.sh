@@ -25,6 +25,11 @@ exe="$app/Contents/MacOS/Pulse Weaver Mac Preview"
 cmake -S tests/MacPreview -B tests/MacPreview/build -DCMAKE_PREFIX_PATH="$project_root/engine/obs-studio/.deps/obs-deps-qt6-2026-07-15-universal"
 cmake --build tests/MacPreview/build --parallel 3
 tests/MacPreview/build/PulseMacPreviewTests "$app"
+cmake -S tests/Updates -B tests/Updates/build -DCMAKE_PREFIX_PATH="$project_root/engine/obs-studio/.deps/obs-deps-qt6-2026-07-15-universal"
+cmake --build tests/Updates/build --parallel 3
+tests/Updates/build/PulseUpdateTests "$app/Contents/PlugIns"
+# The updater uses the release tag, never OBS's upstream version number.
+printf '{"schema":1,"channel":"mac-arm64-preview","tag":"%s"}\n' "$release_tag" > "$app/Contents/MacOS/pulseweaver-update.json"
 codesign --force --deep --sign - --preserve-metadata=entitlements,requirements,flags "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 "$exe" --version
