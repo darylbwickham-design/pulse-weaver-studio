@@ -1,4 +1,5 @@
 #include "../../shared/qt/PulseAppCredentials.hpp"
+#include "../../shared/qt/PulsePlatformApplicationIds.hpp"
 #include "../../shared/qt/PulseChat.hpp"
 #include "../../shared/qt/PulseLumiaOutput.hpp"
 #include "../../shared/qt/PulseOutputBitrates.hpp"
@@ -313,8 +314,10 @@ public:
 		: QObject(parent), eventCallback(std::move(events)), chatCallback(std::move(chats))
 	{
 		QSettings settings(pulseSettingsPath(), QSettings::IniFormat);
-		// Load only this tester's local app registration.
-		clientId = PulseAppCredentials::get("twitch", "client_id");
+		// Twitch Device Code authentication supports public desktop clients. The
+		// shipped Client ID is deliberately not editable; no app secret is held
+		// by Pulse Weaver and streamer access/refresh tokens remain local.
+		clientId = PulsePlatformApplicationIds::TwitchClientId();
 		settings.remove("twitch/client_id");
 		accessToken = unprotectCredential(settings.value("twitch/access_token").toString());
 		refreshToken = unprotectCredential(settings.value("twitch/refresh_token").toString());
@@ -360,16 +363,10 @@ public:
 		loginButton = connectButton;
 		logoutButton = disconnectButton;
 		if (clientField) {
-            clientField->setText(clientId);
-            connect(clientField, &QLineEdit::editingFinished, this, [this] {
-                const QString next = clientField->text().trimmed();
-                if (next == clientId) return;
-                clearLogin();
-                clientId = next;
-                if (!PulseAppCredentials::set("twitch", "client_id", clientId))
-                    setStatus("Could not save the Twitch Client ID.");
-            });
-        }
+			clientField->setText("Pulse Weaver public desktop app");
+			clientField->setReadOnly(true);
+			clientField->setToolTip("Twitch uses Pulse Weaver's registered public desktop application. No app secret is stored here.");
+		}
 		if (loginButton)
 			connect(loginButton, &QPushButton::clicked, this, [this] { beginLogin(); });
 		if (logoutButton)
@@ -391,10 +388,6 @@ public:
 
 	void beginLogin()
 	{
-		if (clientId.isEmpty()) {
-			setStatus("Enter your Twitch Public application Client ID in Action → Connections → Twitch.");
-			return;
-		}
 		stopSocket();
 		const QString scopes = "user:read:chat user:write:chat channel:manage:broadcast moderator:read:followers "
 			"moderator:manage:chat_messages moderator:manage:banned_users moderator:manage:chat_settings "
@@ -1131,8 +1124,7 @@ public:
 	explicit KickRuntime(QObject *parent, EventCallback events) : QObject(parent), eventCallback(std::move(events))
 	{
 		QSettings settings(pulseSettingsPath(), QSettings::IniFormat);
-		clientId = PulseAppCredentials::get("kick", "client_id");
-		clientSecret = PulseAppCredentials::get("kick", "client_secret");
+		clientId = PulsePlatformApplicationIds::KickClientId();
 		settings.remove("kick/client_id");
 		settings.remove("kick/client_secret");
 		accessToken = unprotectCredential(settings.value("kick/access_token").toString());
@@ -1150,27 +1142,16 @@ public:
 	}
 	~KickRuntime() override { relayPollTimer.stop(); stopOutput(); }
 
-	void setWidgets(QLineEdit *id, QLineEdit *secret, QLabel *account, QLabel *state, QComboBox *route,
+	void setWidgets(QLineEdit *application, QLabel *account, QLabel *state, QComboBox *route,
 		QPushButton *connectButton, QPushButton *disconnectButton, QLineEdit *chat, QPushButton *send)
 	{
-		clientField = id; secretField = secret; accountLabel = account; status = state; canvasRoute = route;
+		clientField = application; accountLabel = account; status = state; canvasRoute = route;
 		chatInput = chat; chatSend = send;
-		if (clientField)
-			clientField->setText(clientId);
-		if (secretField) secretField->setText(clientSecret);
-        auto saveApp = [this] {
-            const QString id = clientField->text().trimmed(), secret = secretField->text().trimmed();
-            if (id == clientId && secret == clientSecret) return;
-            clearLogin();
-            clientId = id; clientSecret = secret;
-            if (!PulseAppCredentials::set("kick", "client_id", id) ||
-                !PulseAppCredentials::set("kick", "client_secret", secret))
-                setStatus("Could not securely save the Kick app details.");
-        };
-        if (clientField && secretField) {
-            connect(clientField, &QLineEdit::editingFinished, this, saveApp);
-            connect(secretField, &QLineEdit::editingFinished, this, saveApp);
-        }
+		if (clientField) {
+			clientField->setText("Pulse Weaver registered Kick app");
+			clientField->setReadOnly(true);
+			clientField->setToolTip("The public Kick application is included. Its confidential secret is held only by the Pulse Weaver relay.");
+		}
 		connect(connectButton, &QPushButton::clicked, this, [this] { beginLogin(); });
 		connect(disconnectButton, &QPushButton::clicked, this, [this] { clearLogin(); });
 		connect(chatSend, &QPushButton::clicked, this, [this] { sendMessage(); });
@@ -1222,10 +1203,9 @@ public:
 
 	void beginLogin()
 	{
-		clientId = PulseAppCredentials::get("kick", "client_id");
-		clientSecret = PulseAppCredentials::get("kick", "client_secret");
-		if (clientId.isEmpty() || clientSecret.isEmpty()) {
-			setStatus("Enter your Kick application Client ID and Client secret in Action → Connections → Kick.");
+		clientId = PulsePlatformApplicationIds::KickClientId();
+		if (clientId.isEmpty()) {
+			setStatus("The Pulse Weaver Kick application registration is unavailable in this build.");
 			return;
 		}
 		callback.close();
@@ -1333,7 +1313,7 @@ public:
 private:
 	QNetworkAccessManager network{this}; QTcpServer callback{this}; EventCallback eventCallback;
 	QTimer relayPollTimer{this};
-	QString clientId, clientSecret, accessToken, refreshToken, stateToken, serverUrl, streamKey, accountName;
+	QString clientId, accessToken, refreshToken, stateToken, serverUrl, streamKey, accountName;
 	QString relaySessionToken;
 	qint64 broadcasterUserId = 0;
 	qint64 tokenExpiresAtMs = 0;
@@ -1345,7 +1325,7 @@ private:
 	QByteArray codeVerifier; obs_output_t *output = nullptr; obs_service_t *ownedService = nullptr;
 	obs_encoder_t *ownedVideo = nullptr; obs_encoder_t *ownedAudio = nullptr;
 	QString activeOutputRoute;
-	QPointer<QLineEdit> clientField, secretField, chatInput, shellChatInput;
+	QPointer<QLineEdit> clientField, chatInput, shellChatInput;
 	QPointer<QLabel> accountLabel, status, shellChatStatus, shellDestinationStatus;
 	QPointer<QListWidget> shellChatFeed;
 	QStringList moderationScopes;
@@ -1603,11 +1583,11 @@ private:
 	}
 	void exchangeCode(const QString &code)
 	{
-		QNetworkRequest request(QUrl("https://id.kick.com/oauth/token"));
-		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-		QNetworkReply *reply = network.post(request, formBody({{"grant_type","authorization_code"},{"client_id",clientId},
-			{"client_secret",clientSecret},{"redirect_uri","http://localhost:18757/auth/callback"},
-			{"code_verifier",QString::fromLatin1(codeVerifier)},{"code",code}}));
+		QNetworkRequest request(QUrl(QString::fromLatin1(relayOrigin) + "/api/oauth/token"));
+		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+		request.setTransferTimeout(15000);
+		const QJsonObject body{{"grant_type", "authorization_code"}, {"code_verifier", QString::fromLatin1(codeVerifier)}, {"code", code}};
+		QNetworkReply *reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
 		connect(reply, &QNetworkReply::finished, this, [this, reply] {
 			const QJsonObject json = QJsonDocument::fromJson(reply->readAll()).object(); const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(); reply->deleteLater();
 			if (code < 200 || code >= 300) { setStatus("Kick token exchange failed: " + json.value("error_description").toString("HTTP " + QString::number(code))); return; }
@@ -1628,17 +1608,18 @@ private:
 			completed(false);
 			return;
 		}
-		if (refreshToken.isEmpty() || clientId.isEmpty() || clientSecret.isEmpty()) {
+		if (refreshToken.isEmpty()) {
 			setStatus("Kick authorization expired. Reconnect Kick in your browser.");
 			completed(false);
 			return;
 		}
 		refreshInFlight = true;
 		setStatus("Refreshing Kick authorization…");
-		QNetworkRequest request(QUrl("https://id.kick.com/oauth/token"));
-		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-		QNetworkReply *reply = network.post(request, formBody({{"grant_type","refresh_token"}, {"client_id",clientId},
-			{"client_secret",clientSecret}, {"refresh_token",refreshToken}}));
+		QNetworkRequest request(QUrl(QString::fromLatin1(relayOrigin) + "/api/oauth/token"));
+		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+		request.setTransferTimeout(15000);
+		const QJsonObject body{{"grant_type", "refresh_token"}, {"refresh_token", refreshToken}};
+		QNetworkReply *reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
 		connect(reply, &QNetworkReply::finished, this, [this, reply, completed = std::move(completed)]() mutable {
 			const QByteArray responseBody = reply->readAll();
 			const QJsonObject json = QJsonDocument::fromJson(responseBody).object();
@@ -2628,13 +2609,11 @@ private:
 				});
 			}
 		}
-		auto *client = new QLineEdit(account); client->setAccessibleName("Kick Client ID");
-        auto *secret = new QLineEdit(account); secret->setAccessibleName("Kick Client secret"); secret->setEchoMode(QLineEdit::Password);
-        form->addWidget(new QLabel("Client ID"), 4, 0); form->addWidget(client, 4, 1, 1, 2);
-        form->addWidget(new QLabel("Client secret"), 5, 0); form->addWidget(secret, 5, 1, 1, 2);
+		auto *client = new QLineEdit(account); client->setAccessibleName("Kick application");
+		form->addWidget(new QLabel("Application"), 4, 0); form->addWidget(client, 4, 1, 1, 2);
         auto *callbackHint = new QLabel("Register callback: http://localhost:18757/auth/callback", account);
-        callbackHint->setTextInteractionFlags(Qt::TextSelectableByMouse); form->addWidget(callbackHint, 6, 0, 1, 3);
-        kick->setWidgets(client, secret, accountName, state, route, connectButton, disconnectButton, chat, send);
+		callbackHint->setTextInteractionFlags(Qt::TextSelectableByMouse); form->addWidget(callbackHint, 5, 0, 1, 3);
+		kick->setWidgets(client, accountName, state, route, connectButton, disconnectButton, chat, send);
 		connectionsTabs->addTab(page, "KICK");
 	}
 
@@ -2751,9 +2730,8 @@ private:
 			}
 		}
 		columnLayout->addWidget(connection);
-		auto *client = new QLineEdit(connection); client->setAccessibleName("Twitch Client ID");
-        client->setPlaceholderText("Your Twitch Public application Client ID");
-        connectionLayout->addWidget(new QLabel("Client ID"), 3, 0); connectionLayout->addWidget(client, 3, 1, 1, 2);
+		auto *client = new QLineEdit(connection); client->setAccessibleName("Twitch application");
+        connectionLayout->addWidget(new QLabel("Application"), 3, 0); connectionLayout->addWidget(client, 3, 1, 1, 2);
         twitch->setConnectionWidgets(client, twitchAccount, twitchStatus, connectButton, disconnectButton);
 		auto *moderation = new QGroupBox("TWITCH CHAT & MODERATION", column);
 		moderation->setObjectName("ConnectionCard");

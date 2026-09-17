@@ -1,4 +1,4 @@
-# Build Public Dist 1.12.5 on Windows
+# Build Public Dist 1.12.6 on Windows
 
 Install Visual Studio 2022 17.14 with C++ desktop development, MSVC 14.44, ATL and Windows SDK 10.0.22621.0; CMake 3.28 or later; Git; Node.js; and the .NET 8 SDK for the installer.
 
@@ -14,6 +14,6 @@ node --test tests/LumiaPlugin.test.cjs
 
 The executable is `engine/obs-studio/build_pw_vs1714_sdk22621/rundir/RelWithDebInfo/bin/64bit/PulseWeaverCore.exe`. It uses an isolated portable configuration. The StageExclusions regression requires Qt6 Core and libobs from this build; run its executable with the runtime directory as its sole argument and the runtime bin/64bit directory on PATH.
 
-Do not set compile-time OAuth credentials for a public build. Platform registrations are supplied at runtime through Action > Connections.
+Do not set compile-time confidential OAuth credentials for a public build. Pulse Weaver includes the public Twitch and Kick application IDs; Kick's client secret remains only in the hosted relay. YouTube registration is supplied at runtime through Action > Connections.
 
-The release maintainer packages the clean runtime, Lumia companion and source snapshot from the private release workspace with `artifacts/prepare-public-1.12.5.mjs`, then runs `artifacts/audit-public-1.12.5.mjs`. The public repository intentionally excludes release binaries, build caches, configuration, logs and debug symbols. The installer belongs on GitHub Releases because it exceeds Git's 25 MB project limit.
+The release maintainer packages the clean runtime, Lumia companion and source snapshot from the private release workspace with `artifacts/prepare-public-1.12.6.mjs`, then runs `artifacts/audit-public-1.12.6.mjs`. The public repository intentionally excludes release binaries, build caches, configuration, logs and debug symbols. The installer belongs on GitHub Releases because it exceeds Git's 25 MB project limit.

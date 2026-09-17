@@ -1,4 +1,4 @@
-# Pulse Weaver Studio — Public Dist 1.12.5
+# Pulse Weaver Studio — Public Dist 1.12.6
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
@@ -8,7 +8,7 @@ This is a **public testing preview**. Download the Windows installer from this r
 
 This build includes **no developer app credentials or signed-in accounts**. Testers supply their own app registrations in **Action → Connections**:
 
-- **Twitch:** create a Public application in the Twitch developer console and paste its Client ID. Connect uses device authorization; no Twitch client secret is needed.
+- **Twitch:** uses Pulse Weaver's registered public desktop application. Connect uses device authorization; no Twitch client secret or developer registration is required.
 - **Kick:** create an application in Kick's developer settings. Register exactly `http://localhost:18757/auth/callback`. Enter its Client ID and Client secret, then connect.
 - **YouTube:** enable YouTube Data API v3 in your Google Cloud project, configure the OAuth consent screen, and create a **Desktop app** OAuth client. Enter its Client ID and Client secret. If your consent screen is in Testing, add the Google account you will use as a test user. Testing restrictions and quotas still apply.
 
