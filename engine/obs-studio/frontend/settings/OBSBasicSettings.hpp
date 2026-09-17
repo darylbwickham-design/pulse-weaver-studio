@@ -55,6 +55,12 @@ private:
 	OBSBasic *main;
 
 	std::unique_ptr<Ui::OBSBasicSettings> ui;
+	QSpinBox *pulseDestinationBitrates[4] = {};
+	QSpinBox *pulseUploadMbps = nullptr;
+	QLabel *pulseBandwidthEstimate = nullptr;
+	void BuildPulseBandwidthPanel();
+	void LoadPulseBandwidthSettings();
+	void UpdatePulseBandwidthEstimate();
 
 	std::shared_ptr<Auth> auth;
 

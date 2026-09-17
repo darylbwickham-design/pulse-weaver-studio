@@ -5,6 +5,7 @@
 #include "../../shared/qt/PulseLumiaOutput.hpp"
 #include "../../shared/qt/PulseStageExclusions.hpp"
 #include "../../shared/qt/PulseOutputSceneSync.hpp"
+#include "../../shared/qt/PulseOutputBitrates.hpp"
 #include "../../shared/qt/PulseGitHubUpdater.hpp"
 #include <obs-output-timing.h>
 /******************************************************************************
@@ -4336,7 +4337,7 @@ void OBSBasic::StartPulseWeaverSecondaryOutputs()
 		if (!canvas)
 			canvas = route == "vertical" ? PulseWeaverGetVerticalCanvas() : obs_get_main_canvas();
 		videoEncoder = pulseCreateH264Encoder(("pulse_weaver_youtube_video_" + suffix).toUtf8(),
-			route == "vertical" ? 4000 : 5500, false);
+			PulseOutputBitrates::Read(Config(), route == "vertical" ? 3 : 2), false);
 		if (videoEncoder && canvas)
 			obs_encoder_set_video(videoEncoder, obs_canvas_get_video(canvas));
 		obs_canvas_release(canvas);

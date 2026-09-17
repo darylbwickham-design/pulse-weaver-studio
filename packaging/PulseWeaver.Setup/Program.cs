@@ -9,7 +9,7 @@ namespace PulseWeaver.Setup;
 internal static class Program
 {
     const string ProductName = "Pulse Weaver Public Preview";
-    internal const string Version = "1.12.4";
+    internal const string Version = "1.12.5";
     const string InstallManifestName = ".pulseweaver-installed-files.txt";
     internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Pulse Weaver Public Preview");
     internal static readonly string AppPath = Path.Combine(InstallDirectory, "bin", "64bit", "PulseWeaverCore.exe");

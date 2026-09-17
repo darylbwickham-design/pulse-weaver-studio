@@ -1,4 +1,4 @@
-# Pulse Weaver Studio — Public Dist 1.12.4
+# Pulse Weaver Studio — Public Dist 1.12.5
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 

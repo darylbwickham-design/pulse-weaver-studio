@@ -1,6 +1,7 @@
 #include "../../shared/qt/PulseAppCredentials.hpp"
 #include "../../shared/qt/PulseChat.hpp"
 #include "../../shared/qt/PulseLumiaOutput.hpp"
+#include "../../shared/qt/PulseOutputBitrates.hpp"
 #include "pulse-lumia-bridge.hpp"
 #include "pulse-overlay-runtime.hpp"
 
@@ -1281,7 +1282,8 @@ public:
 			canvas = obs_get_canvas_by_name(vertical ? "Pulse Weaver Vertical" : "Main");
 		/* Prefer the GPU texture encoder for secondary outputs. This avoids a
 		 * complete CPU x264 pass for Kick while retaining x264 as a fallback. */
-		ownedVideo = pulseCreateStreamingEncoder("pulse_weaver_kick_video", 4500);
+		ownedVideo = pulseCreateStreamingEncoder("pulse_weaver_kick_video",
+			PulseOutputBitrates::Read(obs_frontend_get_profile_config(), vertical ? 1 : 0));
 		if (ownedVideo && canvas)
 			obs_encoder_set_video(ownedVideo, obs_canvas_get_video(canvas));
 		obs_canvas_release(canvas);

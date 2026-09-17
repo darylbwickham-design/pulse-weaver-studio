@@ -1,22 +1,23 @@
 /******************************************************************************
  Copyright (C) 2023 by Lain Bailey <lain@obsproject.com>
  Philippe Groarke <philippe.groarke@gmail.com>
- 
+
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
  the Free Software Foundation, either version 2 of the License, or
  (at your option) any later version.
- 
+
  This program is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
- 
+
  You should have received a copy of the GNU General Public License
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  ******************************************************************************/
 
 #include "OBSBasicSettings.hpp"
+#include "../../shared/qt/PulseOutputBitrates.hpp"
 #include "OBSHotkeyLabel.hpp"
 #include "OBSHotkeyWidget.hpp"
 
@@ -336,6 +337,128 @@ void RestrictResetBitrates(initializer_list<QComboBox *> boxes, int maxbitrate);
 #define ADV_RESTART     &OBSBasicSettings::AdvancedChangedRestart
 /* clang-format on */
 
+void OBSBasicSettings::BuildPulseBandwidthPanel()
+{
+	auto *panel = new QGroupBox("Pulse Weaver · Destination bandwidth", ui->outputPage);
+	panel->setObjectName("PulseDestinationBandwidth");
+	auto *grid = new QGridLayout(panel);
+	grid->setColumnStretch(1, 1);
+	grid->setColumnStretch(2, 1);
+	grid->addWidget(new QLabel("Video bitrate", panel), 0, 0);
+	grid->addWidget(new QLabel("Landscape · 16:9", panel), 0, 1);
+	grid->addWidget(new QLabel("Portrait · 9:16", panel), 0, 2);
+	grid->addWidget(new QLabel("Kick", panel), 1, 0);
+	grid->addWidget(new QLabel("YouTube", panel), 2, 0);
+	for (int i = 0; i < 4; ++i) {
+		auto *spin = new QSpinBox(panel);
+		pulseDestinationBitrates[i] = spin;
+		spin->setObjectName(QString("PulseBitrate%1").arg(PulseOutputBitrates::Keys[i]));
+		spin->setAccessibleName(QString::fromLatin1(PulseOutputBitrates::Keys[i]) + " video bitrate");
+		spin->setRange(500, 51000);
+		spin->setSingleStep(250);
+		spin->setSuffix(" kbps");
+		spin->setToolTip("Saved per profile. Applied the next time this output starts. Platform limits still apply.");
+		grid->addWidget(spin, 1 + i / 2, 1 + i % 2);
+		HookWidget(spin, &QSpinBox::valueChanged, &OBSBasicSettings::OutputsChanged);
+		connect(spin, &QSpinBox::valueChanged, this, &OBSBasicSettings::UpdatePulseBandwidthEstimate);
+	}
+
+	// Mirror the existing Stream controls, keeping one authoritative save path.
+	auto *twitchCap = new QSpinBox(panel);
+	twitchCap->setRange(ui->multitrackVideoMaximumAggregateBitrate->minimum(),
+			    ui->multitrackVideoMaximumAggregateBitrate->maximum());
+	twitchCap->setSuffix(" kbps total");
+	twitchCap->setAccessibleName("Twitch Enhanced Broadcasting total bitrate cap");
+	auto *twitchAuto = new QCheckBox("Automatic", panel);
+	grid->addWidget(new QLabel("Twitch Enhanced", panel), 3, 0);
+	grid->addWidget(twitchCap, 3, 1);
+	grid->addWidget(twitchAuto, 3, 2);
+	connect(twitchCap, &QSpinBox::valueChanged, ui->multitrackVideoMaximumAggregateBitrate, &QSpinBox::setValue);
+	connect(ui->multitrackVideoMaximumAggregateBitrate, &QSpinBox::valueChanged, twitchCap, &QSpinBox::setValue);
+	connect(twitchAuto, &QCheckBox::toggled, ui->multitrackVideoMaximumAggregateBitrateAuto, &QCheckBox::setChecked);
+	connect(ui->multitrackVideoMaximumAggregateBitrateAuto, &QCheckBox::toggled, twitchAuto, &QCheckBox::setChecked);
+	auto updateTwitch = [this, twitchCap, twitchAuto]() {
+		const bool enabled = ui->enableMultitrackVideo->isChecked();
+		twitchAuto->setEnabled(enabled && ui->enableMultitrackVideo->isEnabled());
+		twitchCap->setEnabled(twitchAuto->isEnabled() && !twitchAuto->isChecked());
+		UpdatePulseBandwidthEstimate();
+	};
+	connect(ui->enableMultitrackVideo, &QCheckBox::toggled, this, updateTwitch);
+	connect(twitchAuto, &QCheckBox::toggled, this, updateTwitch);
+	connect(twitchCap, &QSpinBox::valueChanged, this, &OBSBasicSettings::UpdatePulseBandwidthEstimate);
+	// Native controls can change enabled state without changing their value.
+	connect(ui->listWidget, &QListWidget::currentRowChanged, this, updateTwitch);
+
+	pulseUploadMbps = new QSpinBox(panel);
+	pulseUploadMbps->setRange(0, 10000);
+	pulseUploadMbps->setSuffix(" Mbps");
+	pulseUploadMbps->setSpecialValueText("Not specified");
+	pulseUploadMbps->setAccessibleName("Sustained upload speed");
+	grid->addWidget(new QLabel("Sustained upload", panel), 4, 0);
+	grid->addWidget(pulseUploadMbps, 4, 1);
+	auto *twitchSettings = new QPushButton("Twitch / encoder settings", panel);
+	grid->addWidget(twitchSettings, 4, 2);
+	connect(twitchSettings, &QPushButton::clicked, this, [this]() { ui->listWidget->setCurrentRow(STREAM); });
+	HookWidget(pulseUploadMbps, &QSpinBox::valueChanged, &OBSBasicSettings::OutputsChanged);
+	connect(pulseUploadMbps, &QSpinBox::valueChanged, this, &OBSBasicSettings::UpdatePulseBandwidthEstimate);
+	pulseBandwidthEstimate = new QLabel(panel);
+	pulseBandwidthEstimate->setWordWrap(true);
+	grid->addWidget(pulseBandwidthEstimate, 5, 0, 1, 3);
+	auto *note = new QLabel("Changes apply on the next output start. Twitch negotiates its individual tracks; "
+		"the cap covers all Enhanced tracks, not each orientation. Standard Twitch bitrate remains in the encoder settings below.", panel);
+	note->setWordWrap(true);
+	grid->addWidget(note, 6, 0, 1, 3);
+	ui->verticalLayout_2->insertWidget(0, panel);
+	twitchCap->setValue(ui->multitrackVideoMaximumAggregateBitrate->value());
+	twitchAuto->setChecked(ui->multitrackVideoMaximumAggregateBitrateAuto->isChecked());
+	updateTwitch();
+}
+
+void OBSBasicSettings::LoadPulseBandwidthSettings()
+{
+	for (int i = 0; i < 4; ++i) {
+		QSignalBlocker blocker(pulseDestinationBitrates[i]);
+		pulseDestinationBitrates[i]->setValue(PulseOutputBitrates::Read(main->Config(), i));
+		pulseDestinationBitrates[i]->setProperty("changed", false);
+	}
+	QSignalBlocker blocker(pulseUploadMbps);
+	pulseUploadMbps->setValue(int(std::clamp<int64_t>(
+		config_get_int(main->Config(), PulseOutputBitrates::Section, "UploadMbps"), 0, 10000)));
+	pulseUploadMbps->setProperty("changed", false);
+	UpdatePulseBandwidthEstimate();
+}
+
+void OBSBasicSettings::UpdatePulseBandwidthEstimate()
+{
+	if (!pulseBandwidthEstimate)
+		return;
+	// A planning estimate, not live telemetry. Kick runs one orientation at a time.
+	const double secondary = (std::max(pulseDestinationBitrates[0]->value(), pulseDestinationBitrates[1]->value()) +
+		pulseDestinationBitrates[2]->value() + pulseDestinationBitrates[3]->value() + 3 * 160) / 1000.0;
+	const bool boundedTwitch = ui->enableMultitrackVideo->isChecked() &&
+		!ui->multitrackVideoMaximumAggregateBitrateAuto->isChecked();
+	double planned = secondary;
+	QString text;
+	if (boundedTwitch) {
+		planned += (ui->multitrackVideoMaximumAggregateBitrate->value() + 320) / 1000.0;
+		text = QString("All-output plan: up to ~%1 Mbps (Twitch cap + Kick's higher orientation + YouTube Dual, including audio allowance).")
+			.arg(planned, 0, 'f', 1);
+	} else {
+		text = QString("Kick + YouTube Dual plan: ~%1 Mbps including audio, plus Twitch. Twitch total is not included %2.")
+			.arg(secondary, 0, 'f', 1)
+			.arg(ui->enableMultitrackVideo->isChecked() ? "while bandwidth is automatic" : "in standard mode");
+	}
+	if (pulseUploadMbps->value() > 0) {
+		const double share = planned * 100.0 / pulseUploadMbps->value();
+		text += QString(" %1% of entered upload%2.").arg(share, 0, 'f', 0)
+			.arg(boundedTwitch ? "" : " before Twitch");
+		if (share >= 80)
+			text += " Low headroom: reduce bitrates or active outputs.";
+	}
+	text += " Excludes network overhead and other traffic; actual usage depends on enabled destinations.";
+	pulseBandwidthEstimate->setText(text);
+}
+
 OBSBasicSettings::OBSBasicSettings(QWidget *parent)
 	: QDialog(parent),
 	  main(qobject_cast<OBSBasic *>(parent)),
@@ -348,6 +471,7 @@ OBSBasicSettings::OBSBasicSettings(QWidget *parent)
 	setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
 	ui->setupUi(this);
+	BuildPulseBandwidthPanel();
 
 	main->EnableOutputs(false);
 
@@ -3015,6 +3139,7 @@ void OBSBasicSettings::LoadSettings(bool changedOnly)
 	}
 	if (!changedOnly || outputsChanged) {
 		LoadOutputSettings();
+		LoadPulseBandwidthSettings();
 	}
 	if (!changedOnly || audioChanged) {
 		LoadAudioSettings();
@@ -3467,6 +3592,9 @@ void OBSBasicSettings::SaveEncoder(QComboBox *combo, const char *section, const 
 
 void OBSBasicSettings::SaveOutputSettings()
 {
+	for (int i = 0; i < 4; ++i)
+		SaveSpinBox(pulseDestinationBitrates[i], PulseOutputBitrates::Section, PulseOutputBitrates::Keys[i]);
+	SaveSpinBox(pulseUploadMbps, PulseOutputBitrates::Section, "UploadMbps");
 	config_set_string(main->Config(), "Output", "Mode", OutputModeFromIdx(ui->outputMode->currentIndex()));
 
 	QString encoder = ui->simpleOutStrEncoder->currentData().toString();
