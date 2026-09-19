@@ -18,6 +18,7 @@
 #pragma once
 #include <QJsonObject>
 #include "../../shared/qt/PulseYouTubeChatSessions.hpp"
+#include "../../shared/qt/PulseEditorCanvas.hpp"
 
 #include "ui_OBSBasic.h"
 #include "OBSMainWindow.hpp"
@@ -397,6 +398,8 @@ private:
 	quint64 pulseStageTransitionSerial = 0;
 	QByteArray pulseCameraStartingDockLayout;
 	QByteArray pulseCameraHorizontalDockLayout;
+	std::atomic<bool> pulsePortraitEditing{false};
+	PulseEditor::Selection pulsePortraitPreview;
 	QByteArray pulseStageSignature;
 
 	void InitPulseWeaverShell();
@@ -1500,6 +1503,11 @@ public:
 	}
 
 	OBSScene GetCurrentScene();
+	bool IsPulsePortraitEditing() const { return pulsePortraitEditing.load(); }
+	bool GetEditorVideoInfo(obs_video_info *info);
+	static bool IsPulsePortraitScene(obs_source_t *source);
+	void SelectPulsePortraitScene(obs_source_t *source);
+	void RefreshPulseCameraScenes();
 
 	inline OBSSource GetCurrentSceneSource()
 	{

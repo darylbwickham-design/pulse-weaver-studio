@@ -327,7 +327,7 @@ void BasicOutputHandler::UpdateVirtualCamOutputSource()
 		return;
 	case VCamOutputType::PreviewOutput: {
 		DestroyVirtualCameraScene();
-		OBSSource s = main->GetCurrentSceneSource();
+		OBSSource s = obs_scene_get_source(main->currentScene.load());
 		obs_source_get_ref(s);
 		source = s.Get();
 		break;

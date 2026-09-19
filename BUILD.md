@@ -1,4 +1,15 @@
-# Build Public Dist 1.12.6 on Windows
+# Build Pulse Weaver 1.12.8 on Windows
+
+This source snapshot corresponds to the Windows private/beta 1.12.8 release. It contains no private account configuration or confidential application registrations. The public Windows installer project remains at its previous release version; use `packaging/PulseWeaver.PrivateSetup` for this release.
+
+After the native build below, create the clean runtime ZIP with `packaging/Build-PrivateV126.ps1 -Version 1.12.8`, then publish the self-contained installer:
+
+```powershell
+dotnet publish packaging/PulseWeaver.PrivateSetup/PulseWeaver.PrivateSetup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o artifacts/setup-1.12.8
+dotnet run --project tests/InstallerRecovery/InstallerRecovery.csproj -c Release
+```
+
+The revised 1.12.7 recovery installer is built from the same maintenance source using `-p:ReleaseVersion=1.12.7 -p:InstallerSuffix=RECOVERY` and the archived original 1.12.7 runtime ZIP. Do not rebuild the old payload from new native sources or overwrite the original installer. See `RELEASE_NOTES.md` for update/rollback behavior. Publish only clean payloads and source archives, never configuration or recovery backups.
 
 Install Visual Studio 2022 17.14 with C++ desktop development, MSVC 14.44, ATL and Windows SDK 10.0.22621.0; CMake 3.28 or later; Git; Node.js; and the .NET 8 SDK for the installer.
 

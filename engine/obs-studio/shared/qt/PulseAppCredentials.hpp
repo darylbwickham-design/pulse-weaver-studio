@@ -15,8 +15,9 @@
 #endif
 #endif
 
-// Public distributions contain no developer registrations. These values belong
-// only to the tester's isolated portable profile, never to a show/export.
+// Secrets and registrations that require user-specific configuration belong
+// only to the isolated portable profile, never to a show/export. Public
+// desktop Client IDs that are explicitly safe to distribute live separately.
 namespace PulseAppCredentials {
 inline QString path()
 {

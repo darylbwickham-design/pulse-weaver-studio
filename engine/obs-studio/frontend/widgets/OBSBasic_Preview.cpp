@@ -88,7 +88,7 @@ void OBSBasic::UpdatePreviewScalingMenu()
 	}
 
 	obs_video_info ovi;
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	ui->actionScaleWindow->setChecked(false);
 	ui->actionScaleCanvas->setChecked(scalingAmount == 1.0f);
@@ -163,7 +163,7 @@ void OBSBasic::RenderMain(void *data, uint32_t, uint32_t)
 	OBSBasic *window = static_cast<OBSBasic *>(data);
 	obs_video_info ovi;
 
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	window->previewCX = int(window->previewScale * float(ovi.base_width));
 	window->previewCY = int(window->previewScale * float(ovi.base_height));
@@ -186,7 +186,7 @@ void OBSBasic::RenderMain(void *data, uint32_t, uint32_t)
 	gs_ortho(0.0f, float(ovi.base_width), 0.0f, float(ovi.base_height), -100.0f, 100.0f);
 	gs_set_viewport(window->previewX, window->previewY, window->previewCX, window->previewCY);
 
-	if (window->IsPreviewProgramMode()) {
+	if (window->IsPreviewProgramMode() || window->IsPulsePortraitEditing()) {
 		window->DrawBackdrop(float(ovi.base_width), float(ovi.base_height));
 
 		OBSScene scene = window->GetCurrentScene();
@@ -244,7 +244,7 @@ void OBSBasic::ResizePreview(uint32_t cx, uint32_t cy)
 	targetSize = GetPixelSize(ui->preview);
 
 	isFixedScaling = ui->preview->IsFixedScaling();
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	if (isFixedScaling) {
 		previewScale = ui->preview->GetScalingAmount();
@@ -384,15 +384,16 @@ void OBSBasic::Nudge(int dist, MoveDir dir)
 
 	if (!recent_nudge) {
 		recent_nudge = true;
-		OBSDataAutoRelease wrapper = obs_scene_save_transform_states(GetCurrentScene(), true);
+		OBSScene nudgedScene = GetCurrentScene();
+		OBSDataAutoRelease wrapper = obs_scene_save_transform_states(nudgedScene, true);
 		std::string undo_data(obs_data_get_json(wrapper));
 
 		nudge_timer = new QTimer;
-		QObject::connect(nudge_timer, &QTimer::timeout, this, [this, &recent_nudge = recent_nudge, undo_data]() {
-			OBSDataAutoRelease rwrapper = obs_scene_save_transform_states(GetCurrentScene(), true);
+		QObject::connect(nudge_timer, &QTimer::timeout, this, [this, &recent_nudge = recent_nudge, undo_data, nudgedScene]() {
+			OBSDataAutoRelease rwrapper = obs_scene_save_transform_states(nudgedScene, true);
 			std::string redo_data(obs_data_get_json(rwrapper));
 
-			undo_s.add_action(QTStr("Undo.Transform").arg(obs_source_get_name(GetCurrentSceneSource())),
+			undo_s.add_action(QTStr("Undo.Transform").arg(obs_source_get_name(obs_scene_get_source(nudgedScene))),
 					  undo_redo, undo_redo, undo_data, redo_data);
 
 			recent_nudge = false;
@@ -420,7 +421,7 @@ void OBSBasic::on_actionLockPreview_triggered()
 void OBSBasic::on_scalingMenu_aboutToShow()
 {
 	obs_video_info ovi;
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	QAction *action = ui->actionScaleCanvas;
 	QString text = QTStr("Basic.MainMenu.Edit.Scale.Canvas");
@@ -455,7 +456,7 @@ void OBSBasic::setPreviewScalingCanvas()
 void OBSBasic::setPreviewScalingOutput()
 {
 	obs_video_info ovi;
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	ui->preview->SetFixedScaling(true);
 	float scalingAmount = float(ovi.output_width) / float(ovi.base_width);

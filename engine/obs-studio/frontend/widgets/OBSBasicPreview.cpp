@@ -169,7 +169,7 @@ static inline vec2 GetOBSScreenSize()
 	vec2 size;
 	vec2_zero(&size);
 
-	if (obs_get_video_info(&ovi)) {
+	if (OBSBasic::Get()->GetEditorVideoInfo(&ovi)) {
 		size.x = float(ovi.base_width);
 		size.y = float(ovi.base_height);
 	}
@@ -2436,7 +2436,7 @@ static void RenderSpacingHelper(int sourceIndex, vec3 &start, vec3 &end, vec3 &v
 	float length = vec3_dist(&start, &end);
 
 	obs_video_info ovi;
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	float px;
 
@@ -2521,7 +2521,7 @@ void OBSBasicPreview::DrawSpacingHelpers()
 	obs_sceneitem_get_info2(item, &oti);
 
 	obs_video_info ovi;
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	vec3 size;
 	vec3_set(&size, ovi.base_width, ovi.base_height, 1.0f);
@@ -2656,7 +2656,7 @@ void OBSBasicPreview::DrawSpacingHelpers()
 void OBSBasicPreview::ClampScrollingOffsets()
 {
 	obs_video_info ovi;
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	QSize targetSize = GetPixelSize(this);
 

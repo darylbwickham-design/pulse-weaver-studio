@@ -7,7 +7,17 @@ add_library(PulseWeaver::core ALIAS pulse-weaver-core)
 
 target_sources(
   pulse-weaver-core
-  PRIVATE pulse-weaver-core.cpp pulse-overlay-runtime.cpp pulse-overlay-runtime.hpp
+  PRIVATE pulse-weaver-core.cpp
+          pulse-overlay-alerts.cpp
+          pulse-overlay-alerts.hpp
+          pulse-overlay-renderer.cpp
+          pulse-overlay-renderer.hpp
+          pulse-overlay-migration.cpp
+          pulse-overlay-migration.hpp
+          pulse-overlay-runtime.cpp
+          pulse-overlay-runtime.hpp
+          pulse-overlay-store.cpp
+          pulse-overlay-store.hpp
 )
 
 target_link_libraries(

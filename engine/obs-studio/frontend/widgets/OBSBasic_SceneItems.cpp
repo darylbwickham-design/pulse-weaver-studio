@@ -130,7 +130,11 @@ static void RenameListValues(QListWidget *listWidget, const QString &newName, co
 
 void OBSBasic::RenameSources(OBSSource source, QString newName, QString prevName)
 {
-	RenameListValues(ui->scenes, newName, prevName);
+	for (int i = 0; i < ui->scenes->count(); ++i) {
+		auto *item = ui->scenes->item(i);
+		if (obs_scene_get_source(GetOBSRef<OBSScene>(item)) == source)
+			item->setText(newName);
+	}
 
 	if (vcamConfig.type == VCamOutputType::SourceOutput && prevName == QString::fromStdString(vcamConfig.source)) {
 		vcamConfig.source = newName.toStdString();
@@ -153,7 +157,11 @@ void OBSBasic::RenameSources(OBSSource source, QString newName, QString prevName
 bool OBSBasic::QueryRemoveSource(obs_source_t *source)
 {
 	if (obs_source_get_type(source) == OBS_SOURCE_TYPE_SCENE && !obs_source_is_group(source)) {
-		int count = ui->scenes->count();
+		int count = 0;
+		for (int i = 0; i < ui->scenes->count(); ++i)
+			if (IsPulsePortraitScene(obs_scene_get_source(GetOBSRef<OBSScene>(ui->scenes->item(i)))) ==
+			    IsPulsePortraitScene(source))
+				++count;
 
 		if (count == 1) {
 			OBSMessageBox::information(this, QTStr("FinalScene.Title"), QTStr("FinalScene.Text"));
@@ -709,7 +717,9 @@ void OBSBasic::CreateSourcePopupMenu(int idx, bool preview)
 			int width = obs_source_get_width(source);
 			int height = obs_source_get_height(source);
 
-			resizeOutput->setEnabled(!obs_video_active());
+			resizeOutput->setEnabled(!obs_video_active() && !IsPulsePortraitEditing());
+			if (IsPulsePortraitEditing())
+				resizeOutput->setToolTip("Portrait uses its own 1080 × 1920 canvas. This command resizes the main output.");
 
 			if (width < 32 || height < 32) {
 				resizeOutput->setEnabled(false);
@@ -1234,7 +1244,7 @@ static bool CenterAlignSelectedItems(obs_scene_t * /* scene */, obs_sceneitem_t 
 	}
 
 	obs_video_info ovi;
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	obs_transform_info itemInfo;
 	vec2_set(&itemInfo.pos, 0.0f, 0.0f);
@@ -1336,7 +1346,7 @@ void OBSBasic::CenterSelectedSceneItems(const CenterType &centerType)
 
 	// Get coordinates of screen center
 	obs_video_info ovi;
-	obs_get_video_info(&ovi);
+	OBSBasic::Get()->GetEditorVideoInfo(&ovi);
 
 	vec3 screenCenter;
 	vec3_set(&screenCenter, float(ovi.base_width), float(ovi.base_height), 0.0f);

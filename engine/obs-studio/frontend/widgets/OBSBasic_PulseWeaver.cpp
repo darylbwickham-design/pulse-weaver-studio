@@ -2068,6 +2068,8 @@ void OBSBasic::InitPulseWeaverShell()
 	outputSelector->setSpacing(6);
 	auto *horizontalOutput = new QPushButton("Landscape · 16:9");
 	auto *verticalOutput = new QPushButton("Portrait · 9:16");
+	horizontalOutput->setProperty("pulseCanvasPortrait", false);
+	verticalOutput->setProperty("pulseCanvasPortrait", true);
     pulseIcon(horizontalOutput, "horizontal");
 	auto *outputGroup = new QButtonGroup(pulseCameraPage);
     pulseIcon(verticalOutput, "vertical");
@@ -2128,6 +2130,7 @@ void OBSBasic::InitPulseWeaverShell()
 	connect(importObs, &QPushButton::clicked, this, &OBSBasic::ImportPulseWeaverObsSetup);
 	outputSelector->addWidget(importObs);
 	auto *outputHint = new QLabel;
+	outputHint->setProperty("pulseCanvasHint", true);
 	outputHint->setObjectName("PulseWeaverMuted");
     outputHint->setToolTip("The black boundary marks the program area.");
 	outputHint->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
@@ -2158,8 +2161,7 @@ void OBSBasic::InitPulseWeaverShell()
 	horizontalLayout->addWidget(ui->canvasEditor, 1);
 	horizontalLayout->addWidget(ui->contextContainer);
 	pulseCameraEditors->addWidget(horizontalEditor);
-	pulseVerticalEditor = new PulseVerticalEditor(this);
-	pulseCameraEditors->addWidget(pulseVerticalEditor);
+	/* Both aspect ratios use this same native OBS editor and its docks. */
 	/* A real QMainWindow is required here. QDockWidget snap targets only belong
 	 * to their owning QMainWindow; keeping the canvas in Camera while leaving
 	 * the docks on OBSBasic made the drop outlines appear outside this page (or
@@ -2222,8 +2224,7 @@ void OBSBasic::InitPulseWeaverShell()
 		obs_display_set_enabled(display->GetDisplay(), pulsePages && pulsePages->currentIndex() == 0);
 	});
 	connect(ui->preview, &OBSQTDisplay::DisplayCreated, this, [this](OBSQTDisplay *display) {
-		const bool horizontalCamera = pulsePages && pulsePages->currentIndex() == 2 && pulseCameraEditors &&
-					      pulseCameraEditors->currentIndex() == 0;
+		const bool horizontalCamera = pulsePages && pulsePages->currentIndex() == 2;
 		obs_display_set_enabled(display->GetDisplay(), horizontalCamera &&
 					(previewEnabled || IsPreviewProgramMode()));
 	});
@@ -2270,7 +2271,6 @@ void OBSBasic::UpdatePulseWeaverPreviewVisibility()
 	const bool visible = isVisible() && !isMinimized();
 	const bool show = visible && index == 0;
 	const bool camera = visible && index == 2;
-	const bool verticalCamera = camera && pulseCameraEditors && pulseCameraEditors->currentIndex() == 1;
 	/* OBS displays continue drawing on Windows after their Qt page is hidden.
 	 * Keep only the visible workspace's preview surfaces active so streaming
 	 * outputs get the GPU time instead of rendering three hidden previews. */
@@ -2279,12 +2279,10 @@ void OBSBasic::UpdatePulseWeaverPreviewVisibility()
 	if (pulseVerticalDisplay && pulseVerticalDisplay->GetDisplay())
 		obs_display_set_enabled(pulseVerticalDisplay->GetDisplay(), show);
 	if (ui->preview && ui->preview->GetDisplay())
-		obs_display_set_enabled(ui->preview->GetDisplay(), camera && !verticalCamera &&
+		obs_display_set_enabled(ui->preview->GetDisplay(), camera &&
 					(previewEnabled || IsPreviewProgramMode()));
 	if (program && program->GetDisplay())
 		obs_display_set_enabled(program->GetDisplay(), false);
-	if (pulseVerticalEditor)
-		pulseVerticalEditor->SetDisplayEnabled(verticalCamera);
 }
 
 void OBSBasic::SetPulseWeaverWorkspace(int index)
@@ -2305,7 +2303,6 @@ void OBSBasic::SetPulseWeaverWorkspace(int index)
 	}
 	UpdatePulseWeaverPreviewVisibility();
 	const bool camera = index == 2;
-	const bool verticalCamera = camera && pulseCameraEditors && pulseCameraEditors->currentIndex() == 1;
 	/* Studio Mode remains active underneath Camera so scene selection is
 	 * preview-only, but its duplicate programme surface belongs in Show
 	 * Control, not beside the selected editor canvas. */
@@ -2315,28 +2312,28 @@ void OBSBasic::SetPulseWeaverWorkspace(int index)
 		programWidget->setVisible(false);
 	if (ui->previewLabel)
 		ui->previewLabel->setVisible(false);
-	if (camera && !verticalCamera) {
+	if (camera) {
 		/* Camera is an editor, so its canvas must always follow the available
 		 * panel rather than retaining OBS's last manual zoom percentage. */
 		setPreviewScalingWindow();
 	}
 	if (ui->scenesDock)
-		ui->scenesDock->setVisible(camera && !verticalCamera);
+		ui->scenesDock->setVisible(camera);
 	if (ui->sourcesDock)
-		ui->sourcesDock->setVisible(camera && !verticalCamera);
+		ui->sourcesDock->setVisible(camera);
 	if (ui->transitionsDock)
-		ui->transitionsDock->setVisible(camera && !verticalCamera);
+		ui->transitionsDock->setVisible(camera);
 	if (ui->mixerDock) {
 		ui->mixerDock->setMinimumHeight(0);
 		ui->mixerDock->setMaximumHeight(QWIDGETSIZE_MAX);
-		ui->mixerDock->setVisible(camera && !verticalCamera);
+		ui->mixerDock->setVisible(camera);
 	}
 	/* Show Control owns live-output operations. The upstream OBS Controls dock
 	 * remains constructed for engine compatibility but is never exposed in
 	 * Camera, preventing a second Start Streaming path. */
 	if (controlsDock)
 		controlsDock->setVisible(false);
-	if (camera && !verticalCamera && pulseCameraDockHost)
+	if (camera && pulseCameraDockHost)
 		pulseCameraDockHost->setDockNestingEnabled(true);
 	UpdatePulseWeaverShell();
 }
@@ -2345,24 +2342,99 @@ void OBSBasic::SetPulseWeaverCameraOutput(bool vertical)
 {
 	if (!pulseCameraEditors)
 		return;
-	const bool wasVertical = pulseCameraEditors->currentIndex() == 1;
-	/* Hiding every native dock lets QMainWindow redistribute their space. Save
-	 * the user's exact horizontal arrangement before entering the independent
-	 * vertical editor, then restore it after the docks are visible again. */
-	if (vertical && !wasVertical && pulseCameraDockHost)
-		pulseCameraHorizontalDockLayout = pulseCameraDockHost->saveState(1);
-	pulseCameraEditors->setCurrentIndex(vertical ? 1 : 0);
-	if (vertical && pulseVerticalEditor)
-		pulseVerticalEditor->Refresh();
+	if (vertical == IsPulsePortraitEditing())
+		return;
+	/* Close item-bound dialogs before changing the editing context. */
+	CloseDialogs();
+	pulsePortraitEditing = vertical;
+	for (auto *button : pulseCameraPage->findChildren<QPushButton *>()) {
+		if (button->property("pulseCanvasPortrait").isValid()) {
+			QSignalBlocker blocker(button);
+			button->setChecked(button->property("pulseCanvasPortrait").toBool() == vertical);
+		}
+	}
+	obs_video_info editorInfo{};
+	GetEditorVideoInfo(&editorInfo);
+	for (auto *label : pulseCameraPage->findChildren<QLabel *>())
+		if (label->property("pulseCanvasHint").toBool())
+			label->setText(QString("%1 · %2 × %3").arg(vertical ? "Portrait" : "Landscape")
+				.arg(editorInfo.base_width).arg(editorInfo.base_height));
+	RefreshPulseCameraScenes();
+	if (vertical) {
+		OBSSource source = obs_scene_get_source(pulsePortraitPreview.Get());
+		if (!source || obs_source_removed(source)) {
+			obs_canvas_t *canvas = PulseWeaverGetVerticalCanvas();
+			source = OBSSourceAutoRelease(canvas ? obs_canvas_get_channel(canvas, 0) : nullptr);
+			obs_canvas_release(canvas);
+		}
+		if (!obs_source_is_scene(source)) {
+			for (int i = 0; i < ui->scenes->count(); ++i) {
+				if (!ui->scenes->item(i)->isHidden()) {
+					source = obs_scene_get_source(GetOBSRef<OBSScene>(ui->scenes->item(i)));
+					break;
+				}
+			}
+		}
+		SelectPulsePortraitScene(source);
+	} else {
+		pulsePortraitPreview.SetShowing(false);
+		QSignalBlocker blocker(ui->scenes);
+		for (int i = 0; i < ui->scenes->count(); ++i)
+			if (GetOBSRef<OBSScene>(ui->scenes->item(i)) == currentScene.load())
+				ui->scenes->setCurrentItem(ui->scenes->item(i));
+		OnEvent(OBS_FRONTEND_EVENT_PREVIEW_SCENE_CHANGED);
+		UpdateContextBar(true);
+	}
+	setPreviewScalingWindow();
 	if (pulsePages && pulsePages->currentIndex() == 2)
 		SetPulseWeaverWorkspace(2);
-	if (!vertical && wasVertical && pulseCameraDockHost && !pulseCameraHorizontalDockLayout.isEmpty()) {
-		QTimer::singleShot(0, this, [this] {
-			if (pulseCameraDockHost && !pulseCameraHorizontalDockLayout.isEmpty())
-				pulseCameraDockHost->restoreState(pulseCameraHorizontalDockLayout, 1);
-			setPreviewScalingWindow();
-		});
+}
+
+bool OBSBasic::IsPulsePortraitScene(obs_source_t *source)
+{
+	return PulseEditor::IsPortrait(source);
+}
+
+bool OBSBasic::GetEditorVideoInfo(obs_video_info *info)
+{
+	return PulseEditor::VideoInfo(IsPulsePortraitEditing(), info);
+}
+
+void OBSBasic::RefreshPulseCameraScenes()
+{
+	obs_canvas_t *canvas = PulseWeaverGetVerticalCanvas();
+	if (canvas) {
+		obs_canvas_enum_scenes(canvas, [](void *data, obs_source_t *source) {
+			static_cast<OBSBasic *>(data)->AddScene(source);
+			return true;
+		}, this);
+		obs_canvas_release(canvas);
 	}
+	QSignalBlocker blocker(ui->scenes);
+	for (int i = 0; i < ui->scenes->count(); ++i) {
+		auto *item = ui->scenes->item(i);
+		item->setHidden(IsPulsePortraitScene(obs_scene_get_source(GetOBSRef<OBSScene>(item))) !=
+				IsPulsePortraitEditing());
+	}
+}
+
+void OBSBasic::SelectPulsePortraitScene(obs_source_t *source)
+{
+	if (source && (!IsPulsePortraitScene(source) || obs_source_removed(source)))
+		return;
+	setProperty("pulseCameraPortraitSceneUuid",
+		    source ? QString::fromUtf8(obs_source_get_uuid(source)) : QString());
+	pulsePortraitPreview.Select(obs_scene_from_source(source));
+	pulsePortraitPreview.SetShowing(true);
+	QSignalBlocker blocker(ui->scenes);
+	ui->scenes->setCurrentItem(nullptr);
+	for (int i = 0; i < ui->scenes->count(); ++i)
+		if (obs_scene_get_source(GetOBSRef<OBSScene>(ui->scenes->item(i))) == source)
+			ui->scenes->setCurrentItem(ui->scenes->item(i));
+	/* Only the editor observes this change. Never set the programme channel. */
+	OnEvent(OBS_FRONTEND_EVENT_PREVIEW_SCENE_CHANGED);
+	UpdateContextBar(true);
+	SaveProject();
 }
 
 static void pulseRestoreImportedVerticalTransforms(const QJsonObject &root)
@@ -2688,6 +2760,9 @@ void OBSBasic::ShutdownPulseWeaverShell()
 		pulseKickOutputControl->click();
 	}
 	pulseOutputSceneTransformSyncs.clear();
+	/* saveAll() runs after shell shutdown; retain the selection until
+	 * ClearSceneData() so its UUID survives the final collection save. */
+	pulsePortraitPreview.SetShowing(false);
 	for (obs_canvas_t *canvas : std::as_const(pulseOutputCanvases)) {
 		obs_canvas_remove(canvas);
 		obs_canvas_release(canvas);

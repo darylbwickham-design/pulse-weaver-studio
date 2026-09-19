@@ -5,6 +5,7 @@
 #include "../../shared/qt/PulseOutputBitrates.hpp"
 #include "pulse-lumia-bridge.hpp"
 #include "pulse-overlay-runtime.hpp"
+#include "pulse-overlay-alerts.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -1967,8 +1968,10 @@ public:
 						      ? parsed.object()
 						      : QJsonObject{{"value", json}};
 		const QString canonical = canonicalEventKey(platform, type);
-		if (!canonical.isEmpty())
+		if (!canonical.isEmpty()) {
 			eventData.insert("canonical", canonical);
+			eventData = PulseOverlay::normalizeAlertEvent(eventData, canonical, platform);
+		}
 		const QString line = QDateTime::currentDateTime().toString("HH:mm:ss") + "  " + key + "  " + json;
 		eventLog->append(line.toHtmlEscaped());
 		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window())) {
@@ -2045,9 +2048,15 @@ public:
 	{
 		if (lumiaBridge) lumiaBridge->frontendEvent(event);
 		switch (event) {
+		case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+			if (overlays) overlays->sceneCollectionLoaded();
+			break;
+		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
+			if (overlays) overlays->sceneCollectionLoaded();
+			refreshAll();
+			break;
 		case OBS_FRONTEND_EVENT_SCENE_CHANGED:
 		case OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED:
-		case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
 		case OBS_FRONTEND_EVENT_CANVAS_ADDED:
 		case OBS_FRONTEND_EVENT_CANVAS_REMOVED:
 			refreshAll();
@@ -3265,7 +3274,8 @@ private:
 		}
 		if (type == "add_overlay_to_scene") {
 			QString error;
-			const bool ok = overlays && overlays->addToCurrentScene(args.value("name").toString(), &error);
+				const bool ok = overlays && overlays->addToCameraScenes(args.value("name").toString(),
+					args.value("target").toString("landscape"), &error);
 			results.append(ok ? "Added overlay to the active scene." : error);
 			return ok;
 		}
@@ -4252,7 +4262,9 @@ private:
 					}
 					else if (method == "POST" && path == "/api/v1/overlay/add-to-scene") {
 						QString error;
-						const bool added = overlays && overlays->addToCurrentScene(query.queryItemValue("name", QUrl::FullyDecoded), &error);
+						const QString target = query.queryItemValue("target", QUrl::FullyDecoded);
+						const bool added = overlays && overlays->addToCameraScenes(
+							query.queryItemValue("name", QUrl::FullyDecoded), target.isEmpty() ? "landscape" : target, &error);
 						respond(socket, added ? 200 : 400, QJsonObject{{"ok", added}, {"error", error}});
 					}
 					else if (method == "POST" && path == "/api/v1/scene") {

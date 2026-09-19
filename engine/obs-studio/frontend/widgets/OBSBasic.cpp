@@ -436,7 +436,7 @@ OBSBasic::OBSBasic(QWidget *parent) : OBSMainWindow(parent), undo_s(ui), ui(new 
 	auto displayResize = [this]() {
 		struct obs_video_info ovi;
 
-		if (obs_get_video_info(&ovi)) {
+		if (GetEditorVideoInfo(&ovi)) {
 			ResizePreview(ovi.base_width, ovi.base_height);
 		}
 
@@ -966,6 +966,12 @@ void OBSBasic::InitOBSCallbacks()
 
 	signalHandlers.reserve(signalHandlers.size() + 6);
 	signalHandlers.emplace_back(obs_get_signal_handler(), "source_create", OBSBasic::SourceCreated, this);
+	signalHandlers.emplace_back(obs_get_signal_handler(), "source_create_canvas",
+		[](void *data, calldata_t *params) {
+			auto *source = static_cast<obs_source_t *>(calldata_ptr(params, "source"));
+			if (OBSBasic::IsPulsePortraitScene(source))
+				OBSBasic::SourceCreated(data, params);
+		}, this);
 	signalHandlers.emplace_back(obs_get_signal_handler(), "source_remove", OBSBasic::SourceRemoved, this);
 	signalHandlers.emplace_back(obs_get_signal_handler(), "source_rename", OBSBasic::SourceRenamed, this);
 	signalHandlers.emplace_back(
@@ -1201,7 +1207,7 @@ void OBSBasic::OBSInit()
 		obs_display_add_draw_callback(window->GetDisplay(), OBSBasic::RenderMain, this);
 
 		struct obs_video_info ovi;
-		if (obs_get_video_info(&ovi)) {
+		if (GetEditorVideoInfo(&ovi)) {
 			ResizePreview(ovi.base_width, ovi.base_height);
 		}
 	};

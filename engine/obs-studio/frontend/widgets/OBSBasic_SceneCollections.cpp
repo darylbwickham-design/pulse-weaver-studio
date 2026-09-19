@@ -888,7 +888,7 @@ void OBSBasic::Save(SceneCollection &collection)
 	obs_data_set_array(saveData, "scene_order", sceneOrder);
 
 	// Current preview/program scenes
-	OBSScene scene = GetCurrentScene();
+	OBSScene scene = currentScene.load();
 	OBSSource curProgramScene = OBSGetStrongRef(programScene);
 	if (!curProgramScene) {
 		curProgramScene = obs_scene_get_source(scene);
@@ -896,6 +896,9 @@ void OBSBasic::Save(SceneCollection &collection)
 
 	obs_data_set_string(saveData, "current_scene", obs_source_get_name(obs_scene_get_source(scene)));
 	obs_data_set_string(saveData, "current_program_scene", obs_source_get_name(curProgramScene));
+	OBSScene portraitPreview = pulsePortraitPreview.Get();
+	obs_data_set_string(saveData, "pulseweaver_portrait_preview_uuid",
+		obs_source_get_uuid(obs_scene_get_source(portraitPreview)));
 
 	// Canvases
 	OBSDataArrayAutoRelease savedCanvases = OBS::Canvas::SaveCanvases(canvases);
@@ -1391,6 +1394,11 @@ retryScene:
 	}
 
 	SetCurrentScene(curScene.Get(), true);
+	{
+		OBSSourceAutoRelease savedPortrait = obs_get_source_by_uuid(obs_data_get_string(data, "pulseweaver_portrait_preview_uuid"));
+		if (IsPulsePortraitScene(savedPortrait))
+			pulsePortraitPreview.Select(obs_scene_from_source(savedPortrait));
+	}
 
 	if (!curProgramScene) {
 		curProgramScene = std::move(curScene);
@@ -1563,6 +1571,9 @@ void OBSBasic::SaveProjectDeferred()
 void OBSBasic::ClearSceneData()
 {
 	disableSaving++;
+	SetPulseWeaverCameraOutput(false);
+	pulsePortraitPreview.Clear();
+	pulsePortraitEditing = false;
 
 	setCursor(Qt::WaitCursor);
 

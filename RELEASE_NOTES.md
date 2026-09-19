@@ -1,21 +1,29 @@
-# Pulse Weaver 1.12.6 — Built-in Twitch and Kick connections
+# Pulse Weaver 1.12.8 — Overlays, alerts and safe recovery
 
-Pulse Weaver now includes its registered Twitch and Kick applications:
+## Overlay Designer and Alert Box v1
 
-- Twitch connects with Pulse Weaver's public desktop Client ID and Device Code flow.
-- Kick connects with the included public Client ID and PKCE; its confidential client secret is held only by the hosted Pulse Weaver relay.
-- Kick token exchange and refresh no longer expose or store the application secret on the streaming PC.
-- The Connections page no longer asks users to create or paste Twitch or Kick application credentials.
+- Separate saved drafts and published overlays, with a private preview.
+- Alert variations, event matching and queue controls in Action. Show Control remains the live-output interface.
+- Repaired publication refresh, legacy custom-code event delivery, sandbox isolation, immediate audio mute and alert audio cleanup.
+- Preserves unchanged legacy overlay fields, including fractional positions and durations.
+- Fixed managed-source startup migration and an active-browser shutdown crash.
 
-The Kick relay has also been upgraded to protocol 2 and continues to verify and deliver Kick webhook events for incoming chat.
+## Update with a verified backup
 
-## Updating
+Close Pulse Weaver and run **PulseWeaver-Setup-1.12.8-BETA.exe**, or use Studio → Updates on the Windows private/beta channel. Do not uninstall first.
 
-Use Studio → Updates → Check for updates, or run the matching installer manually.
+The installer verifies a full app-and-settings backup before committing an update. **BACK UP NOW** creates an extra restore point. Backups are stored in the sibling **Pulse Weaver Backups** folder, outside the installation. Replacement is staged and journaled; reopen setup to recover an interrupted operation.
 
-- Private beta: **PulseWeaver-Setup-1.12.6-BETA.exe**.
-- Public Preview: **PulseWeaver-Public-Dist-1.12.6-Setup.exe**.
+## Rollback and restore
 
-Both installers preserve configuration and contain no confidential application secrets or personal credentials. Corresponding source archives, Lumia 1.1.3 and SHA-256 checksums are included. Mac remains on its separate preview release line.
+Keep **PulseWeaver-Setup-1.12.7-RECOVERY.exe** as a separate recovery tool. It embeds the original 1.12.7 app payload with the revised maintenance interface.
 
-Validation: native Windows build; hosted Kick relay production build and health check; invalid OAuth request rejection; installer payload and configuration-preservation checks; credential and archive-parity audit. A real Kick sign-in still requires the user to approve access in Kick's browser consent screen.
+If you need to return to 1.12.7, close Pulse Weaver, run the recovery installer, choose **RESTORE BACKUP / ROLL BACK**, and select the backup made before updating. Confirm the saved version is 1.12.7. The current state is backed up first, then the matching app files and settings are restored together. Older binaries are not installed over incompatible newer settings.
+
+Backups contain private account data: keep them private and on the same Windows account/machine. External media files outside the installation are not included. Older config-only ZIPs are not full recovery backups.
+
+## Validation and scope
+
+The exact installers passed payload, credential migration, language and layout tests, plus a cross-installer upgrade/restore using a private copied profile with byte-for-byte verification. Native scene/overlay preservation, renderer behavior and recovery failure-injection checks passed. Live provider/device behavior is not exhaustively covered.
+
+This release updates the **Windows private/beta channel**. Public Windows and Mac remain on their existing release lines. Includes corresponding source and SHA-256 checksums. No personal configuration, backups or confidential platform credentials are included.

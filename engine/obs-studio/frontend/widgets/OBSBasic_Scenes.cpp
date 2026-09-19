@@ -19,12 +19,14 @@
 
 #include "OBSBasic.hpp"
 #include "OBSProjector.hpp"
+#include "PulseVerticalEditor.hpp"
 
 #include <dialogs/NameDialog.hpp>
 
 #include <qt-wrappers.hpp>
 
 #include <QLineEdit>
+#include <QSignalBlocker>
 #include <QWidgetAction>
 
 #include <vector>
@@ -64,18 +66,21 @@ obs_data_array_t *OBSBasic::SaveSceneListOrder()
 	for (int i = 0; i < ui->scenes->count(); i++) {
 		OBSDataAutoRelease data = obs_data_create();
 		obs_data_set_string(data, "name", QT_TO_UTF8(ui->scenes->item(i)->text()));
+		obs_data_set_string(data, "uuid", obs_source_get_uuid(obs_scene_get_source(GetOBSRef<OBSScene>(ui->scenes->item(i)))));
 		obs_data_array_push_back(sceneOrder, data);
 	}
 
 	return sceneOrder;
 }
 
-static void ReorderItemByName(QListWidget *lw, const char *name, int newIndex)
+static void ReorderItemByName(QListWidget *lw, const char *name, const char *uuid, int newIndex)
 {
 	for (int i = 0; i < lw->count(); i++) {
 		QListWidgetItem *item = lw->item(i);
 
-		if (strcmp(name, QT_TO_UTF8(item->text())) == 0) {
+		obs_source_t *source = obs_scene_get_source(GetOBSRef<OBSScene>(item));
+		if ((*uuid && strcmp(uuid, obs_source_get_uuid(source)) == 0) ||
+		    (!*uuid && !OBSBasic::IsPulsePortraitScene(source) && strcmp(name, QT_TO_UTF8(item->text())) == 0)) {
 			if (newIndex != i) {
 				item = lw->takeItem(i);
 				lw->insertItem(newIndex, item);
@@ -93,12 +98,15 @@ void OBSBasic::LoadSceneListOrder(obs_data_array_t *array)
 		OBSDataAutoRelease data = obs_data_array_item(array, i);
 		const char *name = obs_data_get_string(data, "name");
 
-		ReorderItemByName(ui->scenes, name, (int)i);
+		ReorderItemByName(ui->scenes, name, obs_data_get_string(data, "uuid"), (int)i);
 	}
 }
 
 OBSScene OBSBasic::GetCurrentScene()
 {
+	if (IsPulsePortraitEditing()) {
+		return pulsePortraitPreview.Get();
+	}
 	return currentScene.load();
 }
 
@@ -106,10 +114,14 @@ void OBSBasic::AddScene(OBSSource source)
 {
 	const char *name = obs_source_get_name(source);
 	obs_scene_t *scene = obs_scene_from_source(source);
+	for (int i = 0; i < ui->scenes->count(); ++i)
+		if (GetOBSRef<OBSScene>(ui->scenes->item(i)) == scene)
+			return;
 
 	QListWidgetItem *item = new QListWidgetItem(QT_UTF8(name));
 	SetOBSRef(item, OBSScene(scene));
 	ui->scenes->insertItem(ui->scenes->currentRow() + 1, item);
+	item->setHidden(IsPulsePortraitScene(source) != IsPulsePortraitEditing());
 
 	obs_hotkey_register_source(
 		source, "OBSBasic.SelectScene", Str("Basic.Hotkeys.SelectScene"),
@@ -133,6 +145,8 @@ void OBSBasic::AddScene(OBSSource source)
 		std::make_shared<OBSSignal>(handler, "reorder", OBSBasic::SceneReordered, this),
 		std::make_shared<OBSSignal>(handler, "refresh", OBSBasic::SceneRefreshed, this),
 	});
+	if (IsPulsePortraitScene(source))
+		container.handlers.emplace_back(std::make_shared<OBSSignal>(handler, "rename", OBSBasic::SourceRenamed, this));
 
 	item->setData(static_cast<int>(QtDataRole::OBSSignals), QVariant::fromValue(container));
 
@@ -186,10 +200,21 @@ void OBSBasic::RemoveScene(OBSSource source)
 	}
 
 	if (sel != nullptr) {
+		if (scene == pulsePortraitPreview.Get())
+			pulsePortraitPreview.Select(nullptr);
 		if (sel == ui->scenes->currentItem()) {
 			ui->sources->Clear();
 		}
 		delete sel;
+	}
+	if (IsPulsePortraitEditing() && !pulsePortraitPreview.Get()) {
+		for (int i = 0; i < ui->scenes->count(); ++i) {
+			auto *item = ui->scenes->item(i);
+			if (!item->isHidden()) {
+				SelectPulsePortraitScene(obs_scene_get_source(GetOBSRef<OBSScene>(item)));
+				break;
+			}
+		}
 	}
 
 	SaveProject();
@@ -239,66 +264,53 @@ void OBSBasic::AddSceneItem(OBSSceneItem item)
 
 void OBSBasic::DuplicateSelectedScene()
 {
-	OBSScene curScene = GetCurrentScene();
-
-	if (!curScene) {
+	OBSScene scene = GetCurrentScene();
+	if (!scene)
+		return;
+	OBSSource source = obs_scene_get_source(scene);
+	obs_canvas_t *canvas = obs_source_get_canvas(source);
+	if (!canvas)
+		return;
+	QString suggestion = QString::fromUtf8(obs_source_get_name(source)) + " 2";
+	for (int suffix = 3;; ++suffix) {
+		OBSSourceAutoRelease existing = obs_canvas_get_source_by_name(canvas, QT_TO_UTF8(suggestion));
+		if (!existing)
+			break;
+		suggestion = QString::fromUtf8(obs_source_get_name(source)) + " " + QString::number(suffix);
+	}
+	string name;
+	const bool accepted = NameDialog::AskForName(this, QTStr("Basic.Main.AddSceneDlg.Title"),
+						    QTStr("Basic.Main.AddSceneDlg.Text"), name, suggestion);
+	OBSSourceAutoRelease existing = accepted ? obs_canvas_get_source_by_name(canvas, name.c_str()) : nullptr;
+	obs_canvas_release(canvas);
+	if (!accepted)
+		return;
+	if (name.empty() || existing) {
+		OBSMessageBox::warning(this, QTStr(name.empty() ? "NoNameEntered.Title" : "NameExists.Title"),
+				      QTStr(name.empty() ? "NoNameEntered.Text" : "NameExists.Text"));
 		return;
 	}
-
-	OBSSource curSceneSource = obs_scene_get_source(curScene);
-	QString format{obs_source_get_name(curSceneSource)};
-	format += " %1";
-
-	int i = 2;
-	QString placeHolderText = format.arg(i);
-	OBSSourceAutoRelease source = nullptr;
-	while ((source = obs_get_source_by_name(QT_TO_UTF8(placeHolderText)))) {
-		placeHolderText = format.arg(++i);
-	}
-
-	for (;;) {
-		string name;
-		bool accepted = NameDialog::AskForName(this, QTStr("Basic.Main.AddSceneDlg.Title"),
-						       QTStr("Basic.Main.AddSceneDlg.Text"), name, placeHolderText);
-		if (!accepted) {
-			return;
-		}
-
-		if (name.empty()) {
-			OBSMessageBox::warning(this, QTStr("NoNameEntered.Title"), QTStr("NoNameEntered.Text"));
-			continue;
-		}
-
-		obs_source_t *source = obs_get_source_by_name(name.c_str());
-		if (source) {
-			OBSMessageBox::warning(this, QTStr("NameExists.Title"), QTStr("NameExists.Text"));
-
-			obs_source_release(source);
-			continue;
-		}
-
-		OBSSceneAutoRelease scene = obs_scene_duplicate(curScene, name.c_str(), OBS_SCENE_DUP_REFS);
-		source = obs_scene_get_source(scene);
-		SetCurrentScene(source, true);
-
-		auto undo = [](const std::string &data) {
-			OBSSourceAutoRelease source = obs_get_source_by_name(data.c_str());
+	OBSSceneAutoRelease copy = obs_scene_duplicate(scene, name.c_str(), OBS_SCENE_DUP_REFS);
+	if (!copy)
+		return;
+	source = obs_scene_get_source(copy);
+	SetCurrentScene(source, true);
+	OBSDataAutoRelease saved = obs_save_source(source);
+	auto undo = [](const std::string &uuid) {
+		OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.c_str());
+		if (source)
 			obs_source_remove(source);
-		};
-
-		auto redo = [this, name](const std::string &data) {
-			OBSSourceAutoRelease source = obs_get_source_by_name(data.c_str());
-			obs_scene_t *scene = obs_scene_from_source(source);
-			scene = obs_scene_duplicate(scene, name.c_str(), OBS_SCENE_DUP_REFS);
-			source = obs_scene_get_source(scene);
+	};
+	auto redo = [this](const std::string &json) {
+		OBSDataAutoRelease data = obs_data_create_from_json(json.c_str());
+		OBSSourceAutoRelease source = obs_load_source(data);
+		if (source) {
+			obs_source_load2(source);
 			SetCurrentScene(source.Get(), true);
-		};
-
-		undo_s.add_action(QTStr("Undo.Scene.Duplicate").arg(obs_source_get_name(source)), undo, redo,
-				  obs_source_get_name(source), obs_source_get_name(obs_scene_get_source(curScene)));
-
-		break;
-	}
+		}
+	};
+	undo_s.add_action(QTStr("Undo.Scene.Duplicate").arg(QString::fromStdString(name)), undo, redo,
+			  obs_source_get_uuid(source), obs_data_get_json(saved));
 }
 
 static bool save_undo_source_enum(obs_scene_t * /* scene */, obs_sceneitem_t *item, void *p)
@@ -315,7 +327,7 @@ static bool save_undo_source_enum(obs_scene_t * /* scene */, obs_sceneitem_t *it
 	const size_t count = obs_data_array_count(array);
 	for (size_t i = 0; i < count; i++) {
 		OBSDataAutoRelease sourceData = obs_data_array_item(array, i);
-		if (strcmp(name, obs_data_get_string(sourceData, "name")) == 0) {
+		if (strcmp(obs_source_get_uuid(source), obs_data_get_string(sourceData, "uuid")) == 0) {
 			return true;
 		}
 	}
@@ -338,7 +350,7 @@ static inline void RemoveSceneAndReleaseNested(obs_source_t *source)
 		}
 		return true;
 	};
-	obs_enum_scenes(cb, NULL);
+	obs_enum_all_sources(cb, NULL);
 }
 
 void OBSBasic::RemoveSelectedScene()
@@ -374,19 +386,19 @@ void OBSBasic::RemoveSelectedScene()
 
 	auto other_scenes_cb = [](void *data_ptr, obs_source_t *scene) {
 		struct other_scenes_cb_data *data = (struct other_scenes_cb_data *)data_ptr;
-		if (strcmp(obs_source_get_name(scene), obs_source_get_name(data->oldScene)) == 0) {
+		if (!obs_source_is_scene(scene) || obs_obj_is_private(scene) || scene == data->oldScene) {
 			return true;
 		}
 		obs_sceneitem_t *item = obs_scene_find_source(obs_group_or_scene_from_source(scene),
 							      obs_source_get_name(data->oldScene));
-		if (item) {
+		if (item && obs_sceneitem_get_source(item) == data->oldScene) {
 			OBSDataAutoRelease scene_data =
 				obs_save_source(obs_scene_get_source(obs_sceneitem_get_scene(item)));
 			obs_data_array_push_back(data->scene_used_in_other_scenes, scene_data);
 		}
 		return true;
 	};
-	obs_enum_scenes(other_scenes_cb, &other_scenes_cb_data);
+	obs_enum_all_sources(other_scenes_cb, &other_scenes_cb_data);
 
 	/* --------------------------- */
 	/* undo/redo                   */
@@ -405,9 +417,7 @@ void OBSBasic::RemoveSelectedScene()
 
 		for (size_t i = 0; i < count; i++) {
 			OBSDataAutoRelease data = obs_data_array_item(sources_in_deleted_scene, i);
-			const char *name = obs_data_get_string(data, "name");
-
-			OBSSourceAutoRelease source = obs_get_source_by_name(name);
+			OBSSourceAutoRelease source = obs_get_source_by_uuid(obs_data_get_string(data, "uuid"));
 			if (!source) {
 				source = obs_load_source(data);
 				sources.push_back(source.Get());
@@ -422,8 +432,7 @@ void OBSBasic::RemoveSelectedScene()
 		/* Add scene to scenes and groups it was nested in */
 		for (size_t i = 0; i < obs_data_array_count(scene_used_in_other_scenes); i++) {
 			OBSDataAutoRelease data = obs_data_array_item(scene_used_in_other_scenes, i);
-			const char *name = obs_data_get_string(data, "name");
-			OBSSourceAutoRelease source = obs_get_source_by_name(name);
+			OBSSourceAutoRelease source = obs_get_source_by_uuid(obs_data_get_string(data, "uuid"));
 
 			OBSDataAutoRelease settings = obs_data_get_obj(data, "settings");
 			OBSDataArrayAutoRelease items = obs_data_get_array(settings, "items");
@@ -443,7 +452,10 @@ void OBSBasic::RemoveSelectedScene()
 			obs_sceneitems_add(obs_group_or_scene_from_source(source), items);
 		}
 
-		obs_source_t *scene_source = sources.back();
+		OBSDataAutoRelease deletedSceneData = obs_data_array_item(sources_in_deleted_scene, count - 1);
+		OBSSourceAutoRelease scene_source = obs_get_source_by_uuid(obs_data_get_string(deletedSceneData, "uuid"));
+		if (!scene_source)
+			return;
 		OBSScene scene = obs_scene_from_source(scene_source);
 		SetCurrentScene(scene, true);
 
@@ -453,12 +465,13 @@ void OBSBasic::RemoveSelectedScene()
 		QListWidgetItem *item = ui->scenes->takeItem(curIndex);
 		ui->scenes->insertItem(savedIndex, item);
 		ui->scenes->setCurrentRow(savedIndex);
-		currentScene = scene.Get();
+		if (!IsPulsePortraitEditing())
+			currentScene = scene.Get();
 		ui->scenes->blockSignals(false);
 	};
 
-	auto redo = [](const std::string &name) {
-		OBSSourceAutoRelease source = obs_get_source_by_name(name.c_str());
+	auto redo = [](const std::string &uuid) {
+		OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.c_str());
 		RemoveSceneAndReleaseNested(source);
 	};
 
@@ -468,7 +481,7 @@ void OBSBasic::RemoveSelectedScene()
 	obs_data_set_int(data, "index", ui->scenes->currentRow());
 
 	const char *scene_name = obs_source_get_name(source);
-	undo_s.add_action(QTStr("Undo.Delete").arg(scene_name), undo, redo, obs_data_get_json(data), scene_name);
+	undo_s.add_action(QTStr("Undo.Delete").arg(scene_name), undo, redo, obs_data_get_json(data), obs_source_get_uuid(source));
 
 	/* --------------------------- */
 	/* remove                      */
@@ -508,6 +521,12 @@ void OBSBasic::SceneItemAdded(void *data, calldata_t *params)
 void OBSBasic::on_scenes_currentItemChanged(QListWidgetItem *current, QListWidgetItem *)
 {
 	OBSSource source;
+	if (IsPulsePortraitEditing()) {
+		if (current && current->isHidden())
+			return;
+		SelectPulsePortraitScene(current ? obs_scene_get_source(GetOBSRef<OBSScene>(current)) : nullptr);
+		return;
+	}
 
 	bool forceSceneChange = false;
 
@@ -522,6 +541,8 @@ void OBSBasic::on_scenes_currentItemChanged(QListWidgetItem *current, QListWidge
 	} else {
 		currentScene = NULL;
 	}
+	setProperty("pulseCameraLandscapeSceneUuid",
+		    source ? QString::fromUtf8(obs_source_get_uuid(source)) : QString());
 
 	SetCurrentScene(source, forceSceneChange);
 
@@ -553,6 +574,34 @@ void OBSBasic::on_scenes_customContextMenuRequested(const QPoint &pos)
 	QMenu order(QTStr("Basic.MainMenu.Edit.Order"), this);
 
 	popup.addAction(QTStr("AddScene") + "...", this, &OBSBasic::on_actionAddScene_triggered);
+	OBSSource landscape = obs_scene_get_source(currentScene.load());
+	if (landscape) {
+		popup.addAction("Duplicate landscape scene to portrait...", this, [this, landscape] {
+			std::string name;
+			if (!NameDialog::AskForName(this, "Duplicate to portrait", "Scene name", name,
+				QString::fromUtf8(obs_source_get_name(landscape)) + " Portrait") || name.empty())
+				return;
+			OBSSceneAutoRelease copy = PulseWeaverDuplicateToVertical(landscape, name.c_str(), true, false);
+			if (copy) {
+				SetCurrentScene(copy, true);
+				SaveProject();
+			}
+		});
+	}
+	if (IsPulsePortraitEditing() && item && landscape) {
+		OBSSource portrait = GetCurrentSceneSource();
+		OBSDataAutoRelease settings = obs_source_get_private_settings(portrait);
+		auto *link = popup.addAction("Link to selected landscape scene");
+		link->setCheckable(true);
+		link->setChecked(obs_data_get_bool(settings, "pulseweaver.follow_horizontal") &&
+			strcmp(obs_data_get_string(settings, "pulseweaver.horizontal_uuid"), obs_source_get_uuid(landscape)) == 0);
+		connect(link, &QAction::triggered, this, [this, landscape, portrait](bool checked) {
+			OBSDataAutoRelease settings = obs_source_get_private_settings(portrait);
+			obs_data_set_string(settings, "pulseweaver.horizontal_uuid", obs_source_get_uuid(landscape));
+			obs_data_set_bool(settings, "pulseweaver.follow_horizontal", checked);
+			SaveProject();
+		});
+	}
 
 	if (item) {
 		QAction *copyFilters = new QAction(QTStr("Copy.Filters"), this);
@@ -663,53 +712,52 @@ void OBSBasic::GridActionClicked()
 
 void OBSBasic::on_actionAddScene_triggered()
 {
+	obs_canvas_t *canvas = IsPulsePortraitEditing() ? obs_get_canvas_by_name("Pulse Weaver Vertical") : obs_get_main_canvas();
+	if (!canvas)
+		return;
+	QString suggestion = QTStr("Basic.Main.DefaultSceneName.Text").arg(2);
+	for (int suffix = 3;; ++suffix) {
+		OBSSourceAutoRelease existing = obs_canvas_get_source_by_name(canvas, QT_TO_UTF8(suggestion));
+		if (!existing)
+			break;
+		suggestion = QTStr("Basic.Main.DefaultSceneName.Text").arg(suffix);
+	}
 	string name;
-	QString format{QTStr("Basic.Main.DefaultSceneName.Text")};
-
-	int i = 2;
-	QString placeHolderText = format.arg(i);
-	OBSSourceAutoRelease source = nullptr;
-	while ((source = obs_get_source_by_name(QT_TO_UTF8(placeHolderText)))) {
-		placeHolderText = format.arg(++i);
+	const bool accepted = NameDialog::AskForName(this, QTStr("Basic.Main.AddSceneDlg.Title"),
+						    QTStr("Basic.Main.AddSceneDlg.Text"), name, suggestion);
+	if (!accepted) {
+		obs_canvas_release(canvas);
+		return;
 	}
-
-	bool accepted = NameDialog::AskForName(this, QTStr("Basic.Main.AddSceneDlg.Title"),
-					       QTStr("Basic.Main.AddSceneDlg.Text"), name, placeHolderText);
-
-	if (accepted) {
-		if (name.empty()) {
-			OBSMessageBox::warning(this, QTStr("NoNameEntered.Title"), QTStr("NoNameEntered.Text"));
-			on_actionAddScene_triggered();
-			return;
-		}
-
-		OBSSourceAutoRelease source = obs_get_source_by_name(name.c_str());
+	OBSSourceAutoRelease existing = obs_canvas_get_source_by_name(canvas, name.c_str());
+	if (name.empty() || existing) {
+		obs_canvas_release(canvas);
+		OBSMessageBox::warning(this, QTStr(name.empty() ? "NoNameEntered.Title" : "NameExists.Title"),
+				      QTStr(name.empty() ? "NoNameEntered.Text" : "NameExists.Text"));
+		return;
+	}
+	OBSSceneAutoRelease scene = obs_canvas_scene_create(canvas, name.c_str());
+	obs_canvas_release(canvas);
+	if (!scene)
+		return;
+	obs_source_t *source = obs_scene_get_source(scene);
+	SetCurrentScene(source);
+	OBSDataAutoRelease saved = obs_save_source(source);
+	auto undo = [](const std::string &uuid) {
+		OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.c_str());
+		if (source)
+			obs_source_remove(source);
+	};
+	auto redo = [this](const std::string &json) {
+		OBSDataAutoRelease data = obs_data_create_from_json(json.c_str());
+		OBSSourceAutoRelease source = obs_load_source(data);
 		if (source) {
-			OBSMessageBox::warning(this, QTStr("NameExists.Title"), QTStr("NameExists.Text"));
-
-			on_actionAddScene_triggered();
-			return;
+			obs_source_load2(source);
+			SetCurrentScene(source.Get(), true);
 		}
-
-		auto undo_fn = [](const std::string &data) {
-			obs_source_t *t = obs_get_source_by_name(data.c_str());
-			if (t) {
-				obs_source_remove(t);
-				obs_source_release(t);
-			}
-		};
-
-		auto redo_fn = [this](const std::string &data) {
-			OBSSceneAutoRelease scene = obs_scene_create(data.c_str());
-			obs_source_t *source = obs_scene_get_source(scene);
-			SetCurrentScene(source, true);
-		};
-		undo_s.add_action(QTStr("Undo.Add").arg(QString(name.c_str())), undo_fn, redo_fn, name, name);
-
-		OBSSceneAutoRelease scene = obs_scene_create(name.c_str());
-		obs_source_t *scene_source = obs_scene_get_source(scene);
-		SetCurrentScene(scene_source);
-	}
+	};
+	undo_s.add_action(QTStr("Undo.Add").arg(QString::fromStdString(name)), undo, redo,
+			  obs_source_get_uuid(source), obs_data_get_json(saved));
 }
 
 void OBSBasic::on_actionRemoveScene_triggered()
@@ -717,26 +765,27 @@ void OBSBasic::on_actionRemoveScene_triggered()
 	RemoveSelectedScene();
 }
 
-void OBSBasic::ChangeSceneIndex(bool relative, int offset, int invalidIdx)
+void OBSBasic::ChangeSceneIndex(bool relative, int offset, int)
 {
-	int idx = ui->scenes->currentRow();
-	if (idx == -1 || idx == invalidIdx) {
+	const int index = ui->scenes->currentRow();
+	if (index < 0)
 		return;
-	}
-
-	ui->scenes->blockSignals(true);
-	QListWidgetItem *item = ui->scenes->takeItem(idx);
-
-	if (!relative) {
-		idx = 0;
-	}
-
-	ui->scenes->insertItem(idx + offset, item);
-	ui->scenes->setCurrentRow(idx + offset);
-	item->setSelected(true);
-	currentScene = GetOBSRef<OBSScene>(item).Get();
-	ui->scenes->blockSignals(false);
-
+	QVector<int> visible;
+	for (int i = 0; i < ui->scenes->count(); ++i)
+		if (!ui->scenes->item(i)->isHidden())
+			visible.push_back(i);
+	const int from = visible.indexOf(index);
+	if (from < 0 || visible.isEmpty())
+		return;
+	const int to = relative ? std::clamp(from + offset, 0, int(visible.size()) - 1)
+				: (offset == 0 ? 0 : int(visible.size()) - 1);
+	if (from == to)
+		return;
+	QSignalBlocker blocker(ui->scenes);
+	QListWidgetItem *item = ui->scenes->takeItem(index);
+	ui->scenes->insertItem(visible[to], item);
+	ui->scenes->setCurrentItem(item);
+	SaveProject();
 	OBSProjector::UpdateMultiviewProjectors();
 }
 
@@ -768,6 +817,8 @@ void OBSBasic::EditSceneItemName()
 
 void OBSBasic::on_scenes_itemDoubleClicked(QListWidgetItem *witem)
 {
+	if (IsPulsePortraitEditing())
+		return;
 	if (!witem) {
 		return;
 	}
@@ -827,9 +878,7 @@ void OBSBasic::CreateSceneUndoRedoAction(const QString &action_name, OBSData und
 
 		for (size_t i = 0; i < count; i++) {
 			OBSDataAutoRelease data = obs_data_array_item(array, i);
-			const char *name = obs_data_get_string(data, "name");
-
-			OBSSourceAutoRelease source = obs_get_source_by_name(name);
+			OBSSourceAutoRelease source = obs_get_source_by_uuid(obs_data_get_string(data, "uuid"));
 			if (!source) {
 				source = obs_load_source(data);
 			}
@@ -851,6 +900,8 @@ void OBSBasic::CreateSceneUndoRedoAction(const QString &action_name, OBSData und
 			obs_source_load2(source);
 		}
 
+		if (!sources.empty())
+			SetCurrentScene(sources.back(), true);
 		ui->sources->RefreshItems();
 	};
 
@@ -893,7 +944,10 @@ static void RenameListItem(OBSBasic *parent, QListWidget *listWidget, obs_source
 		return;
 	}
 
-	OBSSourceAutoRelease foundSource = obs_get_source_by_name(name.c_str());
+	obs_canvas_t *canvas = obs_source_get_canvas(source);
+	OBSSourceAutoRelease foundSource = canvas ? obs_canvas_get_source_by_name(canvas, name.c_str())
+						 : obs_get_source_by_name(name.c_str());
+	obs_canvas_release(canvas);
 	QListWidgetItem *listItem = listWidget->currentItem();
 
 	if (foundSource || name.empty()) {

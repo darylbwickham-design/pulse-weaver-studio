@@ -58,7 +58,7 @@ bool OBSBasic::Active() const
 
 void OBSBasic::ResizeOutputSizeOfSource()
 {
-	if (obs_video_active()) {
+	if (obs_video_active() || IsPulsePortraitEditing()) {
 		return;
 	}
 

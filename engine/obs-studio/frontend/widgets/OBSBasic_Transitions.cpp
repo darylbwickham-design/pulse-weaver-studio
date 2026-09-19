@@ -289,7 +289,7 @@ void OBSBasic::TransitionToScene(OBSSource source, bool force, bool quickTransit
 {
 	obs_scene_t *scene = obs_scene_from_source(source);
 	bool usingPreviewProgram = IsPreviewProgramMode();
-	if (!scene) {
+	if (!scene || IsPulsePortraitScene(source)) {
 		return;
 	}
 
@@ -681,6 +681,13 @@ void OBSBasic::SetCurrentScene(obs_scene_t *scene, bool force)
 
 void OBSBasic::SetCurrentScene(OBSSource scene, bool force)
 {
+	if (IsPulsePortraitScene(scene)) {
+		SetPulseWeaverCameraOutput(true);
+		SelectPulsePortraitScene(scene);
+		return;
+	}
+	if (IsPulsePortraitEditing())
+		SetPulseWeaverCameraOutput(false);
 	if (!IsPreviewProgramMode()) {
 		TransitionToScene(scene, force);
 	} else {
@@ -730,6 +737,8 @@ void OBSBasic::SetCurrentScene(OBSSource scene, bool force)
 
 void OBSBasic::TransitionClicked()
 {
+	if (IsPulsePortraitEditing())
+		return;
 	if (previewProgramMode) {
 		TransitionToScene(GetCurrentScene());
 	}

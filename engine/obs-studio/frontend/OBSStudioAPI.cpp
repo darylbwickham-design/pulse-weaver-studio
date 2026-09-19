@@ -46,6 +46,8 @@ void OBSStudioAPI::obs_frontend_get_scenes(struct obs_frontend_source_list *sour
 		QListWidgetItem *item = main->ui->scenes->item(i);
 		OBSScene scene = GetOBSRef<OBSScene>(item);
 		obs_source_t *source = obs_scene_get_source(scene);
+		if (OBSBasic::IsPulsePortraitScene(source))
+			continue;
 
 		if (obs_source_get_ref(source) != nullptr) {
 			da_push_back(sources->sources, &source);
@@ -58,7 +60,7 @@ obs_source_t *OBSStudioAPI::obs_frontend_get_current_scene()
 	if (main->IsPreviewProgramMode()) {
 		return obs_weak_source_get_source(main->programScene);
 	} else {
-		OBSSource source = main->GetCurrentSceneSource();
+		OBSSource source = obs_scene_get_source(main->currentScene.load());
 		return obs_source_get_ref(source);
 	}
 }
@@ -564,7 +566,7 @@ void OBSStudioAPI::obs_frontend_set_preview_enabled(bool enable)
 obs_source_t *OBSStudioAPI::obs_frontend_get_current_preview_scene()
 {
 	if (main->IsPreviewProgramMode()) {
-		OBSSource source = main->GetCurrentSceneSource();
+		OBSSource source = obs_scene_get_source(main->currentScene.load());
 		return obs_source_get_ref(source);
 	}
 

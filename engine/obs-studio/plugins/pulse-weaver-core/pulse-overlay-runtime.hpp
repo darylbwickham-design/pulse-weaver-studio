@@ -17,6 +17,7 @@ public:
 	~PulseOverlayRuntime() override;
 
 	void bindShell(QWidget *mainWindow);
+	void sceneCollectionLoaded();
 	void openEditor();
 	void publishEvent(const QString &eventKey, const QJsonObject &data);
 	bool triggerOverlay(const QString &nameOrId, const QJsonObject &data = {});
@@ -28,6 +29,10 @@ public:
 			   const QString &triggerEvent, QString *createdId = nullptr);
 	bool removeOverlay(const QString &nameOrId);
 	bool addToCurrentScene(const QString &nameOrId, QString *error = nullptr);
+	bool addToCameraScenes(const QString &nameOrId, const QString &target, QString *error = nullptr);
+	bool skipAlert(const QString &nameOrId);
+	void setAlertsMuted(bool muted);
+	bool alertsMuted() const;
 
 private:
 	struct Impl;

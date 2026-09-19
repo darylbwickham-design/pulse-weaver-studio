@@ -2559,6 +2559,9 @@ bool save_transform_states(obs_scene_t *scene, obs_sceneitem_t *item, void *vp_p
 obs_data_t *obs_scene_save_transform_states(obs_scene_t *scene, bool all_items)
 {
 	obs_data_t *wrapper = obs_data_create();
+	/* Frontend transform undo needs the owning editor scene, independently of
+	 * the nested scene/group records used to restore individual items. */
+	obs_data_set_string(wrapper, "scene_uuid", obs_source_get_uuid(obs_scene_get_source(scene)));
 	obs_data_array_t *scenes_and_groups = obs_data_array_create();
 	obs_data_array_t *item_ids = obs_data_array_create();
 

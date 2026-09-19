@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ReleaseVersion Condition="'$(ReleaseVersion)' == ''">1.12.8</ReleaseVersion>
+    <InstallerSuffix Condition="'$(InstallerSuffix)' == ''">BETA</InstallerSuffix>
+    <AssemblyName>PulseWeaver-Setup-$(ReleaseVersion)-$(InstallerSuffix)</AssemblyName>
+    <Product>Pulse Weaver Streaming Studio Setup</Product>
+    <Version>$(ReleaseVersion)</Version>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <ApplicationIcon>..\..\engine\obs-studio\frontend\cmake\windows\pulseweaver.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\dist\PulseWeaverStudio-v$(ReleaseVersion)-beta.zip"
+                      LogicalName="PulseWeaver.Payload.zip"
+                      Condition="'$(SkipPayloadEmbedding)' != 'true'" />
+  </ItemGroup>
+</Project>

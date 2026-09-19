@@ -365,16 +365,19 @@ void OBSBasicSourceSelect::refreshSources()
 
 	obs_enum_sources(enumSourcesCallback, this);
 
-	struct obs_frontend_source_list list = {};
-	obs_frontend_get_scenes(&list);
-
-	for (size_t i = 0; i < list.sources.num; ++i) {
-		OBSSource source = list.sources.array[i];
-
-		OBSWeakSourceAutoRelease weakSource = obs_source_get_weak_source(source);
-		weakSources.emplace_back(weakSource);
+	/* Scene sources belong to the canvas being edited; regular inputs remain
+	 * shared and were enumerated above. Keep UUID-backed source buttons. */
+	OBSSource editorScene = OBSBasic::Get()->GetCurrentSceneSource();
+	obs_canvas_t *canvas = obs_source_get_canvas(editorScene);
+	if (canvas) {
+		obs_canvas_enum_scenes(canvas, [](void *data, obs_source_t *source) {
+			auto *dialog = static_cast<OBSBasicSourceSelect *>(data);
+			OBSWeakSourceAutoRelease weak = obs_source_get_weak_source(source);
+			dialog->weakSources.emplace_back(weak);
+			return true;
+		}, this);
+		obs_canvas_release(canvas);
 	}
-	obs_frontend_source_list_free(&list);
 
 	emit sourcesUpdated();
 }
