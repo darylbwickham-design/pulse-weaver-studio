@@ -1,3 +1,17 @@
+# Pulse Weaver 1.12.10 — Twitch chat recovery
+
+Twitch chat recovers automatically after dropped connections and missed keepalives. Server-requested handovers use Twitch's supplied address and keep the old connection until the replacement welcomes the client, retaining transferred subscriptions.
+
+Chat readiness now requires a working message subscription. Errors appear beside the chat composer, and other event subscriptions no longer mask a chat failure. Direct Twitch drafts remain until successful delivery; a reply cannot erase a newer draft. Duplicate EventSub notifications are suppressed before actions run.
+
+Access tokens are checked periodically and renewed before expiry. Unauthorized sends and moderation requests renew access and retry once. Temporary network failures retain credentials, and delayed login/refresh replies cannot restore a disconnected account.
+
+The native build, shared chat renderer suite and deterministic tests against the actual Twitch runtime passed. Runtime tests cover reconnect backoff, watchdog expiry, server handover, subscription failures, draft preservation, token renewal, send retry, revocation, deduplication and stale callbacks. They use simulated provider responses; a live Twitch broadcast was not used for validation.
+
+Close Pulse Weaver and run **PulseWeaver-Setup-1.12.10-BETA.exe**. Do not uninstall first. The installer retains full verified backup and rollback support and preserves existing configuration. Privacy and Terms remain bundled. This release updates the Windows private/beta channel.
+
+---
+
 # Pulse Weaver 1.12.9 — Privacy, YouTube controls and relay repair
 
 ## Google and YouTube readiness

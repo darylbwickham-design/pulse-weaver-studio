@@ -4848,7 +4848,8 @@ void OBSBasic::RefreshPulseWeaverChatComposer()
 			"Connect a chat account in Action → Connections.";
 	} else if (provider == "twitch") {
 		enabled = twitchReady;
-		status = enabled ? "Twitch chat connected." : "Connect Twitch in Action → Connections.";
+		status = property("pulseWeaverTwitchChatStatus").toString();
+		if (status.isEmpty()) status = enabled ? "Twitch chat connected." : "Connect Twitch in Action → Connections.";
 	} else if (provider == "kick") {
 		enabled = kickReady;
 		status = enabled ? "Kick send ready · incoming chat requires the Kick event relay." :

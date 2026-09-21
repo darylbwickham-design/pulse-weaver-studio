@@ -5,7 +5,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <ReleaseVersion Condition="'$(ReleaseVersion)' == ''">1.12.9</ReleaseVersion>
+    <ReleaseVersion Condition="'$(ReleaseVersion)' == ''">1.12.10</ReleaseVersion>
     <InstallerSuffix Condition="'$(InstallerSuffix)' == ''">BETA</InstallerSuffix>
     <AssemblyName>PulseWeaver-Setup-$(ReleaseVersion)-$(InstallerSuffix)</AssemblyName>
     <Product>Pulse Weaver Streaming Studio Setup</Product>

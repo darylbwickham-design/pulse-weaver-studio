@@ -320,11 +320,23 @@ public:
 		// shipped Client ID is deliberately not editable; no app secret is held
 		// by Pulse Weaver and streamer access/refresh tokens remain local.
 		clientId = PulsePlatformApplicationIds::TwitchClientId();
+		network.setTransferTimeout(10000);
 		settings.remove("twitch/client_id");
 		accessToken = unprotectCredential(settings.value("twitch/access_token").toString());
 		refreshToken = unprotectCredential(settings.value("twitch/refresh_token").toString());
 		pollTimer.setSingleShot(false);
 		connect(&pollTimer, &QTimer::timeout, this, [this] { pollDeviceToken(); });
+		retryTimer.setSingleShot(true);
+		connect(&retryTimer, &QTimer::timeout, this, [this] { validateToken(); });
+		tokenTimer.setSingleShot(true);
+		connect(&tokenTimer, &QTimer::timeout, this, [this] { validateToken(false); });
+		watchdog.setInterval(1000);
+		connect(&watchdog, &QTimer::timeout, this, [this] {
+			if (!stopping && lastSocketMessage > 0 && QDateTime::currentMSecsSinceEpoch() - lastSocketMessage > keepaliveMs) {
+				stopSocket();
+				scheduleReconnect("Twitch chat connection timed out.");
+			}
+		});
 	}
 
 	~TwitchRuntime() override { disconnectAll(); }
@@ -390,6 +402,10 @@ public:
 
 	void beginLogin()
 	{
+		++authGeneration;
+		refreshing = false; refreshWaiters.clear();
+		sendingChat = false;
+		pollTimer.stop(); tokenTimer.stop(); retryTimer.stop();
 		stopSocket();
 		const QString scopes = "user:read:chat user:write:chat channel:manage:broadcast moderator:read:followers "
 			"moderator:manage:chat_messages moderator:manage:banned_users moderator:manage:chat_settings "
@@ -398,7 +414,8 @@ public:
 		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
 		QNetworkReply *reply = network.post(request, formBody({{"client_id", clientId}, {"scopes", scopes}}));
 		setStatus("Requesting a secure Twitch device login…");
-		connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const QByteArray body = reply->readAll();
 			const QJsonObject json = QJsonDocument::fromJson(body).object();
 			const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -429,12 +446,17 @@ public:
 
 	void clearLogin()
 	{
+		++authGeneration;
+		refreshing = false; refreshWaiters.clear();
+		sendingChat = false;
+		tokenTimer.stop(); retryTimer.stop();
 		pollTimer.stop();
 		stopSocket();
 		accessToken.clear();
 		refreshToken.clear();
 		userId.clear();
 		accountName.clear();
+		sessionChatters.clear(); seenEvents.clear(); seenEventOrder.clear();
 		QSettings settings(pulseSettingsPath(), QSettings::IniFormat);
 		settings.remove("twitch/access_token");
 		settings.remove("twitch/refresh_token");
@@ -444,8 +466,9 @@ public:
 		updateUi();
 	}
 
-	void sendMessage(const QString &message)
+	void sendMessage(const QString &message, bool retried = false)
 	{
+		if (sendingChat && !retried) return;
 		const QString text = message.trimmed();
 		if (text.isEmpty() || accessToken.isEmpty() || userId.isEmpty()) {
 			if (!text.isEmpty())
@@ -453,15 +476,22 @@ public:
 			return;
 		}
 		QNetworkRequest request(QUrl("https://api.twitch.tv/helix/chat/messages"));
+		sendingChat = true;
 		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 		request.setRawHeader("Client-Id", clientId.toUtf8());
 		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 		const QJsonObject body{{"broadcaster_id", userId}, {"sender_id", userId}, {"message", text}};
 		QNetworkReply *reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-		connect(reply, &QNetworkReply::finished, this, [this, reply, text] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, text, retried, generation = authGeneration] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const QByteArray body = reply->readAll();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			reply->deleteLater();
+			if (code == 401 && !retried && !refreshToken.isEmpty()) {
+				refreshAccessToken([this, text](bool ok) { if (ok) sendMessage(text, true); else sendingChat = false; });
+				return;
+			}
+			sendingChat = false;
 			if (code < 200 || code >= 300) {
 				const QJsonObject error = QJsonDocument::fromJson(body).object();
 				setStatus("Chat send failed: " + error.value("message").toString("HTTP " + QString::number(code)));
@@ -473,7 +503,10 @@ public:
 			if (sent.isEmpty() || !sent.first().toObject().value("is_sent").toBool())
 				setStatus("Twitch did not send the message: " + (sent.isEmpty() ? QString("empty response") :
 					sent.first().toObject().value("drop_reason").toObject().value("message").toString("message rejected")));
-			else setStatus("Twitch message sent.");
+			else {
+				if (chatInput && chatInput->text().trimmed() == text && shellTwitchOnly()) chatInput->clear();
+				setStatus("Twitch message sent.");
+			}
 		});
 	}
 
@@ -543,6 +576,16 @@ public:
 private:
 	QNetworkAccessManager network{this};
 	QTimer pollTimer{this};
+	QTimer retryTimer{this}, tokenTimer{this}, watchdog{this};
+	quint64 authGeneration = 0;
+	std::atomic<quint64> socketGeneration{0};
+	bool chatSubscribed = false;
+	bool refreshing = false;
+	bool sendingChat = false;
+	std::vector<std::function<void(bool)>> refreshWaiters;
+	int retryAttempt = 0;
+	qint64 lastSocketMessage = 0;
+	qint64 keepaliveMs = 15000;
 	QString clientId;
 	QString accessToken;
 	QString refreshToken;
@@ -556,9 +599,15 @@ private:
 	int activeSubscriptions = 0;
 	std::atomic_bool stopping{false};
 	std::atomic_bool socketConnected{false};
-	std::thread socketThread;
 #ifdef _WIN32
-	std::atomic<HINTERNET> socketHandle{nullptr};
+	struct SocketWorker {
+		std::atomic_bool cancelled{false};
+		std::atomic<HINTERNET> handle{nullptr};
+		std::thread thread;
+		quint64 generation = 0;
+		bool resume = false;
+	};
+	std::shared_ptr<SocketWorker> activeSocket, pendingSocket;
 #endif
 	EventCallback eventCallback;
 	ChatCallback chatCallback;
@@ -573,6 +622,8 @@ private:
 	QPointer<QPushButton> loginButton;
 	QPointer<QPushButton> logoutButton;
 	QSet<QString> sessionChatters;
+	QSet<QString> seenEvents;
+	QQueue<QString> seenEventOrder;
 	QHash<QString, QUrl> chatBadgeUrls;
 	QHash<QString, QUrl> globalChatBadgeUrls, channelChatBadgeUrls;
 	QStringList grantedScopes;
@@ -581,6 +632,15 @@ private:
 	{
 		if (connectionStatus)
 			connectionStatus->setText(message);
+		if (chatStatus && shellSelected()) chatStatus->setText(message);
+		if (QWidget *window = static_cast<QWidget *>(obs_frontend_get_main_window()))
+			window->setProperty("pulseWeaverTwitchChatStatus", message);
+	}
+	bool shellTwitchOnly() const
+	{
+		auto *window = static_cast<QWidget *>(obs_frontend_get_main_window());
+		auto *provider = window ? window->findChild<QComboBox *>("PulseWeaverChatProvider") : nullptr;
+		return provider && provider->currentData().toString() == "twitch";
 	}
 	bool shellSelected() const
 	{
@@ -594,7 +654,7 @@ private:
 	{
 		const bool ready = !userId.isEmpty() && !accessToken.isEmpty();
 		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window())) {
-			mainWindow->setProperty("pulseWeaverTwitchChatReady", ready);
+			mainWindow->setProperty("pulseWeaverTwitchChatReady", ready && socketConnected && chatSubscribed);
 			/* The frontend owns the shared composer because All chats must combine
 			 * Twitch, YouTube and Kick readiness. Queue the refresh so every
 			 * provider has finished publishing its current property first. */
@@ -655,7 +715,7 @@ private:
 		else if (choice == ban) moderateBan(userId, 0);
 	}
 
-	void moderateDelete(const QString &messageId)
+	void moderateDelete(const QString &messageId, bool retried = false)
 	{
 		if (accessToken.isEmpty() || userId.isEmpty() || messageId.isEmpty()) return;
 		setStatus("Deleting Twitch message…");
@@ -669,17 +729,21 @@ private:
 		request.setRawHeader("Client-Id", clientId.toUtf8());
 		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 		QNetworkReply *reply = network.deleteResource(request);
-		connect(reply, &QNetworkReply::finished, this, [this, reply, messageId] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, messageId, retried, generation = authGeneration] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			const QJsonObject error = QJsonDocument::fromJson(reply->readAll()).object();
 			reply->deleteLater();
+			if (code == 401 && !retried && !refreshToken.isEmpty()) {
+				refreshAccessToken([this, messageId](bool ok) { if (ok) moderateDelete(messageId, true); }); return;
+			}
 			if (code == 204) PulseChat::markDeleted(chatFeed, "twitch", messageId);
 			setStatus(code >= 200 && code < 300 ? "Twitch message deleted." :
 				QString("Twitch delete failed (%1): ").arg(code) + error.value("message").toString(reply->errorString()));
 		});
 	}
 
-	void moderateBan(const QString &targetUserId, int duration)
+	void moderateBan(const QString &targetUserId, int duration, bool retried = false)
 	{
 		if (accessToken.isEmpty() || userId.isEmpty() || targetUserId.isEmpty()) return;
 		setStatus("Applying Twitch moderation…");
@@ -693,10 +757,14 @@ private:
 		request.setRawHeader("Client-Id", clientId.toUtf8());
 		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 		QNetworkReply *reply = network.post(request, QJsonDocument(PulseChat::twitchBanBody(targetUserId, duration)).toJson(QJsonDocument::Compact));
-		connect(reply, &QNetworkReply::finished, this, [this, reply, duration, targetUserId] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, duration, targetUserId, retried, generation = authGeneration] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			const QJsonObject error = QJsonDocument::fromJson(reply->readAll()).object();
 			reply->deleteLater();
+			if (code == 401 && !retried && !refreshToken.isEmpty()) {
+				refreshAccessToken([this, targetUserId, duration](bool ok) { if (ok) moderateBan(targetUserId, duration, true); }); return;
+			}
 			if (code >= 200 && code < 300) PulseChat::markDeleted(chatFeed, "twitch", {}, targetUserId);
 			const QString success = duration > 0 ? QString("Twitch user timed out for %1 minutes.").arg(duration / 60) : "Twitch user banned.";
 			setStatus(code >= 200 && code < 300 ? success :
@@ -721,8 +789,6 @@ private:
 			chatInput->text()).trimmed();
 		if (message.isEmpty())
 			return;
-		if (!all)
-			chatInput->clear();
 		sendMessage(message);
 	}
 
@@ -764,7 +830,8 @@ private:
 		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
 		QNetworkReply *reply = network.post(
 			request, formBody({{"client_id", clientId}, {"scopes", "user:read:chat user:write:chat channel:manage:broadcast moderator:read:followers moderator:manage:chat_messages moderator:manage:banned_users moderator:manage:chat_settings channel:read:subscriptions bits:read channel:read:redemptions channel:read:hype_train channel:read:goals channel:read:stream_key"}, {"device_code", deviceCode}, {"grant_type", "urn:ietf:params:oauth:grant-type:device_code"}}));
-		connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const QByteArray body = reply->readAll();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			reply->deleteLater();
@@ -783,15 +850,23 @@ private:
 		});
 	}
 
-	void validateToken()
+	void validateToken(bool restart = true)
 	{
+		if (accessToken.isEmpty()) return;
 		QNetworkRequest request(QUrl("https://id.twitch.tv/oauth2/validate"));
+		request.setTransferTimeout(10000);
 		request.setRawHeader("Authorization", "OAuth " + accessToken.toUtf8());
 		QNetworkReply *reply = network.get(request);
-		connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, restart, generation = authGeneration, checkedToken = accessToken] {
+			if (generation != authGeneration || checkedToken != accessToken) { reply->deleteLater(); return; }
 			const QJsonObject json = QJsonDocument::fromJson(reply->readAll()).object();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			reply->deleteLater();
+			if (code != 401 && (code < 200 || code >= 300)) {
+				if (restart) scheduleReconnect("Twitch validation temporarily unavailable.");
+				else tokenTimer.start(30000);
+				return;
+			}
 			if (code < 200 || code >= 300) {
 				if (!refreshToken.isEmpty()) {
 					refreshAccessToken();
@@ -803,13 +878,22 @@ private:
 				return;
 			}
 			if (json.value("client_id").toString() != clientId) {
+				stopSocket(); tokenTimer.stop(); retryTimer.stop();
 				setStatus("The saved Twitch login belongs to another application Client ID. Reconnect Twitch.");
 				return;
 			}
+			const int expires = json.value("expires_in").toInt();
+			if (expires > 0 && expires <= 120 && !refreshToken.isEmpty()) { refreshAccessToken(); return; }
+			tokenTimer.start(std::clamp(expires > 0 ? expires - 120 : 3600, 30, 3600) * 1000);
 			userId = json.value("user_id").toString();
 			accountName = json.value("login").toString();
 			grantedScopes.clear();
 			for (const auto &scope : json.value("scopes").toArray()) grantedScopes << scope.toString();
+			if (!grantedScopes.contains("user:read:chat") || !grantedScopes.contains("user:write:chat")) {
+				stopSocket(); retryTimer.stop();
+				setStatus("Reconnect Twitch to grant chat read and write access."); return;
+			}
+			if (!restart) return;
 			loadChatBadges();
 			saveLogin();
 			updateUi();
@@ -894,135 +978,194 @@ private:
 			 * service wrapper dangling and crashes in applicationShutdown(). */
 			obs_data_release(settings);
 			obs_frontend_save_streaming_service();
-			setStatus("Twitch connected as " + accountName + ". Chat, events and the private broadcast destination are ready.");
+			if (chatSubscribed) setStatus("Twitch chat and broadcast destination are ready.");
 		});
 	}
 
-	void refreshAccessToken()
+	void refreshAccessToken(std::function<void(bool)> completed = {})
 	{
+		if (completed) refreshWaiters.push_back(std::move(completed));
+		if (refreshing) return;
+		refreshing = true;
 		QNetworkRequest request(QUrl("https://id.twitch.tv/oauth2/token"));
+		request.setTransferTimeout(10000);
 		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
 		QNetworkReply *reply = network.post(request, formBody({{"grant_type", "refresh_token"},
 										 {"refresh_token", refreshToken}, {"client_id", clientId}}));
-		connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const QJsonObject json = QJsonDocument::fromJson(reply->readAll()).object();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			reply->deleteLater();
+			refreshing = false;
+			auto waiters = std::move(refreshWaiters); refreshWaiters.clear();
 			if (code < 200 || code >= 300) {
-				accessToken.clear();
-				refreshToken.clear();
-				setStatus("Twitch login expired. Press Connect to authorize again.");
+				if (code == 400 || code == 401) {
+					stopSocket(); tokenTimer.stop(); retryTimer.stop();
+					accessToken.clear(); refreshToken.clear(); saveLogin();
+					setStatus("Twitch login expired. Press Connect to authorize again.");
+				} else { tokenTimer.start(30000); setStatus("Twitch token refresh temporarily failed; retrying."); }
 				updateUi();
+				for (auto &waiter : waiters) waiter(false);
 				return;
 			}
 			accessToken = json.value("access_token").toString();
 			refreshToken = json.value("refresh_token").toString(refreshToken);
+			saveLogin();
 			validateToken();
+			for (auto &waiter : waiters) waiter(!accessToken.isEmpty());
 		});
 	}
 
 	void disconnectAll()
 	{
+		tokenTimer.stop(); retryTimer.stop();
 		pollTimer.stop();
 		stopSocket();
+	}
+
+	void scheduleReconnect(const QString &reason)
+	{
+		chatSubscribed = false; socketConnected = false;
+		updateUi();
+		if (accessToken.isEmpty() || retryTimer.isActive()) return;
+		const int delay = std::min(30, 1 << std::min(retryAttempt++, 5));
+		setStatus(reason + QString(" Retrying in %1 seconds…").arg(delay));
+		retryTimer.start(delay * 1000);
 	}
 
 	void startSocket()
 	{
 		stopSocket();
-		sessionChatters.clear();
+		retryTimer.stop();
 		stopping = false;
+		lastSocketMessage = QDateTime::currentMSecsSinceEpoch();
+		keepaliveMs = 15000;
+		watchdog.start();
 #ifdef _WIN32
-		socketThread = std::thread([this] { runSocket(); });
+		activeSocket = launchSocket(QUrl("wss://eventsub.wss.twitch.tv/ws"), false);
 #else
 		setStatus("Native Twitch EventSub is currently available in the Windows build.");
 #endif
 	}
 
+#ifdef _WIN32
+	void closeWorker(const std::shared_ptr<SocketWorker> &worker)
+	{
+		if (!worker) return;
+		worker->cancelled = true;
+		// Closing the handle interrupts a blocked receive; the worker owns the
+		// connection/session handles and releases them before the join returns.
+		if (auto handle = worker->handle.exchange(nullptr)) WinHttpCloseHandle(handle);
+		if (worker->thread.joinable()) worker->thread.join();
+	}
+
+	std::shared_ptr<SocketWorker> launchSocket(const QUrl &url, bool resume)
+	{
+		auto worker = std::make_shared<SocketWorker>();
+		worker->generation = socketGeneration.load();
+		worker->resume = resume;
+		worker->thread = std::thread([this, worker, url] { runSocket(worker, url); });
+		return worker;
+	}
+#endif
+
 	void stopSocket()
 	{
 		stopping = true;
+		++socketGeneration;
+		watchdog.stop();
 #ifdef _WIN32
-		HINTERNET socket = socketHandle.exchange(nullptr);
-		if (socket) {
-			WinHttpWebSocketClose(socket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
-			WinHttpCloseHandle(socket);
-		}
+		closeWorker(pendingSocket); pendingSocket.reset();
+		closeWorker(activeSocket); activeSocket.reset();
 #endif
-		if (socketThread.joinable() && socketThread.get_id() != std::this_thread::get_id())
-			socketThread.join();
-		socketConnected = false;
+		socketConnected = false; chatSubscribed = false;
+		updateUi();
 	}
 
 #ifdef _WIN32
-	void runSocket()
+	void runSocket(const std::shared_ptr<SocketWorker> &worker, const QUrl &url)
 	{
-		HINTERNET session = WinHttpOpen(L"PulseWeaver/1.9 Twitch EventSub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-						  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-		if (!session)
-			return socketFailed("Could not initialise Windows networking.");
+		auto failed = [this, worker] {
+			QMetaObject::invokeMethod(this, [this, worker] {
+				if (worker->generation != socketGeneration || worker->cancelled) return;
+				// The old connection can close during a handover. Let the new
+				// connection finish; the watchdog bounds the whole handover.
+				if (pendingSocket && worker == activeSocket) return;
+				stopSocket();
+				scheduleReconnect("Twitch chat connection interrupted.");
+			}, Qt::QueuedConnection);
+		};
+		HINTERNET session = WinHttpOpen(L"PulseWeaver Twitch EventSub", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+			WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+		if (!session) { failed(); return; }
 		WinHttpSetTimeouts(session, 5000, 5000, 5000, 1000);
-		HINTERNET connection = WinHttpConnect(session, L"eventsub.wss.twitch.tv", INTERNET_DEFAULT_HTTPS_PORT, 0);
-		HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", L"/ws", nullptr,
-									   WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-									   WINHTTP_FLAG_SECURE)
-					       : nullptr;
+		const auto host = url.host().toStdWString();
+		QString path = url.path(QUrl::FullyEncoded);
+		if (path.isEmpty()) path = "/";
+		if (url.hasQuery()) path += "?" + url.query(QUrl::FullyEncoded);
+		const auto resource = path.toStdWString();
+		HINTERNET connection = WinHttpConnect(session, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+		HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", resource.c_str(), nullptr,
+			WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
 		bool ok = request && WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0) &&
-			  WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-			  WinHttpReceiveResponse(request, nullptr);
+			WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+			WinHttpReceiveResponse(request, nullptr);
 		HINTERNET socket = ok ? WinHttpWebSocketCompleteUpgrade(request, 0) : nullptr;
-		if (request)
-			WinHttpCloseHandle(request);
-		if (!socket) {
-			if (connection)
-				WinHttpCloseHandle(connection);
-			WinHttpCloseHandle(session);
-			return socketFailed("Secure Twitch EventSub connection failed.");
+		if (request) WinHttpCloseHandle(request);
+		if (socket) {
+			worker->handle = socket;
+			QByteArray message;
+			std::vector<char> buffer(65536);
+			while (!worker->cancelled) {
+				DWORD bytes = 0;
+				WINHTTP_WEB_SOCKET_BUFFER_TYPE type = WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE;
+				const DWORD result = WinHttpWebSocketReceive(socket, buffer.data(), DWORD(buffer.size()), &bytes, &type);
+				if (result == ERROR_WINHTTP_TIMEOUT) continue;
+				if (result != NO_ERROR || type == WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE) break;
+				if (bytes) message.append(buffer.data(), int(bytes));
+				if (message.size() > 1024 * 1024) break;
+				if (type != WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE) continue;
+				const QByteArray completed = message; message.clear();
+				QMetaObject::invokeMethod(this, [this, worker, completed] {
+					deliverSocketMessage(worker, completed);
+				}, Qt::QueuedConnection);
+			}
+			if (worker->handle.exchange(nullptr) == socket) WinHttpCloseHandle(socket);
 		}
-		socketHandle = socket;
-		socketConnected = true;
-		QMetaObject::invokeMethod(this, [this] { setStatus("Twitch EventSub connected; negotiating subscriptions…"); },
-					  Qt::QueuedConnection);
-		QByteArray message;
-		std::vector<char> buffer(65536);
-		while (!stopping) {
-			DWORD bytes = 0;
-			WINHTTP_WEB_SOCKET_BUFFER_TYPE type = WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE;
-			const DWORD result = WinHttpWebSocketReceive(socket, buffer.data(), DWORD(buffer.size()), &bytes, &type);
-			if (result == ERROR_WINHTTP_TIMEOUT)
-				continue;
-			if (result != NO_ERROR || type == WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE)
-				break;
-			if (bytes)
-				message.append(buffer.data(), int(bytes));
-			if (type == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE) {
-				const QByteArray completed = message;
-				message.clear();
-				QMetaObject::invokeMethod(this, [this, completed] { handleSocketMessage(completed); },
-							  Qt::QueuedConnection);
+		if (connection) WinHttpCloseHandle(connection);
+		WinHttpCloseHandle(session);
+		if (!worker->cancelled) failed();
+	}
+	void deliverSocketMessage(const std::shared_ptr<SocketWorker> &worker, const QByteArray &completed)
+	{
+		if (worker->generation != socketGeneration || worker->cancelled) return;
+		const auto root = QJsonDocument::fromJson(completed).object();
+		const auto kind = root.value("metadata").toObject().value("message_type").toString();
+		if (kind == "session_welcome") {
+			const auto sessionData = root.value("payload").toObject().value("session").toObject();
+			if (sessionData.value("id").toString().isEmpty()) return;
+			keepaliveMs = std::clamp(sessionData.value("keepalive_timeout_seconds").toInt(10), 10, 600) * 1000LL + 2000;
+			socketConnected = true;
+			if (worker == pendingSocket) {
+				auto previous = activeSocket;
+				activeSocket = pendingSocket; pendingSocket.reset();
+				closeWorker(previous);
+				lastSocketMessage = QDateTime::currentMSecsSinceEpoch();
+				updateUi(); setStatus("Twitch chat reconnected.");
+				return; // Twitch transferred subscriptions; do not recreate them.
 			}
 		}
-		if (socketHandle.exchange(nullptr) == socket) {
-			WinHttpWebSocketClose(socket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
-			WinHttpCloseHandle(socket);
-		}
-		WinHttpCloseHandle(connection);
-		WinHttpCloseHandle(session);
-		socketConnected = false;
-		if (!stopping)
-			socketFailed("Twitch EventSub disconnected. Press Reconnect.");
+		handleSocketMessage(completed);
 	}
 #endif
-
-	void socketFailed(const QString &message)
-	{
-		QMetaObject::invokeMethod(this, [this, message] { setStatus(message); }, Qt::QueuedConnection);
-	}
 
 	void handleSocketMessage(const QByteArray &payload)
 	{
 		const QJsonObject root = QJsonDocument::fromJson(payload).object();
 		const QString messageType = root.value("metadata").toObject().value("message_type").toString();
+		if (messageType.isEmpty()) return;
+		lastSocketMessage = QDateTime::currentMSecsSinceEpoch();
 		if (messageType == "session_welcome") {
 			const QString sessionId = root.value("payload").toObject().value("session").toObject().value("id").toString();
 			subscribeEvents(sessionId);
@@ -1031,12 +1174,35 @@ private:
 		if (messageType == "session_keepalive")
 			return;
 		if (messageType == "session_reconnect") {
-			setStatus("Twitch requested an EventSub reconnect. Reconnecting…");
-			QTimer::singleShot(100, this, [this] { startSocket(); });
+#ifdef _WIN32
+			if (pendingSocket) return;
+			const QUrl url(root.value("payload").toObject().value("session").toObject().value("reconnect_url").toString());
+			if (url.scheme() != "wss" || url.host() != "eventsub.wss.twitch.tv" ||
+			    !url.userInfo().isEmpty() || url.hasFragment() || (url.port() != -1 && url.port() != 443)) {
+				stopSocket(); scheduleReconnect("Twitch provided an invalid reconnect address."); return;
+			}
+			setStatus("Twitch is moving chat to a new connection…");
+			pendingSocket = launchSocket(url, true);
+#endif
+			return;
+		}
+		if (messageType == "revocation") {
+			const auto subscription = root.value("payload").toObject().value("subscription").toObject();
+			if (subscription.value("status").toString() == "authorization_revoked") {
+				clearLogin(); setStatus("Twitch access was revoked. Connect again to enable chat.");
+			} else if (subscription.value("type").toString() == "channel.chat.message") {
+				stopSocket(); scheduleReconnect("Twitch revoked the chat subscription.");
+			}
 			return;
 		}
 		if (messageType != "notification")
 			return;
+		const QString eventId = root.value("metadata").toObject().value("message_id").toString();
+		if (!eventId.isEmpty()) {
+			if (seenEvents.contains(eventId)) return;
+			seenEvents.insert(eventId); seenEventOrder.enqueue(eventId);
+			while (seenEventOrder.size() > 2048) seenEvents.remove(seenEventOrder.dequeue());
+		}
 		const QJsonObject payloadObject = root.value("payload").toObject();
 		const QString eventType = payloadObject.value("subscription").toObject().value("type").toString();
 		const QJsonObject event = payloadObject.value("event").toObject();
@@ -1105,15 +1271,22 @@ private:
 			request.setRawHeader("Client-Id", clientId.toUtf8());
 			request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 			QNetworkReply *reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-			connect(reply, &QNetworkReply::finished, this, [this, reply, type = QString::fromLatin1(definition.type)] {
+			connect(reply, &QNetworkReply::finished, this, [this, reply, type = QString::fromLatin1(definition.type), generation = socketGeneration.load()] {
+				if (generation != socketGeneration || stopping) { reply->deleteLater(); return; }
 				const QJsonObject response = QJsonDocument::fromJson(reply->readAll()).object();
 				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 				reply->deleteLater();
 				if (code >= 200 && code < 300) {
 					++activeSubscriptions;
-					setStatus(QString("Twitch connected as %1 • %2 live event subscriptions").arg(accountName).arg(activeSubscriptions));
+					if (type == "channel.chat.message") {
+						chatSubscribed = true; retryAttempt = 0;
+						updateUi(); setStatus("Twitch chat connected as " + accountName + ".");
+					}
 				} else if (type == "channel.chat.message") {
-					setStatus("Twitch connected, but chat subscription failed: " + response.value("message").toString("HTTP " + QString::number(code)));
+					stopSocket();
+					if (code == 401) refreshAccessToken();
+					else if (code == 403) setStatus("Reconnect Twitch to grant chat access: " + response.value("message").toString());
+					else scheduleReconnect("Twitch chat subscription failed (" + QString::number(code) + ").");
 				}
 			});
 		}
