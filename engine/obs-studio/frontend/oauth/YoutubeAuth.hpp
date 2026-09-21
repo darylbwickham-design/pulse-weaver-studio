@@ -32,6 +32,7 @@ public:
 	~YoutubeAuth();
 	bool LoadPulseWeaverAccount() { return LoadInternal(); }
 	void SavePulseWeaverAccount() { SaveInternal(); }
+	bool RevokeAndClear(QWidget *parent);
 
 	void SetChatId(const QString &chat_id);
 	void ResetChat();

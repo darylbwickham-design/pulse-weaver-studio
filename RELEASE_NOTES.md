@@ -1,3 +1,25 @@
+# Pulse Weaver 1.12.9 — Privacy, YouTube controls and relay repair
+
+## Google and YouTube readiness
+
+- Added public Privacy and Terms pages and bundled matching documents with the Windows app.
+- Added a clear consent screen before YouTube API access, including links to Pulse Weaver, Google and YouTube terms.
+- Reduced YouTube access to the `youtube.force-ssl` scope, protected saved access and refresh tokens with Windows DPAPI, and added in-app revocation and local credential deletion.
+- Existing YouTube connections pause on first launch until the current notice is accepted.
+
+## Kick relay retention repair
+
+- The relay now accepts webhook events only while the broadcaster has an active desktop relay session.
+- Expired events are deleted before reads, never returned after expiry, and delivered events are removed immediately.
+
+## Safe update
+
+Close Pulse Weaver and run **PulseWeaver-Setup-1.12.9-BETA.exe**, or use Studio → Updates. Do not uninstall first. The installer creates and verifies a full app-and-settings backup before replacing files. Scenes, overlays, transforms, positions, account settings and other existing configuration are preserved byte-for-byte by the upgrade path.
+
+The exact installer passed payload, credential migration, language and layout tests. A disposable 1.12.8 → 1.12.9 update and full rollback preserved all 2,157 runtime/config files byte-for-byte and did not touch the installed app or registry.
+
+---
+
 # Pulse Weaver 1.12.8 — Overlays, alerts and safe recovery
 
 ## Overlay Designer and Alert Box v1

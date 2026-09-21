@@ -40,6 +40,9 @@ foreach ($folder in @('bin', 'data', 'obs-plugins')) {
 }
 Get-ChildItem -LiteralPath $destination -Recurse -File -Filter '*.pdb' | Remove-Item -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README-FIRST-$Version-private.txt") -Destination (Join-Path $destination 'README-FIRST.txt')
+New-Item -ItemType Directory -Path (Join-Path $destination 'docs') | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot 'PRIVACY.md') -Destination (Join-Path $destination 'docs/PRIVACY.md')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'TERMS.md') -Destination (Join-Path $destination 'docs/TERMS.md')
 New-Item -ItemType File -Path (Join-Path $destination 'portable_mode.txt') | Out-Null
 
 if (Test-Path -LiteralPath (Join-Path $destination 'config')) {

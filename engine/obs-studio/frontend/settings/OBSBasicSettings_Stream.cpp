@@ -1,4 +1,5 @@
 #include "OBSBasicSettings.hpp"
+#include "../../shared/qt/PulseLegal.hpp"
 
 #ifdef YOUTUBE_ENABLED
 #include <docks/YouTubeAppDock.hpp>
@@ -1110,12 +1111,13 @@ void OBSBasicSettings::UpdateServiceRecommendations()
 			text += "<br><br>";
 		}
 
-		text += "<a href=\"https://www.youtube.com/t/terms\">"
-			"YouTube Terms of Service</a><br>"
-			"<a href=\"http://www.google.com/policies/privacy\">"
-			"Google Privacy Policy</a><br>"
-			"<a href=\"https://security.google.com/settings/security/permissions\">"
-			"Google Third-Party Permissions</a>";
+		text += QString("<a href=\"%1\">Pulse Weaver Privacy Policy</a><br>"
+				"<a href=\"%2\">Pulse Weaver Terms of Service</a><br>"
+				"<a href=\"%3\">YouTube Terms of Service</a><br>"
+				"<a href=\"%4\">Google Privacy Policy</a><br>"
+				"<a href=\"%5\">Google Third-Party Permissions</a>")
+				.arg(PulseLegal::PrivacyUrl, PulseLegal::TermsUrl, PulseLegal::YouTubeTermsUrl,
+				     PulseLegal::GooglePrivacyUrl, PulseLegal::GooglePermissionsUrl);
 	}
 #endif
 	ui->enforceSettingsLabel->setText(text);

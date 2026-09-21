@@ -19,6 +19,10 @@
 // only to the isolated portable profile, never to a show/export. Public
 // desktop Client IDs that are explicitly safe to distribute live separately.
 namespace PulseAppCredentials {
+inline bool sensitiveField(const QString &field)
+{
+    return field == "client_secret" || field == "access_token" || field == "refresh_token";
+}
 inline QString path()
 {
     const QString directory = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../config/pulseweaver");
@@ -58,14 +62,23 @@ inline QString get(const QString &provider, const QString &field)
 {
     QSettings settings(path(), QSettings::IniFormat);
     const QString value = settings.value(provider + '/' + field).toString();
-    return field == "client_secret" ? reveal(value) : value;
+    return sensitiveField(field) ? reveal(value) : value;
 }
 inline bool set(const QString &provider, const QString &field, const QString &value)
 {
-    const QString stored = field == "client_secret" ? protect(value) : value.trimmed();
+    const QString stored = sensitiveField(field) ? protect(value) : value.trimmed();
     if (!value.isEmpty() && stored.isEmpty()) return false;
     QSettings settings(path(), QSettings::IniFormat);
-    settings.setValue(provider + '/' + field, stored);
+    const QString key = provider + '/' + field;
+    if (value.isEmpty()) settings.remove(key);
+    else settings.setValue(key, stored);
+    settings.sync();
+    return settings.status() == QSettings::NoError;
+}
+inline bool remove(const QString &provider, const QString &field)
+{
+    QSettings settings(path(), QSettings::IniFormat);
+    settings.remove(provider + '/' + field);
     settings.sync();
     return settings.status() == QSettings::NoError;
 }

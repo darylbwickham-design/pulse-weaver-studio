@@ -1,5 +1,6 @@
 #include "../../shared/qt/PulseChat.hpp"
 #include "../../shared/qt/PulseInteractionFeedback.hpp"
+#include "../../shared/qt/PulseLegal.hpp"
 #include "../../shared/qt/PulseWindowChrome.hpp"
 #include <QActionGroup>
 #include "../../shared/qt/PulseLumiaOutput.hpp"
@@ -143,6 +144,38 @@ obs_service_t *pulseYouTubeSecondService = nullptr;
 obs_encoder_t *pulseYouTubeSecondVideoEncoder = nullptr;
 obs_encoder_t *pulseYouTubeSecondAudioEncoder = nullptr;
 QString pulseYouTubePreparedMode;
+
+static bool AcceptPulseWeaverYouTubeTerms(QWidget *parent)
+{
+	QDialog dialog(parent);
+	dialog.setWindowTitle("Connect YouTube to Pulse Weaver");
+	dialog.setMinimumWidth(620);
+	auto *layout = new QVBoxLayout(&dialog);
+	auto *summary = new QLabel(
+		"<b>Pulse Weaver will ask Google for access to your YouTube channel.</b><br><br>"
+		"It uses that access to identify the channel, create and manage live broadcasts and streams, "
+		"read and post live chat, perform moderation you request, and receive membership and public "
+		"subscriber events for your local alerts and automations.<br><br>"
+		"Read the <a href='" + QString::fromUtf8(PulseLegal::PrivacyUrl) + "'>Pulse Weaver Privacy Policy</a>, "
+		"<a href='" + QString::fromUtf8(PulseLegal::TermsUrl) + "'>Terms of Service</a>, "
+		"<a href='" + QString::fromUtf8(PulseLegal::YouTubeTermsUrl) + "'>YouTube Terms</a> and "
+		"<a href='" + QString::fromUtf8(PulseLegal::GooglePrivacyUrl) + "'>Google Privacy Policy</a>."
+	);
+	summary->setWordWrap(true);
+	summary->setTextFormat(Qt::RichText);
+	summary->setOpenExternalLinks(true);
+	layout->addWidget(summary);
+	auto *accept = new QCheckBox("I have read and accept the Pulse Weaver Privacy Policy and Terms of Service.");
+	layout->addWidget(accept);
+	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	buttons->button(QDialogButtonBox::Ok)->setText("CONTINUE TO GOOGLE");
+	buttons->button(QDialogButtonBox::Ok)->setEnabled(false);
+	QObject::connect(accept, &QCheckBox::toggled, buttons->button(QDialogButtonBox::Ok), &QPushButton::setEnabled);
+	QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	layout->addWidget(buttons);
+	return dialog.exec() == QDialog::Accepted;
+}
 QHash<QString, obs_canvas_t *> pulseOutputCanvases;
 QHash<QString, OBSSource> pulseCanvasStingerTransitions;
 QHash<QString, std::shared_ptr<PulseOutputSceneTransformSync>> pulseOutputSceneTransformSyncs;
@@ -1054,6 +1087,15 @@ void OBSBasic::InitPulseWeaverShell()
 	studioMenu->addMenu(ui->profileMenu);
 	studioMenu->addMenu(ui->sceneCollectionMenu);
 	studioMenu->addMenu(ui->menuTools);
+	ui->menuBasic_MainMenu_Help->addSeparator();
+	auto *privacyAction = ui->menuBasic_MainMenu_Help->addAction("Pulse Weaver Privacy Policy");
+	connect(privacyAction, &QAction::triggered, this, [] {
+		QDesktopServices::openUrl(QUrl(QString::fromUtf8(PulseLegal::PrivacyUrl)));
+	});
+	auto *termsAction = ui->menuBasic_MainMenu_Help->addAction("Pulse Weaver Terms of Service");
+	connect(termsAction, &QAction::triggered, this, [] {
+		QDesktopServices::openUrl(QUrl(QString::fromUtf8(PulseLegal::TermsUrl)));
+	});
 	studioMenu->addMenu(ui->menuBasic_MainMenu_Help);
 	studioMenuButton->setMenu(studioMenu);
 	studioMenuButton->setToolTip("Profiles, scene collections, files, docks and native studio tools");
@@ -1670,6 +1712,11 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseYouTubeButton->setToolTip("Sign in through your normal browser; Pulse Weaver never asks for your Google password or a stream key");
 	connect(pulseYouTubeButton, &QPushButton::clicked, this, &OBSBasic::ConnectPulseWeaverYouTube);
 	pulseYouTubeButton->hide();
+	pulseYouTubeDisconnectButton = new QPushButton("DISCONNECT YOUTUBE", pulsePages);
+	pulseYouTubeDisconnectButton->setObjectName("PulseWeaverYouTubeDisconnectButton");
+	pulseYouTubeDisconnectButton->setEnabled(false);
+	connect(pulseYouTubeDisconnectButton, &QPushButton::clicked, this, &OBSBasic::DisconnectPulseWeaverYouTube);
+	pulseYouTubeDisconnectButton->hide();
 	pulseYouTubeCanvas = new QComboBox(pulsePages);
 	pulseYouTubeCanvas->setObjectName("PulseWeaverYouTubeCanvasRoute");
 	pulseYouTubeCanvas->addItem("YouTube · Off", "off");
@@ -2250,12 +2297,24 @@ void OBSBasic::RestorePulseWeaverYouTubeAccount()
 	 * has supplied the isolated Pulse Weaver configuration. */
 	if (pulseYouTubeAuth || !Config())
 		return;
+	if (config_get_int(Config(), "YouTube", "PulseLegalVersion") < PulseLegal::PolicyVersion) {
+		if (!AcceptPulseWeaverYouTubeTerms(this)) {
+			if (pulseDestinationStatus)
+				pulseDestinationStatus->setText(
+					"YouTube paused · review and accept the current privacy notice to reconnect.");
+			return;
+		}
+		config_set_int(Config(), "YouTube", "PulseLegalVersion", PulseLegal::PolicyVersion);
+		activeConfiguration.SaveSafe("tmp");
+	}
 	auto saved = std::make_shared<YoutubeApiWrappers>(youtubeServices.at(1));
 	if (!saved->LoadPulseWeaverAccount())
 		return;
 	pulseYouTubeAuth = saved;
 	if (pulseYouTubeButton)
 		pulseYouTubeButton->setText("YOUTUBE CONNECTED");
+	if (pulseYouTubeDisconnectButton)
+		pulseYouTubeDisconnectButton->setEnabled(true);
 	setProperty("pulseWeaverYouTubeReady", true);
 	if (pulseDestinationStatus)
 		pulseDestinationStatus->setText("YouTube account restored · destination prepares when you go live");
@@ -4132,6 +4191,8 @@ void OBSBasic::ConnectPulseWeaverYouTube()
 		QMessageBox::information(this, "Connect YouTube", "End the current show before changing broadcast accounts.");
 		return;
 	}
+	if (!AcceptPulseWeaverYouTubeTerms(this))
+		return;
 	OAuth::DeleteCookies("YouTube - RTMPS");
 	std::shared_ptr<Auth> login = YoutubeAuth::Login(this, "YouTube - RTMPS");
 	auto youtube = std::dynamic_pointer_cast<YoutubeApiWrappers>(login);
@@ -4142,15 +4203,67 @@ void OBSBasic::ConnectPulseWeaverYouTube()
 	}
 	pulseYouTubeAuth = youtube;
 	pulseYouTubeAuth->SavePulseWeaverAccount();
+	config_set_int(Config(), "YouTube", "PulseLegalVersion", PulseLegal::PolicyVersion);
 	activeConfiguration.SaveSafe("tmp");
 	setProperty("pulseWeaverYouTubeReady", true);
 	if (pulseYouTubeButton)
 		pulseYouTubeButton->setText("YOUTUBE CONNECTED");
+	if (pulseYouTubeDisconnectButton)
+		pulseYouTubeDisconnectButton->setEnabled(true);
 	RefreshPulseWeaverChatComposer();
 	if (pulseDestinationStatus)
 		pulseDestinationStatus->setText("YouTube connected · broadcast will be created only when you press GO LIVE.");
 #else
 	QMessageBox::information(this, "YouTube unavailable", "This development build was compiled without YouTube account support.");
+#endif
+}
+
+void OBSBasic::DisconnectPulseWeaverYouTube()
+{
+#ifdef YOUTUBE_ENABLED
+	const bool outputActive = (pulseYouTubeOutput && obs_output_active(pulseYouTubeOutput)) ||
+				  (pulseYouTubeSecondOutput && obs_output_active(pulseYouTubeSecondOutput));
+	if (obs_frontend_streaming_active() || outputActive) {
+		QMessageBox::information(this, "Disconnect YouTube", "End the current show before disconnecting YouTube.");
+		return;
+	}
+	if (!pulseYouTubeAuth) {
+		QMessageBox::information(this, "Disconnect YouTube", "No YouTube account is connected.");
+		return;
+	}
+	if (QMessageBox::question(this, "Disconnect YouTube",
+				  "Revoke Pulse Weaver's Google access and delete its live local YouTube credentials?\n\n"
+				  "This does not delete broadcasts or recordings held by YouTube, or installer backups you keep locally.",
+				  QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+		return;
+
+	StopPulseWeaverSecondaryOutputs();
+	const bool revoked = pulseYouTubeAuth->RevokeAndClear(this);
+	pulseYouTubeAuth.reset();
+	pulseYouTubeChatCancellation->fetch_add(1, std::memory_order_acq_rel);
+	++pulseYouTubeChatGeneration;
+	pulseYouTubeChatSessions.clear();
+	pulseYouTubeChatQueue.clear();
+	pulseYouTubeSeenMessageIds.clear();
+	pulseYouTubeSubscriberIds.clear();
+	pulseYouTubeSubscribersSeeded = false;
+	pulseYouTubeNextSubscriberPoll = 0;
+	setProperty("pulseWeaverYouTubeReady", false);
+	OAuth::DeleteCookies("YouTube - RTMPS");
+	if (pulseYouTubeButton)
+		pulseYouTubeButton->setText("CONNECT YOUTUBE IN BROWSER");
+	if (pulseYouTubeDisconnectButton)
+		pulseYouTubeDisconnectButton->setEnabled(false);
+	if (pulseDestinationStatus)
+		pulseDestinationStatus->setText("YouTube disconnected · local credentials and live session data removed.");
+	RefreshPulseWeaverChatComposer();
+	activeConfiguration.SaveSafe("tmp");
+
+	if (!revoked && QMessageBox::question(this, "Google did not confirm revocation",
+					       "Pulse Weaver removed its local YouTube credentials, but Google did not confirm the online revocation. "
+					       "Open Google's permissions page to remove access there?",
+					       QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes) == QMessageBox::Yes)
+		QDesktopServices::openUrl(QUrl(QString::fromUtf8(PulseLegal::GooglePermissionsUrl)));
 #endif
 }
 

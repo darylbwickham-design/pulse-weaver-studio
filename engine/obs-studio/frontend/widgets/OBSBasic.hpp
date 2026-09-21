@@ -352,6 +352,7 @@ private:
 	QPointer<QLabel> pulseDualFormatStatus;
 	QPointer<QPushButton> pulseDualFormatButton;
 	QPointer<QPushButton> pulseYouTubeButton;
+	QPointer<QPushButton> pulseYouTubeDisconnectButton;
 	QPointer<QComboBox> pulseYouTubeCanvas;
 	QPointer<QComboBox> pulseTwitchDestination;
 	QPointer<QComboBox> pulseYouTubeDestination;
@@ -427,6 +428,7 @@ private:
 	void EnsurePulseWeaverVerticalCanvas();
 	void ConfigurePulseWeaverTwitchDualFormat();
 	void ConnectPulseWeaverYouTube();
+	void DisconnectPulseWeaverYouTube();
 	void PreparePulseWeaverYouTube();
 	void ApplyPulseWeaverLiveDestinationChange(const QString &provider, const QString &previousMode,
 						       const QString &mode);

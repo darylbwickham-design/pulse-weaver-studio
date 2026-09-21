@@ -1,4 +1,5 @@
 #include "../../shared/qt/PulseAppCredentials.hpp"
+#include "../../shared/qt/PulseLegal.hpp"
 #include "../../shared/qt/PulsePlatformApplicationIds.hpp"
 #include "../../shared/qt/PulseChat.hpp"
 #include "../../shared/qt/PulseLumiaOutput.hpp"
@@ -2638,6 +2639,8 @@ private:
 		form->setColumnStretch(1, 1);
 		auto *connectButton = new QPushButton("CONNECT YOUTUBE IN BROWSER");
 		connectButton->setObjectName("Primary"); connectButton->setMinimumWidth(240);
+		auto *disconnectButton = new QPushButton("DISCONNECT & REVOKE");
+		disconnectButton->setMinimumWidth(190);
 		auto *accountName = new QLabel("No YouTube account connected");
 		accountName->setObjectName("Kicker");
 		auto *route = new QComboBox;
@@ -2651,14 +2654,22 @@ private:
 		form->addWidget(accountName, 0, 0, 1, 2);
 		form->addWidget(connectButton, 0, 2);
 		form->addWidget(new QLabel("Output mode"), 1, 0);
-		form->addWidget(route, 1, 1, 1, 2);
+		form->addWidget(route, 1, 1);
+		form->addWidget(disconnectButton, 1, 2);
 		form->addWidget(state, 2, 0, 1, 3);
+		auto *legal = new QLabel(
+			"<a href='" + QString::fromUtf8(PulseLegal::PrivacyUrl) + "'>Privacy Policy</a> · "
+			"<a href='" + QString::fromUtf8(PulseLegal::TermsUrl) + "'>Terms of Service</a> · "
+			"<a href='" + QString::fromUtf8(PulseLegal::GooglePermissionsUrl) + "'>Google permissions</a>", account);
+		legal->setTextFormat(Qt::RichText);
+		legal->setOpenExternalLinks(true);
+		form->addWidget(legal, 3, 0, 1, 3);
         auto *client = new QLineEdit(account); client->setAccessibleName("YouTube Client ID");
         client->setText(PulseAppCredentials::get("youtube", "client_id"));
         auto *secret = new QLineEdit(account); secret->setAccessibleName("YouTube Client secret"); secret->setEchoMode(QLineEdit::Password);
         secret->setText(PulseAppCredentials::get("youtube", "client_secret"));
-        form->addWidget(new QLabel("Desktop Client ID"), 3, 0); form->addWidget(client, 3, 1, 1, 2);
-        form->addWidget(new QLabel("Client secret"), 4, 0); form->addWidget(secret, 4, 1, 1, 2);
+        form->addWidget(new QLabel("Desktop Client ID"), 4, 0); form->addWidget(client, 4, 1, 1, 2);
+        form->addWidget(new QLabel("Client secret"), 5, 0); form->addWidget(secret, 5, 1, 1, 2);
         auto saveApp = [client, secret, state] {
             if (!PulseAppCredentials::set("youtube", "client_id", client->text().trimmed()) ||
                 !PulseAppCredentials::set("youtube", "client_secret", secret->text().trimmed()))
@@ -2672,19 +2683,29 @@ private:
 		layout->addStretch(1);
 		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window())) {
 			auto *nativeConnect = mainWindow->findChild<QPushButton *>("PulseWeaverYouTubeConnectButton");
+			auto *nativeDisconnect = mainWindow->findChild<QPushButton *>("PulseWeaverYouTubeDisconnectButton");
 			auto *nativeRoute = mainWindow->findChild<QComboBox *>("PulseWeaverYouTubeCanvasRoute");
 			if (nativeConnect) {
 				connect(connectButton, &QPushButton::clicked, nativeConnect, &QPushButton::click);
-				auto syncAccount = [nativeConnect, accountName] {
+				auto syncAccount = [nativeConnect, nativeDisconnect, accountName, disconnectButton] {
 					const bool connected = nativeConnect->text().contains("CONNECTED", Qt::CaseInsensitive);
 					accountName->setText(connected ? "YouTube account connected" : "No YouTube account connected");
+					disconnectButton->setEnabled(connected && nativeDisconnect);
 				};
 				connect(connectButton, &QPushButton::clicked, accountName, [syncAccount] {
 					QTimer::singleShot(1200, [syncAccount] { syncAccount(); });
 				});
+				if (nativeDisconnect) {
+					connect(disconnectButton, &QPushButton::clicked, nativeDisconnect, &QPushButton::click);
+					connect(disconnectButton, &QPushButton::clicked, accountName, [syncAccount] {
+						QTimer::singleShot(150, [syncAccount] { syncAccount(); });
+					});
+				}
 				syncAccount();
-			} else
+			} else {
 				connectButton->setEnabled(false);
+				disconnectButton->setEnabled(false);
+			}
 			if (nativeRoute) {
 				route->setCurrentIndex(nativeRoute->currentIndex());
 				connect(route, &QComboBox::currentIndexChanged, nativeRoute, &QComboBox::setCurrentIndex);

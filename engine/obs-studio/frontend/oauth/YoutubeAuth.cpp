@@ -5,6 +5,7 @@
 #include <docks/YouTubeChatDock.hpp>
 #endif
 #include <oauth/AuthListener.hpp>
+#include <utility/RemoteTextThread.hpp>
 #include <utility/YoutubeApiWrappers.hpp>
 #include <utility/obf.h>
 #include <widgets/OBSBasic.hpp>
@@ -20,7 +21,8 @@
 
 #define YOUTUBE_AUTH_URL "https://accounts.google.com/o/oauth2/v2/auth"
 #define YOUTUBE_TOKEN_URL "https://www.googleapis.com/oauth2/v4/token"
-#define YOUTUBE_SCOPE_VERSION 1
+#define YOUTUBE_REVOKE_URL "https://oauth2.googleapis.com/revoke"
+#define YOUTUBE_SCOPE_VERSION 2
 #define YOUTUBE_API_STATE_LENGTH 32
 #define SECTION_NAME "YouTube"
 
@@ -83,8 +85,17 @@ void YoutubeAuth::SaveInternal()
 	config_set_string(main->Config(), service(), "DockState", main->saveState().toBase64().constData());
 
 	const char *section_name = section.c_str();
-	config_set_string(main->Config(), section_name, "RefreshToken", refresh_token.c_str());
-	config_set_string(main->Config(), section_name, "Token", token.c_str());
+	const bool protectedTokens =
+		PulseAppCredentials::set("youtube", "refresh_token", QString::fromStdString(refresh_token)) &&
+		PulseAppCredentials::set("youtube", "access_token", QString::fromStdString(token));
+	if (protectedTokens) {
+		config_remove_value(main->Config(), section_name, "RefreshToken");
+		config_remove_value(main->Config(), section_name, "Token");
+	} else {
+		config_set_string(main->Config(), section_name, "RefreshToken", refresh_token.c_str());
+		config_set_string(main->Config(), section_name, "Token", token.c_str());
+		blog(LOG_WARNING, "YouTube credentials could not be moved into protected local storage");
+	}
 	config_set_uint(main->Config(), section_name, "ExpireTime", expire_time);
 	config_set_int(main->Config(), section_name, "ScopeVer", currentScopeVer);
 }
@@ -102,12 +113,52 @@ bool YoutubeAuth::LoadInternal()
 		return false;
 
 	const char *section_name = section.c_str();
-	refresh_token = get_config_str(main, section_name, "RefreshToken");
-	token = get_config_str(main, section_name, "Token");
+	refresh_token = PulseAppCredentials::get("youtube", "refresh_token").toStdString();
+	token = PulseAppCredentials::get("youtube", "access_token").toStdString();
+	if (refresh_token.empty())
+		refresh_token = get_config_str(main, section_name, "RefreshToken");
+	if (token.empty())
+		token = get_config_str(main, section_name, "Token");
 	expire_time = config_get_uint(main->Config(), section_name, "ExpireTime");
 	currentScopeVer = (int)config_get_int(main->Config(), section_name, "ScopeVer");
+	if (!refresh_token.empty() || !token.empty())
+		SaveInternal();
 	firstLoad = false;
 	return implicit ? !token.empty() : !refresh_token.empty();
+}
+
+bool YoutubeAuth::RevokeAndClear(QWidget *)
+{
+	const std::string credential = !refresh_token.empty() ? refresh_token : token;
+	bool revoked = credential.empty();
+	if (!credential.empty()) {
+		std::string output;
+		std::string error;
+		long responseCode = 0;
+		const std::string postData =
+			"token=" + QUrl::toPercentEncoding(QString::fromStdString(credential)).toStdString();
+		auto revoke = [&] {
+			revoked = GetRemoteFile(YOUTUBE_REVOKE_URL, output, error, &responseCode,
+						"application/x-www-form-urlencoded", "", postData.c_str(), {}, nullptr, 10,
+						false) &&
+				  responseCode >= 200 && responseCode < 300;
+		};
+		ExecThreadedWithoutBlocking(revoke, "Disconnecting YouTube",
+					    "Revoking Pulse Weaver access with Google…");
+	}
+
+	refresh_token.clear();
+	token.clear();
+	expire_time = 0;
+	currentScopeVer = 0;
+	PulseAppCredentials::remove("youtube", "refresh_token");
+	PulseAppCredentials::remove("youtube", "access_token");
+	if (OBSBasic *main = OBSBasic::Get(); main && main->Config()) {
+		for (const char *key : {"RefreshToken", "Token", "ExpireTime", "ScopeVer", "ChannelName"})
+			config_remove_value(main->Config(), section.c_str(), key);
+		config_save_safe(main->Config(), "tmp", nullptr);
+	}
+	return revoked;
 }
 
 void YoutubeAuth::LoadUI()
@@ -247,7 +298,7 @@ std::shared_ptr<Auth> YoutubeAuth::Login(QWidget *owner, const std::string &serv
 	url_template += "&client_id=%2";
 	url_template += "&redirect_uri=%3";
 	url_template += "&state=%4";
-	url_template += "&scope=https://www.googleapis.com/auth/youtube";
+	url_template += "&scope=https://www.googleapis.com/auth/youtube.force-ssl";
 	url_template += "&access_type=offline&prompt=consent";
 	url_template += "&code_challenge=%5&code_challenge_method=S256";
 	QString url = url_template.arg(YOUTUBE_AUTH_URL, clientid.c_str(), redirect_uri, state, codeChallenge);

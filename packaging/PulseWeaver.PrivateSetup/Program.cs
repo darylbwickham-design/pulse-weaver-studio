@@ -14,6 +14,7 @@ internal static class Program
     internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Pulse Weaver");
     internal static readonly string AppPath = Path.Combine(InstallDirectory, "bin", "64bit", "PulseWeaverCore.exe");
     internal static readonly string UninstallerPath = Path.Combine(InstallDirectory, "Uninstall Pulse Weaver.exe");
+    static bool upgradeSelfTest;
 
     [STAThread]
     static int Main(string[] args)
@@ -67,7 +68,7 @@ internal static class Program
             File.WriteAllLines(Path.Combine(stage,InstallManifestName),payloadFiles.OrderBy(p=>p,StringComparer.OrdinalIgnoreCase));
             if(!File.Exists(Path.Combine(stage,"bin","64bit","PulseWeaverCore.exe"))) throw new IOException("Incomplete runtime payload.");
             if(!ConfiguredLanguage(stage).Equals(languageCode,StringComparison.OrdinalIgnoreCase)) WriteLanguage(languageCode,stage);
-            if(Process.GetProcessesByName("PulseWeaverCore").Length>0) throw new IOException("Pulse Weaver started during staging. Close it and retry; the installation has not been changed.");
+            if(!upgradeSelfTest && Process.GetProcessesByName("PulseWeaverCore").Length>0) throw new IOException("Pulse Weaver started during staging. Close it and retry; the installation has not been changed.");
             progress(70,"Committing the verified update with rollback protection…"); Recovery.Replace(root,stage);
         } finally { if(Directory.Exists(stage)) Directory.Delete(stage,true); }
     }
@@ -158,12 +159,14 @@ internal static class Program
                 if(string.IsNullOrEmpty(entry.Name))continue;
                 var file=Recovery.SafePath(root,entry.FullName);Directory.CreateDirectory(Path.GetDirectoryName(file)!);entry.ExtractToFile(file);
             }
-            File.WriteAllText(Path.Combine(root,"bin","64bit","pulseweaver-update.json"),"{\"schema\":1,\"channel\":\"windows-private\",\"tag\":\"v1.12.7\"}");
+            File.WriteAllText(Path.Combine(root,"bin","64bit","pulseweaver-update.json"),"{\"schema\":1,\"channel\":\"windows-private\",\"tag\":\"v1.12.8\"}");
             var config=Path.Combine(root,"config");
             if(copiedConfig is not null) Recovery.CopyTree(copiedConfig,config);
             else {Directory.CreateDirectory(config);File.WriteAllText(Path.Combine(config,"preserved.json"),"{\"scene\":\"existing\",\"x\":137.5,\"rotation\":23.5}");}
             var before=Digests(root);var configBefore=Digests(config);
-            using(Recovery.Acquire(root)) InstallInto(root,ConfiguredLanguage(root),false,(_,_)=>{});
+            upgradeSelfTest=true;
+            try { using(Recovery.Acquire(root)) InstallInto(root,ConfiguredLanguage(root),false,(_,_)=>{}); }
+            finally { upgradeSelfTest=false; }
             if(!Equal(configBefore,Digests(config)))throw new IOException("Upgrade changed copied configuration bytes.");
             if(Recovery.InstalledVersion(root)!=Version)throw new IOException("Upgrade identity mismatch.");
             var saved=Directory.GetFiles(Recovery.BackupDirectory(root),"*.zip").Single();
@@ -174,7 +177,7 @@ internal static class Program
                 using var recovery=Process.Start(start)!;recovery.WaitForExit();if(recovery.ExitCode!=0)throw new IOException("Separate recovery installer test failed: "+recovery.ExitCode);
             }
             if(!Equal(before,Digests(root)))throw new IOException("Restored runtime/configuration differs from pre-upgrade state.");
-            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: 1.12.7 -> {Version} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
+            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: 1.12.8 -> {Version} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
             return 0;
         }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),"FAIL: "+ex);return 61;}
         finally{try{Directory.Delete(parent,true);}catch{}}
