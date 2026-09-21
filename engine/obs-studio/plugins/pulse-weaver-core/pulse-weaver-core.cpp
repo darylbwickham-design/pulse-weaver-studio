@@ -2837,20 +2837,8 @@ private:
 		legal->setTextFormat(Qt::RichText);
 		legal->setOpenExternalLinks(true);
 		form->addWidget(legal, 3, 0, 1, 3);
-        auto *client = new QLineEdit(account); client->setAccessibleName("YouTube Client ID");
-        client->setText(PulseAppCredentials::get("youtube", "client_id"));
-        auto *secret = new QLineEdit(account); secret->setAccessibleName("YouTube Client secret"); secret->setEchoMode(QLineEdit::Password);
-        secret->setText(PulseAppCredentials::get("youtube", "client_secret"));
-        form->addWidget(new QLabel("Desktop Client ID"), 4, 0); form->addWidget(client, 4, 1, 1, 2);
-        form->addWidget(new QLabel("Client secret"), 5, 0); form->addWidget(secret, 5, 1, 1, 2);
-        auto saveApp = [client, secret, state] {
-            if (!PulseAppCredentials::set("youtube", "client_id", client->text().trimmed()) ||
-                !PulseAppCredentials::set("youtube", "client_secret", secret->text().trimmed()))
-                state->setText("Could not securely save the YouTube app details.");
-            else state->setText("App details saved locally. Reconnect YouTube after changing them.");
-        };
-        connect(client, &QLineEdit::editingFinished, account, saveApp);
-        connect(secret, &QLineEdit::editingFinished, account, saveApp);
+		// OAuth registration is supplied by application configuration, not edited
+		// through the account connection screen. Keep saved credentials untouched.
 
 		layout->addWidget(account, 0, Qt::AlignLeft | Qt::AlignTop);
 		layout->addStretch(1);

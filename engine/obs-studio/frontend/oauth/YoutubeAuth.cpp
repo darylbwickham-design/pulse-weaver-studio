@@ -279,7 +279,7 @@ std::shared_ptr<Auth> YoutubeAuth::Login(QWidget *owner, const std::string &serv
 	std::string clientid = PulseAppCredentials::get("youtube", "client_id").toStdString();
 	std::string clientSecret = PulseAppCredentials::get("youtube", "client_secret").toStdString();
 
-	if (clientid.empty()) { QMessageBox::information(owner, "YouTube app setup", "Enter your Google Desktop app Client ID in Action → Connections → YouTube."); return nullptr; }
+	if (clientid.empty()) { QMessageBox::information(owner, "YouTube connection unavailable", "YouTube connection is not configured in this installation. Contact Pulse Weaver support at darylbwickham@gmail.com."); return nullptr; }
 	QByteArray verifierBytes(64, Qt::Uninitialized);
 	for (char &value : verifierBytes)
 		value = allowedChars[QRandomGenerator::system()->bounded(allowedCount)];

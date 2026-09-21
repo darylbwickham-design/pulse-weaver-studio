@@ -1,3 +1,13 @@
+# Pulse Weaver 1.12.12 — Simplified YouTube connection screen
+
+The YouTube connection screen no longer displays or edits the application Client ID or Client secret. Connect, disconnect/revoke, output selection and policy links remain available. Saved registrations and account settings are retained.
+
+An installation without a configured YouTube application registration now shows a support message rather than directing users to removed developer fields. This update does not provision a registration for fresh installations. Removing the controls is a user-interface change, not a guarantee that locally stored credentials cannot be extracted.
+
+Includes the Twitch chat repairs from 1.12.10 and the installer log-lock repair from 1.12.11. Full verified backups and rollback remain enabled. Close Pulse Weaver and any previous installer, then run **PulseWeaver-Setup-1.12.12-BETA.exe**. Do not uninstall first.
+
+---
+
 # Pulse Weaver 1.12.11 — Installer log-lock repair
 
 Repairs an in-app update failure where setup could inherit the app's open log handle and keep it locked after Pulse Weaver exited. The native updater disables handle inheritance. Setup also starts a clean, non-inheriting process, so updates launched by older app versions receive the fix.

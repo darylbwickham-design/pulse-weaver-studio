@@ -1,4 +1,4 @@
-# Pulse Weaver Studio — Public Beta 1.12.11
+# Pulse Weaver Studio — Public Beta 1.12.12
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
