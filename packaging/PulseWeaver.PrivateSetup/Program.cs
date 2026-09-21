@@ -20,6 +20,8 @@ internal static class Program
     static int Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        try { if (DetachedLaunch.Bootstrap(args)) return 0; }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Pulse Weaver setup", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
         if (args.Length >= 2 && args[0].Equals("/upgrade-test",StringComparison.OrdinalIgnoreCase)) return VerifyUpgrade(args[1],args.Length>2?args[2]:null,args.Length>3?args[3]:null);
         if (args.Length==3 && args[0]=="/restore-test") {
             // Only allow the other installer's self-test to target its disposable tree.
@@ -159,7 +161,7 @@ internal static class Program
                 if(string.IsNullOrEmpty(entry.Name))continue;
                 var file=Recovery.SafePath(root,entry.FullName);Directory.CreateDirectory(Path.GetDirectoryName(file)!);entry.ExtractToFile(file);
             }
-            File.WriteAllText(Path.Combine(root,"bin","64bit","pulseweaver-update.json"),"{\"schema\":1,\"channel\":\"windows-private\",\"tag\":\"v1.12.9\"}");
+            File.WriteAllText(Path.Combine(root,"bin","64bit","pulseweaver-update.json"),"{\"schema\":1,\"channel\":\"windows-private\",\"tag\":\"v1.12.10\"}");
             var config=Path.Combine(root,"config");
             if(copiedConfig is not null) Recovery.CopyTree(copiedConfig,config);
             else {Directory.CreateDirectory(config);File.WriteAllText(Path.Combine(config,"preserved.json"),"{\"scene\":\"existing\",\"x\":137.5,\"rotation\":23.5}");}
@@ -177,7 +179,7 @@ internal static class Program
                 using var recovery=Process.Start(start)!;recovery.WaitForExit();if(recovery.ExitCode!=0)throw new IOException("Separate recovery installer test failed: "+recovery.ExitCode);
             }
             if(!Equal(before,Digests(root)))throw new IOException("Restored runtime/configuration differs from pre-upgrade state.");
-            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: 1.12.9 -> {Version} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
+            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: 1.12.10 -> {Version} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
             return 0;
         }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),"FAIL: "+ex);return 61;}
         finally{try{Directory.Delete(parent,true);}catch{}}

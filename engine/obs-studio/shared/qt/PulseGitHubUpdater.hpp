@@ -35,6 +35,7 @@ inline bool startUpdateInstaller(const QString &path, const QStringList &argumen
 #ifdef Q_OS_WIN
 	installer.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
 		args->flags |= CREATE_BREAKAWAY_FROM_JOB;
+		args->inheritHandles = false; // Do not keep the app's log open inside setup.
 	});
 #endif
 	return installer.startDetached();

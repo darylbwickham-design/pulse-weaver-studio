@@ -1,3 +1,15 @@
+# Pulse Weaver 1.12.11 — Installer log-lock repair
+
+Repairs an in-app update failure where setup could inherit the app's open log handle and keep it locked after Pulse Weaver exited. The native updater disables handle inheritance. Setup also starts a clean, non-inheriting process, so updates launched by older app versions receive the fix.
+
+No settings or logs are skipped. Full verified backups, transactional replacement and rollback remain intact. Existing scenes, transforms, positions, overlays and account settings are preserved. A genuinely active writer still blocks backup safely.
+
+Close the previous failed setup window and Pulse Weaver, then run **PulseWeaver-Setup-1.12.11-BETA.exe**. Do not uninstall first. Includes the Twitch chat repairs from 1.12.10 and bundled Privacy and Terms.
+
+Regression checks cover the native launcher's inherited-log scenario and job shutdown, the installer's clean-process launcher, active-writer refusal, backup integrity and rollback. Packaged upgrade/restore checks use disposable data, not the user's installed app.
+
+---
+
 # Pulse Weaver 1.12.10 — Twitch chat recovery
 
 Twitch chat recovers automatically after dropped connections and missed keepalives. Server-requested handovers use Twitch's supplied address and keep the old connection until the replacement welcomes the client, retaining transferred subscriptions.
