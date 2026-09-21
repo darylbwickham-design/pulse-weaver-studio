@@ -1,4 +1,5 @@
-# Desktop testers supply their own OAuth registration at runtime.
+# Release packaging supplies the public desktop registration. Existing local
+# registrations remain supported without exposing developer fields in the UI.
 if(TARGET OBS::browser-panels)
   target_sources(
     obs-studio

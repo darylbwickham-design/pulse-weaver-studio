@@ -1,4 +1,5 @@
 #include "../../shared/qt/PulseAppCredentials.hpp"
+#include "../../shared/qt/PulseYouTubeRegistration.hpp"
 #include "../../shared/qt/PulseChatProtocol.hpp"
 #include <QJsonDocument>
 #include "YoutubeApiWrappers.hpp"
@@ -126,8 +127,9 @@ bool YoutubeApiWrappers::UpdateAccessToken()
 		return false;
 	}
 
-	std::string clientid = PulseAppCredentials::get("youtube", "client_id").toStdString();
-	std::string secret = PulseAppCredentials::get("youtube", "client_secret").toStdString();
+	const auto registration = PulseYouTubeRegistration::current();
+	std::string clientid = registration.clientId.toStdString();
+	std::string secret = registration.clientSecret.toStdString();
 
 	std::string r_token = QUrl::toPercentEncoding(refresh_token.c_str()).toStdString();
 	QString data = QString("client_id=%1&refresh_token=%2&grant_type=refresh_token")

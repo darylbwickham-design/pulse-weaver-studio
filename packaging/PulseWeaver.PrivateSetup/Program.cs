@@ -126,6 +126,13 @@ internal static class Program
             CleanInstalledPayload(root, payloadFiles);
             if (File.Exists(staleBinary) || !File.Exists(savedConfig)) return 4;
             ExtractPayload(root);
+            using (var registration = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "data", "pulse-weaver", "youtube-desktop-client.json")))) {
+                var document = registration.RootElement;
+                var client = document.GetProperty("installed");
+                if (document.EnumerateObject().Count() != 1 || client.EnumerateObject().Count() != 2 ||
+                    !(client.GetProperty("client_id").GetString()?.EndsWith(".apps.googleusercontent.com", StringComparison.Ordinal) ?? false) ||
+                    string.IsNullOrWhiteSpace(client.GetProperty("client_secret").GetString())) return 11;
+            }
             if (File.ReadAllText(savedScene) != sceneJson || File.ReadAllText(savedConfig) != "keep") return 9;
             WriteUpdateIdentity(root);
             using (var identity = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "bin", "64bit", "pulseweaver-update.json"))))
@@ -161,7 +168,7 @@ internal static class Program
                 if(string.IsNullOrEmpty(entry.Name))continue;
                 var file=Recovery.SafePath(root,entry.FullName);Directory.CreateDirectory(Path.GetDirectoryName(file)!);entry.ExtractToFile(file);
             }
-            File.WriteAllText(Path.Combine(root,"bin","64bit","pulseweaver-update.json"),"{\"schema\":1,\"channel\":\"windows-private\",\"tag\":\"v1.12.11\"}");
+            File.WriteAllText(Path.Combine(root,"bin","64bit","pulseweaver-update.json"),"{\"schema\":1,\"channel\":\"windows-private\",\"tag\":\"v1.12.12\"}");
             var config=Path.Combine(root,"config");
             if(copiedConfig is not null) Recovery.CopyTree(copiedConfig,config);
             else {Directory.CreateDirectory(config);File.WriteAllText(Path.Combine(config,"preserved.json"),"{\"scene\":\"existing\",\"x\":137.5,\"rotation\":23.5}");}
@@ -179,7 +186,7 @@ internal static class Program
                 using var recovery=Process.Start(start)!;recovery.WaitForExit();if(recovery.ExitCode!=0)throw new IOException("Separate recovery installer test failed: "+recovery.ExitCode);
             }
             if(!Equal(before,Digests(root)))throw new IOException("Restored runtime/configuration differs from pre-upgrade state.");
-            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: 1.12.11 -> {Version} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
+            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: 1.12.12 -> {Version} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
             return 0;
         }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),"FAIL: "+ex);return 61;}
         finally{try{Directory.Delete(parent,true);}catch{}}

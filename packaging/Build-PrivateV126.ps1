@@ -1,7 +1,12 @@
 [CmdletBinding()]
-param([ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.12.6')
+param(
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.12.13',
+    [Parameter(Mandatory)][string]$YouTubeDesktopClientJson
+)
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'YouTubeDesktopRegistration.ps1')
+$youtubeRegistration = Get-YouTubeDesktopRegistration -Path $YouTubeDesktopClientJson
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $runtimeRoot = Join-Path $projectRoot 'engine/obs-studio/build_pw_vs1714_sdk22621/rundir/RelWithDebInfo'
 $destination = Join-Path $projectRoot "dist/PulseWeaverStudio-v$Version-beta"
@@ -23,7 +28,7 @@ if (-not (Test-Path -LiteralPath $cachePath)) {
 $cache = Get-Content -LiteralPath $cachePath -Raw
 foreach ($key in @('YOUTUBE_CLIENTID', 'YOUTUBE_SECRET')) {
     if ($cache -notmatch "(?m)^$key`:[^=]*=\s*$") {
-        throw "$key must be empty. Private registrations are migrated into local configuration by setup."
+        throw "$key must be empty. Desktop registration is supplied separately during packaging."
     }
 }
 
@@ -38,6 +43,9 @@ New-Item -ItemType Directory -Path $destination | Out-Null
 foreach ($folder in @('bin', 'data', 'obs-plugins')) {
     Copy-Item -LiteralPath (Join-Path $runtimeRoot $folder) -Destination $destination -Recurse
 }
+$registrationDirectory = Join-Path $destination 'data/pulse-weaver'
+New-Item -ItemType Directory -Path $registrationDirectory -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $registrationDirectory 'youtube-desktop-client.json'), $youtubeRegistration)
 Get-ChildItem -LiteralPath $destination -Recurse -File -Filter '*.pdb' | Remove-Item -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README-FIRST-$Version-private.txt") -Destination (Join-Path $destination 'README-FIRST.txt')
 New-Item -ItemType Directory -Path (Join-Path $destination 'docs') | Out-Null

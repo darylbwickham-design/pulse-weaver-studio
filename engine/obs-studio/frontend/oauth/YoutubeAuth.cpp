@@ -1,4 +1,5 @@
 #include "../../shared/qt/PulseAppCredentials.hpp"
+#include "../../shared/qt/PulseYouTubeRegistration.hpp"
 #include "YoutubeAuth.hpp"
 
 #ifdef BROWSER_AVAILABLE
@@ -276,8 +277,9 @@ std::shared_ptr<Auth> YoutubeAuth::Login(QWidget *owner, const std::string &serv
 	dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowCloseButtonHint);
 	dlg.setWindowTitle(QTStr("YouTube.Auth.WaitingAuth.Title"));
 
-	std::string clientid = PulseAppCredentials::get("youtube", "client_id").toStdString();
-	std::string clientSecret = PulseAppCredentials::get("youtube", "client_secret").toStdString();
+	const auto registration = PulseYouTubeRegistration::current();
+	std::string clientid = registration.clientId.toStdString();
+	std::string clientSecret = registration.clientSecret.toStdString();
 
 	if (clientid.empty()) { QMessageBox::information(owner, "YouTube connection unavailable", "YouTube connection is not configured in this installation. Contact Pulse Weaver support at darylbwickham@gmail.com."); return nullptr; }
 	QByteArray verifierBytes(64, Qt::Uninitialized);
