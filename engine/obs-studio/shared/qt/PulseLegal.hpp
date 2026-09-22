@@ -2,9 +2,9 @@
 
 namespace PulseLegal {
 inline constexpr const char *PrivacyUrl =
-	"https://pulse-weaver-kick-relay.darylbwickham.chatgpt.site/privacy";
+	"https://lumi-con.com/pulse-weaver/privacy/";
 inline constexpr const char *TermsUrl =
-	"https://pulse-weaver-kick-relay.darylbwickham.chatgpt.site/terms";
+	"https://lumi-con.com/pulse-weaver/terms/";
 inline constexpr const char *YouTubeTermsUrl = "https://www.youtube.com/t/terms";
 inline constexpr const char *GooglePrivacyUrl = "https://policies.google.com/privacy";
 inline constexpr const char *GooglePermissionsUrl =
