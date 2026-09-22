@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.12.13',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.12.14',
     [Parameter(Mandatory)][string]$YouTubeDesktopClientJson
 )
 

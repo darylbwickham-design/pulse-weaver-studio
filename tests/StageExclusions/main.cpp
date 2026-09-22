@@ -98,6 +98,21 @@ int main(int argc, char **argv)
 		check(std::fabs(copiedScale.x - liveScale.x) < 0.001f &&
 			      std::fabs(copiedScale.y - liveScale.y) < 0.001f,
 		      "live 16:9 camera scale reaches the active exclusion copy");
+		/* Model an animation plugin changing a transform without a corresponding
+		 * source-scene signal: the frame reconciliation must repair a stale output
+		 * copy without requiring a Stage change. */
+		vec2 stalePosition{12.0f, 34.0f};
+		obs_sceneitem_set_pos(copiedLandscapeCamera, &stalePosition);
+		for (unsigned i = 0; i < 30; ++i) {
+			obs_sceneitem_get_pos(copiedLandscapeCamera, &copiedPosition);
+			if (std::fabs(copiedPosition.x - livePosition.x) < 0.01f &&
+			    std::fabs(copiedPosition.y - livePosition.y) < 0.01f)
+				break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
+		check(std::fabs(copiedPosition.x - livePosition.x) < 0.01f &&
+			      std::fabs(copiedPosition.y - livePosition.y) < 0.01f,
+		      "frame sync repairs a stale 16:9 output transform without a Stage change");
 	}
 	obs_scene_release(landscapeCopy);
 	videoInfo.base_width = videoInfo.output_width = 1080;

@@ -168,7 +168,7 @@ internal static class Program
                 if(string.IsNullOrEmpty(entry.Name))continue;
                 var file=Recovery.SafePath(root,entry.FullName);Directory.CreateDirectory(Path.GetDirectoryName(file)!);entry.ExtractToFile(file);
             }
-            File.WriteAllText(Path.Combine(root,"bin","64bit","pulseweaver-update.json"),"{\"schema\":1,\"channel\":\"windows-private\",\"tag\":\"v1.12.12\"}");
+            File.WriteAllText(Path.Combine(root,"bin","64bit","pulseweaver-update.json"),"{\"schema\":1,\"channel\":\"windows-private\",\"tag\":\"v1.12.13\"}");
             var config=Path.Combine(root,"config");
             if(copiedConfig is not null) Recovery.CopyTree(copiedConfig,config);
             else {Directory.CreateDirectory(config);File.WriteAllText(Path.Combine(config,"preserved.json"),"{\"scene\":\"existing\",\"x\":137.5,\"rotation\":23.5}");}
@@ -186,7 +186,7 @@ internal static class Program
                 using var recovery=Process.Start(start)!;recovery.WaitForExit();if(recovery.ExitCode!=0)throw new IOException("Separate recovery installer test failed: "+recovery.ExitCode);
             }
             if(!Equal(before,Digests(root)))throw new IOException("Restored runtime/configuration differs from pre-upgrade state.");
-            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: 1.12.12 -> {Version} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
+            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: 1.12.13 -> {Version} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
             return 0;
         }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),"FAIL: "+ex);return 61;}
         finally{try{Directory.Delete(parent,true);}catch{}}

@@ -1,11 +1,11 @@
-# Build Pulse Weaver 1.12.8 on Windows
+# Build Pulse Weaver 1.12.14 on Windows
 
-This source snapshot corresponds to the Windows private/beta 1.12.8 release. It contains no private account configuration or confidential application registrations. The public Windows installer project remains at its previous release version; use `packaging/PulseWeaver.PrivateSetup` for this release.
+This source snapshot corresponds to the Windows private/beta 1.12.14 release. It contains no personal configuration, account tokens or bundled Google registration file. Use `packaging/PulseWeaver.PrivateSetup` for this release.
 
-After the native build below, create the clean runtime ZIP with `packaging/Build-PrivateV126.ps1 -Version 1.12.8`, then publish the self-contained installer:
+After the native build below, supply an authorised Google Desktop app registration JSON and create the clean runtime ZIP with `packaging/Build-PrivateV126.ps1 -Version 1.12.14 -YouTubeDesktopClientJson <path>`, then publish the self-contained installer:
 
 ```powershell
-dotnet publish packaging/PulseWeaver.PrivateSetup/PulseWeaver.PrivateSetup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o artifacts/setup-1.12.8
+dotnet publish packaging/PulseWeaver.PrivateSetup/PulseWeaver.PrivateSetup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:ReleaseVersion=1.12.14 -o artifacts/setup-1.12.14
 dotnet run --project tests/InstallerRecovery/InstallerRecovery.csproj -c Release
 ```
 
@@ -27,4 +27,4 @@ The executable is `engine/obs-studio/build_pw_vs1714_sdk22621/rundir/RelWithDebI
 
 Do not set compile-time confidential OAuth credentials for a public build. Pulse Weaver includes the public Twitch and Kick application IDs; Kick's client secret remains only in the hosted relay. YouTube registration is supplied at runtime through Action > Connections.
 
-The release maintainer packages the clean runtime, Lumia companion and source snapshot from the private release workspace with `artifacts/prepare-public-1.12.6.mjs`, then runs `artifacts/audit-public-1.12.6.mjs`. The public repository intentionally excludes release binaries, build caches, configuration, logs and debug symbols. The installer belongs on GitHub Releases because it exceeds Git's 25 MB project limit.
+The public repository intentionally excludes release binaries, build caches, configuration, logs, debug symbols and the packaged Google registration file. Run the native and installer regression suites and scan every release asset before publishing. The installer belongs on GitHub Releases because it exceeds Git's project file limit.

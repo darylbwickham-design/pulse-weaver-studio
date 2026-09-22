@@ -1131,6 +1131,13 @@ void OBSBasic::OBSInit()
 	 * prepares Preview and only Stage activation changes Program. Enable this
 	 * here, after profiles/scenes and libobs are ready—not during shell setup. */
 	if (pulsePages) {
+		/* OBS normally snapshots the Program scene in Studio Mode.  That is useful
+		 * for preparing edits before a manual transition, but Pulse Weaver already
+		 * provides that safety boundary by selecting Stages.  Program must retain a
+		 * live reference so transforms and animation filters edited in Camera reach
+		 * the active 16:9 output immediately. */
+		sceneDuplicationMode = false;
+		editPropertiesMode = false;
 		SetPreviewProgramMode(true);
 	} else if (!opt_studio_mode) {
 		SetPreviewProgramMode(config_get_bool(App()->GetUserConfig(), "BasicWindow", "PreviewProgramMode"));
