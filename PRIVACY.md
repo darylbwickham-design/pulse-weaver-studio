@@ -1,6 +1,6 @@
 # Pulse Weaver Studio Privacy Policy
 
-**Effective: 21 September 2026**
+**Effective: 22 September 2026**
 
 Pulse Weaver is local-first streaming software. This notice explains what stays on your computer, what connected services receive, and the limited information handled by the hosted Kick relay.
 
@@ -27,6 +27,16 @@ GitHub hosts the project repository, releases and update information. A request 
 Pulse Weaver uses YouTube API Services. If you connect YouTube, the application may access your channel identity, live broadcasts and streams, live-chat identifiers and messages, participants, memberships and public subscriber events. It uses that information to create and manage broadcasts, transmit your selected output, display and post live chat, perform moderation you request, and drive your local alerts and automations.
 
 Google OAuth access and refresh tokens and the connected channel name are stored locally so the application can remain connected. Live-chat and audience-event data is held in bounded working memory while needed for the live session. Pulse Weaver does not use Google user data for advertising, sale, credit decisions or general-purpose AI training, and does not combine data from unrelated channel owners.
+
+### Who receives Google user data
+
+Pulse Weaver shares, transfers or discloses Google user data only in these limited circumstances:
+
+- **Google and YouTube:** the desktop application sends OAuth tokens and the API requests needed to carry out actions you choose, such as creating or ending a broadcast, reading or posting live chat, or applying moderation. Broadcasts, chat messages and other content you choose to publish are then visible according to your YouTube settings.
+- **Integrations you deliberately configure:** a browser source, plugin, webhook, lighting service or automation tool can receive selected YouTube event or chat information only when you configure that integration to use it. That provider handles the information under its own privacy notice. Google OAuth tokens are not intentionally sent to these integrations.
+- **Support or legal disclosure:** Daryl Wickham receives Google user data only if you deliberately include it in a support request, or if disclosure is required by law or is necessary to protect users, the service or legal rights. You are not required to provide Google user data for support and should never send access tokens or refresh tokens.
+
+Pulse Weaver does **not automatically transfer Google user data** to Daryl Wickham, the hosted Kick relay, OpenAI/ChatGPT Sites, Cloudflare, GitHub, advertisers, data brokers, information resellers, lenders, or general-purpose AI or machine-learning systems. We do not sell Google user data or use it for advertising, retargeting, credit decisions or lending. The desktop application exchanges Google credentials directly with Google's OAuth and YouTube API endpoints; the credentials remain on the user's computer apart from those exchanges.
 
 Google's handling of information is described in the [Google Privacy Policy](https://policies.google.com/privacy). You may disconnect inside Pulse Weaver or revoke access from [Google's permissions page](https://security.google.com/settings/security/permissions). Pulse Weaver attempts to revoke the token and immediately removes its live local credentials and transient YouTube session data. Revocation does not delete content held by YouTube, user-created recordings/exports or user-controlled installer backups.
 
@@ -61,4 +71,3 @@ You can complain to the [UK Information Commissioner's Office](https://ico.org.u
 ## 10. Changes
 
 We will update this notice when Pulse Weaver's data handling materially changes. The effective date above identifies the current version. If a change expands how YouTube API data is used, users will be asked to accept the updated notice before that new use.
-
