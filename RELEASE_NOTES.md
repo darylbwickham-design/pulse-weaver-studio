@@ -4,6 +4,8 @@ Moving, resizing, cropping or animating a source in the 16:9 Camera editor now r
 
 Pulse Weaver still keeps Camera scene selection preview-only: selecting another scene does not take it live. Once a Stage is activated, however, its programme scene remains a live reference instead of OBS Studio Mode's frozen private snapshot. Destination copies created for source exclusions also reconcile transforms every video frame for Move-style animation.
 
+The amended 1.12.14 build opens its in-app Privacy Policy and Terms of Service links on the public LumiCon site used by the Google OAuth consent screen. Its bundled Privacy Policy includes the clarified Google user-data sharing, transfer and disclosure section.
+
 The exact updater passed payload, layout, language and credential-migration checks. A disposable 1.12.13 → 1.12.14 update and full restore preserved every test file byte-for-byte without changing the installed app or registry. Close Pulse Weaver, run **PulseWeaver-Setup-1.12.14-BETA.exe**, and do not uninstall first.
 
 ---
