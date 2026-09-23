@@ -6,8 +6,9 @@ It installs to:
   %LOCALAPPDATA%\Programs\Pulse Weaver Motion Preview
 
 It has a separate Start menu shortcut, uninstall entry, portable configuration,
-update channel, local API port (18765), and Lumia plugin ID. It does not replace
-the normal Pulse Weaver installation.
+update channel and local API port (18765). It does not replace the normal Pulse
+Weaver installation. The companion Lumia package updates the existing Pulse
+Weaver plugin and keeps its existing plugin identity.
 
 GETTING STARTED
 1. Install PulseWeaver-Motion-Preview-Setup-1.13.0.exe.
@@ -17,8 +18,9 @@ GETTING STARTED
    for a close-up, drag the crosshair over the subject and use the zoom slider.
 5. Use an ordinary action name and save it.
 6. Use RUN / PREVIEW ON OUTPUT. This changes the real program output.
-7. Import PulseWeaver-Motion-Preview-Lumia-1.2.0.lumiaplugin in Lumia Stream
-   to run the same saved action from Lumia or LumiCon.
+7. Import PulseWeaver-Lumia-1.2.0.lumiaplugin to update your existing Pulse
+   Weaver plugin. Existing Lumia and LumiCon alert bindings are retained.
+8. Set that plugin's Pulse Weaver port to 18765 while testing this preview.
 
 STREAM DECK
 Every saved action registers an OBS hotkey named "Pulse Weaver Motion: <name>".

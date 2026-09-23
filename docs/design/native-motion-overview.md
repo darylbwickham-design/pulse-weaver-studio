@@ -120,7 +120,7 @@ The local API exposes the same catalogue, state, run and stop operations. Contro
 
 Every saved, reviewed action also registers `Pulse Weaver Motion: <name>` in the OBS hotkey system. A user can assign a key once in Pulse Weaver and select it in Stream Deck without installing another bridge. The hotkey calls the same runner; it cannot bypass Stage or restore rules.
 
-The preview Lumia plugin uses its own ID and port 18765 so it can coexist with the released plugin. A release build can switch the manifest back to the normal plugin ID after migration behaviour is proven.
+The Lumia package updates the existing `pulseweavercontrol` plugin, so existing Lumia and LumiCon alert bindings remain attached to the same integration. Port 18755 remains the normal default. A tester can point that plugin at the isolated preview on port 18765; token discovery follows the selected port and reads the matching Pulse Weaver installation.
 
 ## Storage
 

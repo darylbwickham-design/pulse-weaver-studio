@@ -31,7 +31,7 @@ Configure the branch with `-DPULSEWEAVER_MOTION_PREVIEW=ON` and use a separate b
 packaging/Build-MotionPreview.ps1 -Version 1.13.0 -YouTubeDesktopClientJson <path>
 ```
 
-The script emits the installer, clean portable payload, Lumia plugin and SHA-256 list under `artifacts/motion-preview-1.13.0`. The installer identity targets `%LOCALAPPDATA%\Programs\Pulse Weaver Motion Preview`, uses update channel `windows-motion-preview`, and the native controller API listens on 18765. It does not overwrite the normal Pulse Weaver installation.
+The script emits the installer, clean portable payload, an update for the existing Pulse Weaver Lumia plugin and a SHA-256 list under `artifacts/motion-preview-1.13.0`. The installer identity targets `%LOCALAPPDATA%\Programs\Pulse Weaver Motion Preview`, uses update channel `windows-motion-preview`, and the native controller API listens on 18765. It does not overwrite the normal Pulse Weaver installation. The Lumia package keeps the existing `pulseweavercontrol` identity so current Lumia and LumiCon alert bindings remain attached.
 
 The executable is `engine/obs-studio/build_pw_vs1714_sdk22621/rundir/RelWithDebInfo/bin/64bit/PulseWeaverCore.exe`. It uses an isolated portable configuration. The StageExclusions regression requires Qt6 Core and libobs from this build; run its executable with the runtime directory as its sole argument and the runtime bin/64bit directory on PATH.
 

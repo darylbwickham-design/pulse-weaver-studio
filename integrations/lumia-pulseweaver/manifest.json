@@ -1,6 +1,6 @@
 {
-  "id": "pulseweavermotionpreview",
-  "name": "Pulse Weaver Motion Preview",
+  "id": "pulseweavercontrol",
+  "name": "Pulse Weaver",
   "version": "1.2.0",
   "author": "Pulse Weaver",
   "description": "Operate your Pulse Weaver show, Stages, native motion actions, sources, audio and media from Lumia Stream or LumiCon.",
@@ -14,12 +14,12 @@
         "key": "port",
         "label": "Pulse Weaver port",
         "type": "number",
-        "defaultValue": 18765,
+        "defaultValue": 18755,
         "validation": {
           "min": 1024,
           "max": 65535
         },
-        "helperText": "The Motion Preview uses 18765 so it can coexist with the normal Pulse Weaver installation."
+        "helperText": "Leave this at 18755 for Pulse Weaver. While testing the isolated Motion Preview installation, use 18765."
       },
       {
         "key": "apiToken",

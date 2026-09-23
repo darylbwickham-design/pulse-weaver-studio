@@ -1,6 +1,6 @@
-# Pulse Weaver Motion Preview for Lumia Stream — 1.2.0
+# Pulse Weaver for Lumia Stream — 1.2.0
 
-Requires the isolated **Pulse Weaver Motion Preview 1.13.0** build and Lumia Stream 9.x. Install the preview first, then import `PulseWeaver-Motion-Preview-Lumia-1.2.0.lumiaplugin` into Lumia and enable it. Its separate `pulseweavermotionpreview` ID allows it to coexist with the released Pulse Weaver plugin while this feature is tested.
+Version 1.2.0 updates the existing Pulse Weaver Lumia plugin. It keeps the `pulseweavercontrol` ID so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.2.0.lumiaplugin` over the existing plugin after installing the Pulse Weaver build that provides native motion.
 
 Version 1.2.0 adds the native motion catalogue, Run Motion, Stop + Restore and Restore Last controls for Lumia reactions and LumiCon buttons. These controls invoke the same guarded runner as Pulse Weaver's Motion page. It also retains the existing show, Stage, source, audio, media and recording controls.
 
@@ -25,13 +25,13 @@ All 36 alerts default to **Off** in Lumia. Enable individual alerts when you con
 
 36 alert definitions cover Stage changes, source shown/hidden/muted/unmuted/volume, media playback, transition begin/end, and platform/recording starting/live/stopping/stopped/failed (plus platform reconnecting). Output alerts include the specific output: a dual YouTube or recording route can produce separate output events. A platform's status confirms both YouTube outputs for Dual; partial failure is reported as failure rather than full success.
 
-Existing status variables remain, with motion, Twitch, Kick and YouTube status variables. Action return variables use Lumia's required `pulseweavermotionpreview_` prefix. A start command only reports success after live state is observed; a timeout stops the Lumia action chain and tells you to check the app. A failed whole-show start may leave successful destinations running, and its error says so.
+Existing status variables remain, with motion, Twitch, Kick and YouTube status variables. Action return variables keep Lumia's existing `pulseweavercontrol_` prefix. A start command only reports success after live state is observed; a timeout stops the Lumia action chain and tells you to check the app. A failed whole-show start may leave successful destinations running, and its error says so.
 
 Events arrive over one authenticated local event stream. There is no idle status polling. Source lists update when their catalogue changes, variables/options update only when changed, and the connection sends a small heartbeat every 20 seconds while subscribed. Reconnection retries back off and stop after eight failed attempts; use Reconnect or re-enable the plugin afterwards. Reconnecting refreshes the current state without replaying historical alerts. Normal successful actions do not create toast spam or Event List entries.
 
 ## Connection
 
-The plugin automatically reads the preview configuration beneath `%LOCALAPPDATA%/Programs/Pulse Weaver Motion Preview`. For a custom portable installation, set its full `config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini` path, or enter its connection token. The isolated loopback port defaults to 18765.
+Port 18755 remains the default for the normal Pulse Weaver installation. To test the isolated Motion Preview build, change this existing plugin's port to 18765; token discovery then prefers `%LOCALAPPDATA%/Programs/Pulse Weaver Motion Preview`. Switching the port back to 18755 reconnects it to the normal installation. For a custom portable installation, set the full `config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini` path or enter its connection token.
 
 Do not use Lumia's generic OBS connection to bypass these operating controls. Build scenes, Stages and routing inside Pulse Weaver.
 
