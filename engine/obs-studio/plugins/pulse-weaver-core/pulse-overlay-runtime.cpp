@@ -3,6 +3,7 @@
 #include "pulse-overlay-store.hpp"
 #include "pulse-overlay-renderer.hpp"
 #include "pulse-overlay-migration.hpp"
+#include "pulse-runtime-safety.hpp"
 #include "../obs-browser/panel/browser-panel.hpp"
 
 #include <obs-module.h>
@@ -438,6 +439,9 @@ struct PulseOverlayRuntime::Impl {
 
 	~Impl()
 	{
+		loading = true;
+		if (scene)
+			scene->blockSignals(true);
 		// QObject's base destructor runs after this implementation is gone. The
 		// server owns sockets whose disconnect handlers capture Impl and access
 		// subscriber maps; quiesce them before member destruction clears the maps.
@@ -800,7 +804,8 @@ struct PulseOverlayRuntime::Impl {
 			subscribers[document->id].append(socket);
 			subscriberLayouts.insert(socket, QUrlQuery(requestUrl).queryItemValue("layout").toLower() == "portrait" ? "portrait" : "landscape");
 			QObject::connect(socket, &QTcpSocket::disconnected, owner, [this, id = document->id, socket] {
-				subscribers[id].removeAll(socket);
+				auto clients = subscribers.find(id);
+				if (clients != subscribers.end()) clients->removeAll(socket);
 				subscriberLayouts.remove(socket);
 				socket->deleteLater();
 			});
@@ -831,7 +836,8 @@ struct PulseOverlayRuntime::Impl {
 			subscribers[key].append(socket);
 			subscriberLayouts.insert(socket, QUrlQuery(requestUrl).queryItemValue("layout").toLower() == "portrait" ? "portrait" : "landscape");
 			QObject::connect(socket, &QTcpSocket::disconnected, owner, [this, key, socket] {
-				subscribers[key].removeAll(socket);
+				auto clients = subscribers.find(key);
+				if (clients != subscribers.end()) clients->removeAll(socket);
 				subscriberLayouts.remove(socket);
 				socket->deleteLater();
 			});
@@ -882,7 +888,9 @@ struct PulseOverlayRuntime::Impl {
 
 	void emitToKey(const QString &key, const QString &eventKey, const QJsonObject &data)
 	{
-		auto &clients = subscribers[key];
+		// Socket callbacks can synchronously remove subscribers. Iterate a
+		// snapshot so disconnects cannot invalidate the current iteration.
+		const auto clients = subscribers.value(key);
 		QTcpSocket *audioOwner = nullptr;
 		if (data.contains("__pwAlert") && !data.value("__pwAlert").toObject().value("muted").toBool()) {
 			for (auto it = clients.crbegin(); it != clients.crend(); ++it) {
@@ -899,14 +907,16 @@ struct PulseOverlayRuntime::Impl {
 					}
 			}
 		}
-		for (auto it = clients.begin(); it != clients.end();) {
+		for (auto it = clients.begin(); it != clients.end(); ++it) {
 			if (!*it || (*it)->state() != QAbstractSocket::ConnectedState) {
 				if (*it)
 					subscriberLayouts.remove(*it);
-				it = clients.erase(it);
+				auto current = subscribers.find(key);
+				if (current != subscribers.end()) current->removeAll(*it);
 			} else if ((*it)->bytesToWrite() > 1024 * 1024) {
+				auto current = subscribers.find(key);
+				if (current != subscribers.end()) current->removeAll(*it);
 				(*it)->disconnectFromHost();
-				it = clients.erase(it);
 			} else {
 				QJsonObject clientData = data;
 				if (clientData.contains("__pwAlert") && *it != audioOwner) {
@@ -916,7 +926,6 @@ struct PulseOverlayRuntime::Impl {
 				}
 				const QByteArray message = "data: " + jsonLine(QJsonObject{{"event", eventKey}, {"data", clientData}}) + "\n\n";
 				(*it)->write(message);
-				++it;
 			}
 		}
 	}
@@ -1653,6 +1662,7 @@ struct PulseOverlayRuntime::Impl {
 		auto *center = new QWidget;
 		auto *centerLayout = new QVBoxLayout(center);
 		scene = new QGraphicsScene(center);
+		PulseRuntimeSafety::silenceSceneOnOwnerDestruction(scene, dialog);
 		view = new QGraphicsView(scene);
 		view->setBackgroundBrush(QColor("#04070D"));
 		view->setRenderHint(QPainter::Antialiasing, true);
@@ -1836,9 +1846,12 @@ struct PulseOverlayRuntime::Impl {
 		QObject::connect(documentList, &QListWidget::currentRowChanged, dialog, [this] { if (!loading) loadDocument(); });
 		QObject::connect(layers, &QListWidget::currentItemChanged, dialog, [this] { if (!loading) loadElement(); });
 		QObject::connect(scene, &QGraphicsScene::selectionChanged, dialog, [this] {
-			if (loading || scene->selectedItems().isEmpty())
+			if (loading || !scene || !layers)
 				return;
-			const QString id = scene->selectedItems().front()->data(0).toString();
+			const auto selected = scene->selectedItems();
+			if (selected.isEmpty())
+				return;
+			const QString id = selected.front()->data(0).toString();
 			for (int row = 0; row < layers->count(); ++row)
 				if (layers->item(row)->data(Qt::UserRole).toString() == id)
 					layers->setCurrentRow(row);
@@ -1956,16 +1969,19 @@ struct PulseOverlayRuntime::Impl {
 			}
 		});
 		QObject::connect(dialog, &QDialog::finished, dialog, [this] {
+			loading = true;
+			if (scene)
+				scene->blockSignals(true);
 			const QString prefix = "preview:" + previewSession + ":";
-			for (auto it = subscribers.begin(); it != subscribers.end();) {
-				if (!it.key().startsWith(prefix)) {
-					++it;
+			for (const QString &key : subscribers.keys()) {
+				if (!key.startsWith(prefix)) {
 					continue;
 				}
-				for (const QPointer<QTcpSocket> &socket : it.value())
+				// Disconnect may synchronously mutate the subscriber map.
+				const auto clients = subscribers.take(key);
+				for (const QPointer<QTcpSocket> &socket : clients)
 					if (socket)
 						socket->disconnectFromHost();
-				it = subscribers.erase(it);
 			}
 			if (previewBrowser) {
 				previewBrowser->closeBrowser();
@@ -1977,6 +1993,7 @@ struct PulseOverlayRuntime::Impl {
 			previewSession.clear();
 		});
 		QObject::connect(dialog, &QObject::destroyed, owner, [this] {
+			loading = true;
 			dialog = nullptr;
 			documentList = nullptr;
 			layers = nullptr;

@@ -424,12 +424,6 @@ obs_source_t *pulseCachedCanvasStinger(const QString &routeKey, obs_source_t *tr
 		return nullptr;
 	const QString prefix = routeKey + '|';
 	const QString cacheKey = prefix + QString::fromUtf8(obs_source_get_uuid(transitionTemplate));
-	for (auto it = pulseCanvasStingerTransitions.begin(); it != pulseCanvasStingerTransitions.end();) {
-		if (it.key().startsWith(prefix) && it.key() != cacheKey)
-			it = pulseCanvasStingerTransitions.erase(it);
-		else
-			++it;
-	}
 	auto found = pulseCanvasStingerTransitions.find(cacheKey);
 	if (found != pulseCanvasStingerTransitions.end())
 		return found.value();
@@ -529,13 +523,14 @@ obs_canvas_t *pulseConfigureOutputCanvas(const QString &provider, const QJsonObj
 		obs_video_info canvasInfo = {};
 		if (transition && obs_canvas_get_video_info(canvas, &canvasInfo)) {
 			obs_transition_set_size(transition, canvasInfo.base_width, canvasInfo.base_height);
-			// The canvas still owns this cached stinger during an interrupted
-			// stage. start() settles its old destination before restarting it.
 			if (current != transition)
 				obs_transition_set(transition, current);
-			started = obs_transition_start(transition, OBS_TRANSITION_MODE_AUTO, transitionDuration, target);
-			if (started)
+			/* Keep the transition active on its canvas before starting its
+			 * clock. A cold Stinger's media source otherwise begins decoding
+			 * after its first transition has already started. */
+			if (current != transition)
 				obs_canvas_set_channel(canvas, 0, transition);
+			started = obs_transition_start(transition, OBS_TRANSITION_MODE_AUTO, transitionDuration, target);
 		}
 	}
 	obs_source_release(current);
@@ -3090,6 +3085,29 @@ void OBSBasic::RefreshPulseWeaverStages()
 		obs_canvas_release(canvas);
 		savePulseWeaverStages(stages);
 	}
+	/* Prepare the private portrait Stingers after the scene collection and
+	 * transition sources are available. Their media decoders need a chance to
+	 * open before the first Stage change, not during that change. Keep only
+	 * copies still referenced by a saved Stage. */
+	QSet<QString> wantedVerticalStingers;
+	for (const QJsonValue &value : stages) {
+		const QJsonObject stage = value.toObject();
+		const QString legacyTransition = stage.value("transition").toString("fade");
+		const QString transitionId = stage.value("verticalTransition").toString(legacyTransition);
+		if (!transitionId.startsWith("stinger:"))
+			continue;
+		obs_source_t *source = FindTransition(transitionId.mid(QStringLiteral("stinger:").size()).toUtf8().constData());
+		if (!source || strcmp(obs_source_get_id(source), "obs_stinger_transition") != 0)
+			continue;
+		wantedVerticalStingers.insert("vertical-program|" + QString::fromUtf8(obs_source_get_uuid(source)));
+		pulseCachedCanvasStinger("vertical-program", source);
+	}
+	for (auto it = pulseCanvasStingerTransitions.begin(); it != pulseCanvasStingerTransitions.end();) {
+		if (it.key().startsWith("vertical-program|") && !wantedVerticalStingers.contains(it.key()))
+			it = pulseCanvasStingerTransitions.erase(it);
+		else
+			++it;
+	}
 	const QByteArray signature = QJsonDocument(stages).toJson(QJsonDocument::Compact);
 	if (signature == pulseStageSignature)
 		return;
@@ -3503,6 +3521,10 @@ void OBSBasic::ApplyPulseWeaverStage(int index, bool runTransitions)
 	bool verticalTransitionStarted = false;
 	if (!verticalName.isEmpty()) {
 		obs_canvas_t *canvas = PulseWeaverGetVerticalCanvas();
+		if (!canvas) {
+			EnsurePulseWeaverVerticalCanvas();
+			canvas = PulseWeaverGetVerticalCanvas();
+		}
 		obs_source_t *scene = canvas ? obs_canvas_get_source_by_name(canvas, verticalName.toUtf8().constData()) : nullptr;
 		obs_source_t *current = canvas ? obs_canvas_get_channel(canvas, 0) : nullptr;
 		obs_source_t *cachedStinger = runTransitions ? pulseCachedCanvasStinger("vertical-program", verticalTransition) : nullptr;
@@ -3515,9 +3537,9 @@ void OBSBasic::ApplyPulseWeaverStage(int index, bool runTransitions)
 				obs_transition_set_size(transition, 1080, 1920);
 				if (current != transition)
 					obs_transition_set(transition, current);
-				verticalTransitionStarted = obs_transition_start(transition, OBS_TRANSITION_MODE_AUTO, verticalDuration, scene);
-				if (verticalTransitionStarted)
+				if (current != transition)
 					obs_canvas_set_channel(canvas, 0, transition);
+				verticalTransitionStarted = obs_transition_start(transition, OBS_TRANSITION_MODE_AUTO, verticalDuration, scene);
 			}
 		}
 		if (canvas && scene && !verticalTransitionStarted)

@@ -10,6 +10,13 @@
 #include <functional>
 #include <cmath>
 
+inline QString pulseLumiaStageName(const QComboBox *selector, int index)
+{
+	if (!selector || index < 0 || index >= selector->count()) return {};
+	const QString name = selector->itemData(index, Qt::UserRole + 1).toString();
+	return name.isEmpty() ? selector->itemText(index) : name;
+}
+
 // Restricted operating controls. No settings, transforms, creation or raw requests.
 class PulseLumiaBridge : public QObject {
 	QHash<QString, obs_weak_source_t *> sources;
@@ -118,8 +125,8 @@ public:
 		});
 		auto *window = static_cast<QWidget *>(obs_frontend_get_main_window());
 		if (auto *selector = window ? window->findChild<QComboBox *>("PulseWeaverStageSelector") : nullptr) {
-			connect(selector, &QComboBox::currentTextChanged, this, [this](const QString &stage) {
-				deliver({{"event", "stage_changed"}, {"stage", stage}});
+			connect(selector, &QComboBox::currentTextChanged, this, [this, selector](const QString &) {
+				deliver({{"event", "stage_changed"}, {"stage", pulseLumiaStageName(selector, selector->currentIndex())}});
 			});
 			connect(selector->model(), &QAbstractItemModel::rowsInserted, this, [this] { catalogueChanged(); });
 			connect(selector->model(), &QAbstractItemModel::rowsRemoved, this, [this] { catalogueChanged(); });

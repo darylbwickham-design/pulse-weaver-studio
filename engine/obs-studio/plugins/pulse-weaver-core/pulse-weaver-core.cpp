@@ -7,6 +7,8 @@
 #include "pulse-lumia-bridge.hpp"
 #include "pulse-overlay-runtime.hpp"
 #include "pulse-overlay-alerts.hpp"
+#include "pulse-runtime-safety.hpp"
+#include "pulse-scene-item-ref.hpp"
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
@@ -55,6 +57,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QSettings>
 #include <QSaveFile>
 #include <QSlider>
@@ -3136,13 +3139,13 @@ private:
 				activateScene(name);
 		});
 		connect(sourceTree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *item, int column) {
-			if (refreshing || column != 0)
+			if (refreshing || !item || column != 0)
 				return;
 			obs_source_t *sceneSource = obs_frontend_get_current_scene();
 			if (!sceneSource)
 				return;
 			obs_scene_t *scene = obs_scene_from_source(sceneSource);
-			obs_sceneitem_t *sceneItem = scene ? obs_scene_find_sceneitem_by_id(scene, item->data(0, Qt::UserRole).toLongLong()) : nullptr;
+			OBSSceneItem sceneItem = PulseRuntimeSafety::findSceneItemById(scene, item->data(0, Qt::UserRole).toLongLong());
 			if (sceneItem)
 				obs_sceneitem_set_visible(sceneItem, item->checkState(0) == Qt::Checked);
 			obs_source_release(sceneSource);
@@ -3372,11 +3375,11 @@ private:
 		return name;
 	}
 
-	obs_sceneitem_t *findCurrentSceneItem(const QString &name) const
+	OBSSceneItem findCurrentSceneItem(const QString &name) const
 	{
 		obs_source_t *sceneSource = obs_frontend_get_current_scene();
 		obs_scene_t *scene = sceneSource ? obs_scene_from_source(sceneSource) : nullptr;
-		obs_sceneitem_t *item = scene ? obs_scene_find_source_recursive(scene, name.toUtf8().constData()) : nullptr;
+		OBSSceneItem item = PulseRuntimeSafety::findSceneItem(scene, name.toUtf8().constData());
 		if (sceneSource)
 			obs_source_release(sceneSource);
 		return item;
@@ -3415,7 +3418,7 @@ private:
 		}
 		if (type == "set_source_visible" || type == "set_source_transform") {
 			const QString name = args.value("name").toString();
-			obs_sceneitem_t *item = findCurrentSceneItem(name);
+			OBSSceneItem item = findCurrentSceneItem(name);
 			if (!item) {
 				results.append("Source not found in the active scene: " + name);
 				return false;
@@ -3520,7 +3523,7 @@ private:
 			const QJsonObject before = value.toObject();
 			obs_source_t *sceneSource = obs_get_source_by_name(before.value("scene").toString().toUtf8().constData());
 			obs_scene_t *scene = sceneSource ? obs_scene_from_source(sceneSource) : nullptr;
-			obs_sceneitem_t *item = scene ? obs_scene_find_sceneitem_by_id(scene, int64_t(before.value("itemId").toDouble())) : nullptr;
+			OBSSceneItem item = PulseRuntimeSafety::findSceneItemById(scene, int64_t(before.value("itemId").toDouble()));
 			if (item) {
 				obs_transform_info transform{};
 				obs_sceneitem_get_info2(item, &transform);
@@ -3704,6 +3707,7 @@ private:
 
 	void refreshScenes()
 	{
+		const QSignalBlocker blocked(sceneList);
 		const QString selected = sceneList->currentItem() ? sceneList->currentItem()->text() : QString();
 		obs_source_t *current = obs_frontend_get_current_scene();
 		const QString currentName = current ? QString::fromUtf8(obs_source_get_name(current)) : QString();
@@ -3723,6 +3727,7 @@ private:
 
 	void refreshSources()
 	{
+		const QSignalBlocker blocked(sourceTree);
 		sourceTree->clear();
 		obs_source_t *sceneSource = obs_frontend_get_current_scene();
 		if (!sceneSource)
@@ -4054,7 +4059,7 @@ private:
 		} else if (action == "Show source" || action == "Hide source" || action == "Toggle source") {
 			obs_source_t *sceneSource = obs_frontend_get_current_scene();
 			obs_scene_t *scene = sceneSource ? obs_scene_from_source(sceneSource) : nullptr;
-			obs_sceneitem_t *item = scene ? obs_scene_find_source_recursive(scene, target.toUtf8().constData()) : nullptr;
+			OBSSceneItem item = PulseRuntimeSafety::findSceneItem(scene, target.toUtf8().constData());
 			success = item != nullptr;
 			if (item)
 				obs_sceneitem_set_visible(item, action == "Toggle source" ? !obs_sceneitem_visible(item) : action == "Show source");
@@ -4262,7 +4267,7 @@ private:
 		QJsonArray stages;
 		if (stageSelector) {
 			for (int index = 0; index < stageSelector->count(); ++index)
-				stages.append(stageSelector->itemText(index));
+				stages.append(pulseLumiaStageName(stageSelector, index));
 		}
 		QJsonObject destinations;
 		for (const QString &provider : {QString("Twitch"), QString("YouTube"), QString("Kick")}) {
@@ -4276,7 +4281,7 @@ private:
 		return QJsonObject{{"product", "Pulse Weaver"}, {"connected", mainWindow != nullptr},
 			{"live", mainWindow && mainWindow->property("pulseWeaverAnyLive").toBool()},
 			{"recording", mainWindow && mainWindow->property("pulseWeaverRecordingActive").toBool()},
-			{"activeStage", stageSelector ? stageSelector->currentText() : QString()},
+			{"activeStage", stageSelector ? pulseLumiaStageName(stageSelector, stageSelector->currentIndex()) : QString()},
 			{"activeStageIndex", stageSelector ? stageSelector->currentIndex() : -1},
 			{"stages", stages}, {"destinations", destinations}, {"status", status}};
 	}
@@ -4290,12 +4295,32 @@ private:
 		}
 		connect(api, &QTcpServer::newConnection, this, [this] {
 			while (QTcpSocket *socket = api->nextPendingConnection()) {
+				connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+				if (api->findChildren<QTcpSocket *>().size() > 32) {
+					socket->abort();
+					socket->deleteLater();
+					continue;
+				}
+				socket->setReadBufferSize(PulseRuntimeSafety::maxRequestBytes + 1);
+				QTimer::singleShot(5000, socket, [socket] {
+					if (!socket->property("pulseLumiaSubscribed").toBool()) {
+						socket->abort();
+						socket->deleteLater();
+					}
+				});
 				connect(socket, &QTcpSocket::readyRead, this, [this, socket] {
 					if (socket->property("pulseLumiaSubscribed").toBool()) { socket->readAll(); return; }
+					if (socket->property("pulseHttpHandled").toBool()) { socket->readAll(); return; }
 					const QByteArray request = socket->property("pulseHttpBuffer").toByteArray() + socket->readAll();
-					if (request.size() > 65536) { respond(socket, 400, {{"error", "Request too large"}}); return; }
-					if (!request.contains("\r\n\r\n")) {
+					const auto frame = PulseRuntimeSafety::httpFrame(request);
+					if (frame == PulseRuntimeSafety::HttpFrame::Incomplete) {
 						socket->setProperty("pulseHttpBuffer", request);
+						return;
+					}
+					socket->setProperty("pulseHttpHandled", true);
+					socket->setProperty("pulseHttpBuffer", QVariant());
+					if (frame == PulseRuntimeSafety::HttpFrame::Invalid) {
+						respond(socket, 400, {{"error", "Invalid or oversized request framing"}});
 						return;
 					}
 					const QByteArray headerBlock = request.left(request.indexOf("\r\n\r\n"));
@@ -4322,6 +4347,14 @@ private:
 					const QUrl url = QUrl::fromEncoded(first[1]);
 					const QUrlQuery query(url);
 					const QByteArray body = request.mid(request.indexOf("\r\n\r\n") + 4);
+					if (method == "POST" && !body.isEmpty()) {
+						QJsonParseError error;
+						const auto input = QJsonDocument::fromJson(body, &error);
+						if (error.error != QJsonParseError::NoError || !input.isObject()) {
+							respond(socket, 400, {{"error", "Expected a JSON object"}});
+							return;
+						}
+					}
 					const QString path = url.path();
 					if (integrationClient == "lumia-plugin" && !path.startsWith("/api/v1/lumia/")) {
 						respond(socket, 403, {{"error", "Lumia may only use the restricted show-operation routes."}});
@@ -4372,14 +4405,23 @@ private:
 								target = (selector->currentIndex() + 1) % selector->count();
 							else if (path.endsWith("/previous"))
 								target = (selector->currentIndex() - 1 + selector->count()) % selector->count();
-							else
-								target = selector->findText(query.queryItemValue("name", QUrl::FullyDecoded), Qt::MatchFixedString);
+							else {
+								const QString requested = query.queryItemValue("name", QUrl::FullyDecoded);
+								target = selector->findData(requested, Qt::UserRole + 1, Qt::MatchFixedString);
+								if (target < 0)
+									target = selector->findText(requested, Qt::MatchFixedString);
+								if (target < 0) {
+									const int separator = requested.indexOf("  ·  ");
+									if (separator > 0)
+										target = selector->findData(requested.left(separator), Qt::UserRole + 1, Qt::MatchFixedString);
+								}
+							}
 						}
 						if (target >= 0)
 							selector->setCurrentIndex(target);
 						QJsonObject result = lumiaStateJson();
 						result.insert("ok", target >= 0);
-						result.insert("message", target >= 0 ? "Stage changed to “" + selector->currentText() + "”." : "Stage was not found.");
+						result.insert("message", target >= 0 ? "Stage changed to “" + pulseLumiaStageName(selector, target) + "”." : "Stage was not found.");
 						respond(socket, target >= 0 ? 200 : 404, result);
 					}
 					else if (method == "POST" && (path == "/api/v1/lumia/go-live" ||
@@ -4467,7 +4509,7 @@ private:
 					}
 					else if (method == "POST" && path == "/api/v1/source/visibility") {
 						const QString name = query.queryItemValue("name", QUrl::FullyDecoded);
-						obs_sceneitem_t *item = findCurrentSceneItem(name);
+						OBSSceneItem item = findCurrentSceneItem(name);
 						const QJsonObject input = QJsonDocument::fromJson(body).object();
 						if (item) {
 							obs_sceneitem_set_visible(item, input.value("visible").toBool(true));
@@ -4487,7 +4529,7 @@ private:
 						obs_source_t *source = (!name.isEmpty() && !kind.isEmpty() && scene && !existing)
 							? obs_source_create(kind.toUtf8().constData(), name.toUtf8().constData(), settings, nullptr)
 							: nullptr;
-						obs_sceneitem_t *item = source ? obs_scene_add(scene, source) : nullptr;
+						OBSSceneItem item = source ? obs_scene_add(scene, source) : nullptr;
 						if (settings)
 							obs_data_release(settings);
 						if (existing)
@@ -4503,7 +4545,7 @@ private:
 					}
 					else if (method == "POST" && path == "/api/v1/source/transform") {
 						const QString name = query.queryItemValue("name", QUrl::FullyDecoded);
-						obs_sceneitem_t *item = findCurrentSceneItem(name);
+						OBSSceneItem item = findCurrentSceneItem(name);
 						const QJsonObject input = QJsonDocument::fromJson(body).object();
 						if (item) {
 							obs_transform_info transform{};

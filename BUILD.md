@@ -1,11 +1,11 @@
-# Build Pulse Weaver 1.12.14 on Windows
+# Build Pulse Weaver 1.12.15 on Windows
 
-This source snapshot corresponds to the Windows private/beta 1.12.14 release. It contains no personal configuration, account tokens or bundled Google registration file. Use `packaging/PulseWeaver.PrivateSetup` for this release.
+This source snapshot corresponds to the Windows private/beta 1.12.15 release. It contains no personal configuration, account tokens or bundled Google registration file. Use `packaging/PulseWeaver.PrivateSetup` for this release.
 
-After the native build below, supply an authorised Google Desktop app registration JSON and create the clean runtime ZIP with `packaging/Build-PrivateV126.ps1 -Version 1.12.14 -YouTubeDesktopClientJson <path>`, then publish the self-contained installer:
+After the native build below, supply an authorised Google Desktop app registration JSON and create the clean runtime ZIP with `packaging/Build-PrivateV126.ps1 -Version 1.12.15 -YouTubeDesktopClientJson <path>`, then publish the self-contained installer:
 
 ```powershell
-dotnet publish packaging/PulseWeaver.PrivateSetup/PulseWeaver.PrivateSetup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:ReleaseVersion=1.12.14 -o artifacts/setup-1.12.14
+dotnet publish packaging/PulseWeaver.PrivateSetup/PulseWeaver.PrivateSetup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:ReleaseVersion=1.12.15 -o artifacts/setup-1.12.15
 dotnet run --project tests/InstallerRecovery/InstallerRecovery.csproj -c Release
 ```
 
