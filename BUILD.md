@@ -23,6 +23,16 @@ cmake --build engine/obs-studio/build_pw_vs1714_sdk22621 --config RelWithDebInfo
 node --test tests/LumiaPlugin.test.cjs
 ```
 
+## Isolated Motion Preview
+
+Configure the branch with `-DPULSEWEAVER_MOTION_PREVIEW=ON` and use a separate build directory such as `engine/obs-studio/build_motion_preview`. After building `obs-studio`, `pulse-weaver-core` and `pulse-weaver-sample-clock`, create the isolated installer and Lumia package with:
+
+```powershell
+packaging/Build-MotionPreview.ps1 -Version 1.13.0 -YouTubeDesktopClientJson <path>
+```
+
+The script emits the installer, clean portable payload, Lumia plugin and SHA-256 list under `artifacts/motion-preview-1.13.0`. The installer identity targets `%LOCALAPPDATA%\Programs\Pulse Weaver Motion Preview`, uses update channel `windows-motion-preview`, and the native controller API listens on 18765. It does not overwrite the normal Pulse Weaver installation.
+
 The executable is `engine/obs-studio/build_pw_vs1714_sdk22621/rundir/RelWithDebInfo/bin/64bit/PulseWeaverCore.exe`. It uses an isolated portable configuration. The StageExclusions regression requires Qt6 Core and libobs from this build; run its executable with the runtime directory as its sole argument and the runtime bin/64bit directory on PATH.
 
 Do not set compile-time confidential OAuth credentials for a public build. Pulse Weaver includes the public Twitch and Kick application IDs; Kick's client secret remains only in the hosted relay. YouTube registration is supplied at runtime through Action > Connections.

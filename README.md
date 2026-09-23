@@ -26,6 +26,8 @@ The current conservative minimum for a multi-output 1080p60 show is **Windows 10
 
 See [BUILD.md](BUILD.md). Native application source is in `engine/obs-studio`; optional Lumia plugin source is in `integrations/lumia-pulseweaver`. The P logo and native theme assets are included.
 
+The `codex/native-motion-engine` branch contains an isolated Motion Preview. It adds named camera close-ups and multi-source layouts, Stage-aware execution, conservative Move/Lumia import, and a shared controller surface for Lumia, LumiCon and Stream Deck. See [the product and implementation overview](docs/design/native-motion-overview.md).
+
 This repository starts with a clean source snapshot. Build outputs, personal configuration, credentials, logs and previous Git history are excluded.
 
 ## Licensing

@@ -7,8 +7,11 @@
     <Nullable>enable</Nullable>
     <ReleaseVersion Condition="'$(ReleaseVersion)' == ''">1.12.15</ReleaseVersion>
     <InstallerSuffix Condition="'$(InstallerSuffix)' == ''">BETA</InstallerSuffix>
+    <PayloadArchive Condition="'$(PayloadArchive)' == ''">..\..\dist\PulseWeaverStudio-v$(ReleaseVersion)-beta.zip</PayloadArchive>
     <AssemblyName>PulseWeaver-Setup-$(ReleaseVersion)-$(InstallerSuffix)</AssemblyName>
-    <Product>Pulse Weaver Streaming Studio Setup</Product>
+    <Product Condition="'$(PreviewChannel)' != 'true'">Pulse Weaver Streaming Studio Setup</Product>
+    <Product Condition="'$(PreviewChannel)' == 'true'">Pulse Weaver Motion Preview Setup</Product>
+    <DefineConstants Condition="'$(PreviewChannel)' == 'true'">$(DefineConstants);PULSE_MOTION_PREVIEW</DefineConstants>
     <Version>$(ReleaseVersion)</Version>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>none</DebugType>
@@ -16,7 +19,7 @@
     <ApplicationIcon>..\..\engine\obs-studio\frontend\cmake\windows\pulseweaver.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="..\..\dist\PulseWeaverStudio-v$(ReleaseVersion)-beta.zip"
+    <EmbeddedResource Include="$(PayloadArchive)"
                       LogicalName="PulseWeaver.Payload.zip"
                       Condition="'$(SkipPayloadEmbedding)' != 'true'" />
   </ItemGroup>

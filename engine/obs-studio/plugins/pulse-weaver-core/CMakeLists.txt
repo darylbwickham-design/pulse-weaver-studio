@@ -8,6 +8,8 @@ add_library(PulseWeaver::core ALIAS pulse-weaver-core)
 target_sources(
   pulse-weaver-core
   PRIVATE pulse-weaver-core.cpp
+          pulse-motion-engine.cpp
+          pulse-motion-engine.hpp
           pulse-overlay-alerts.cpp
           pulse-overlay-alerts.hpp
           pulse-overlay-renderer.cpp
@@ -24,6 +26,10 @@ target_link_libraries(
   pulse-weaver-core
   PRIVATE OBS::libobs OBS::frontend-api Qt::Widgets Qt::Network
 )
+
+if(PULSEWEAVER_MOTION_PREVIEW)
+  target_compile_definitions(pulse-weaver-core PRIVATE PULSEWEAVER_MOTION_PREVIEW=1)
+endif()
 
 if(OS_WINDOWS)
   target_link_libraries(pulse-weaver-core PRIVATE winhttp crypt32)

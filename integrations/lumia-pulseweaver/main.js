@@ -31,7 +31,7 @@ class PulseWeaverPlugin extends Plugin {
   configCandidates() {
     const configured = typeof this.settings.configPath === 'string' ? this.settings.configPath.trim() : '';
     const local = process.env.LOCALAPPDATA || '';
-    return [configured, local && path.join(local, 'Programs', 'Pulse Weaver', 'config', 'obs-studio', 'plugin_config', 'pulse-weaver-core', 'pulse-weaver.ini')].filter(Boolean);
+    return [configured, local && path.join(local, 'Programs', 'Pulse Weaver Motion Preview', 'config', 'obs-studio', 'plugin_config', 'pulse-weaver-core', 'pulse-weaver.ini')].filter(Boolean);
   }
   connectionToken() {
     const configured = typeof this.settings.apiToken === 'string' ? this.settings.apiToken.trim() : '';
@@ -48,7 +48,7 @@ class PulseWeaverPlugin extends Plugin {
     throw new Error('Start Pulse Weaver or set its configuration path in the plugin settings.');
   }
   endpoint(route) {
-    const port = Number(this.settings.port || 18755);
+    const port = Number(this.settings.port || 18765);
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid Pulse Weaver port.');
     if (!route.startsWith('/') || route.includes('..') || route.includes('\\')) throw new Error('Invalid operation route.');
     return `http://127.0.0.1:${port}/api/v1/lumia${route}`;
@@ -119,12 +119,14 @@ class PulseWeaverPlugin extends Plugin {
     if (this.values.get(name) === value) return;
     await this.lumia.setVariable(name, value); this.values.set(name, value);
   }
-  async setOptions(actionType, fieldKey, options) {
+  async setOptions(actionType, fieldKey, options, force = false) {
     options.sort((a,b) => a.label.localeCompare(b.label));
     const key = `${actionType}/${fieldKey}`, serialized = JSON.stringify(options);
-    if (this.options.get(key) === serialized) return;
-    await this.lumia.updateActionFieldOptions({ actionType, fieldKey, options });
+    if (!force && this.options.get(key) === serialized) return;
+    const updated = await this.lumia.updateActionFieldOptions({ actionType, fieldKey, options });
+    if (updated === false) { this.options.delete(key); return false; }
     this.options.set(key, serialized);
+    return true;
   }
   outputStatus(platform) {
     const outputs = Object.values(this.state?.outputs || {}).filter(value => value.platform === platform);
@@ -143,23 +145,42 @@ class PulseWeaverPlugin extends Plugin {
     if (!this.state) return;
     const updates = ['twitch','kick','youtube'].map(platform => this.setVariable(`${platform}_status`, this.outputStatus(platform).toUpperCase()));
     updates.push(this.setVariable('active_stage', this.state.activeStage || ''));
+    updates.push(this.setVariable('motion_status', String(this.state.motion?.execution?.state || (this.state.motion?.active ? 'running' : 'ready')).toUpperCase()));
+    updates.push(this.setVariable('motion_action', this.state.motion?.execution?.name || ''));
     const live = Object.values(this.state.outputs || {}).some(output => output.platform !== 'recording' && output.state === 'live');
     updates.push(this.setVariable('stream_status', live ? 'LIVE' : 'OFF'));
     updates.push(this.setVariable('recording_status', this.outputStatus('recording') === 'live' ? 'RECORDING' : this.outputStatus('recording').toUpperCase()));
     await Promise.all(updates);
   }
-  async refreshOptions() {
+  dynamicOptions(actionType) {
     const sources = this.state?.sources || [];
     const sourceOptions = sources.filter(source => source.audio).map(source => ({ label: source.name, value: source.id }));
     const mediaOptions = sources.filter(source => source.media).map(source => ({ label: source.name, value: source.id }));
     const items = sources.flatMap(scene => (scene.items || []).map(item => ({ label: `${scene.name} / ${item.name} [${item.itemId}]`, value: JSON.stringify({ source: scene.id, item: item.itemId }) })));
-    await Promise.all([
-      this.setOptions('select_stage', 'stage', (this.state?.stages || []).map(stage => ({ label: stage, value: stage }))),
-      this.setOptions('source_visibility', 'target', items),
-      this.setOptions('source_mute', 'source', sourceOptions),
-      this.setOptions('source_volume', 'source', sourceOptions),
-      this.setOptions('media_control', 'source', mediaOptions)
-    ]);
+    const definitions = {
+      select_stage: { fieldKey: 'stage', options: (this.state?.stages || []).map(stage => ({ label: stage, value: stage })) },
+      run_motion: { fieldKey: 'action', options: (this.state?.motionActions || []).map(action => ({ label: `${action.name}${action.stage ? ` · ${action.stage}` : ''}`, value: action.id })) },
+      source_visibility: { fieldKey: 'target', options: items },
+      source_mute: { fieldKey: 'source', options: sourceOptions },
+      source_volume: { fieldKey: 'source', options: sourceOptions },
+      media_control: { fieldKey: 'source', options: mediaOptions }
+    };
+    return definitions[actionType] || null;
+  }
+  async refreshOptions(force = false) {
+    const actionTypes = ['select_stage','run_motion','source_visibility','source_mute','source_volume','media_control'];
+    await Promise.all(actionTypes.map(actionType => {
+      const definition = this.dynamicOptions(actionType);
+      return this.setOptions(actionType, definition.fieldKey, definition.options, force);
+    }));
+  }
+  async refreshActionOptions(config = {}) {
+    const actionType = String(config.actionType || config.action?.type || '');
+    if (actionType && !this.dynamicOptions(actionType)) return;
+    await this.ensureState(true);
+    if (!actionType) return this.refreshOptions(true);
+    const definition = this.dynamicOptions(actionType);
+    return this.setOptions(actionType, definition.fieldKey, definition.options, true);
   }
   async consume(payload) {
     if (payload.kind === 'snapshot' || payload.kind === 'catalogue') {
@@ -172,6 +193,15 @@ class PulseWeaverPlugin extends Plugin {
     if (payload.kind !== 'event' || !this.state) return;
     let alert = payload.event;
     if (alert === 'stage_changed') this.state.activeStage = payload.stage || '';
+    if (alert === 'motion_catalogue_changed') {
+      this.state = await this.request('/state');
+      await this.refreshOptions(true);
+    }
+    if (alert === 'motion_state') {
+      this.state.motion ||= {};
+      this.state.motion.active = !['finished','failed','cancelled'].includes(payload.state);
+      this.state.motion.execution = this.state.motion.active ? { id: payload.executionId, action: payload.action, name: payload.name, state: payload.state } : null;
+    }
     if (alert === 'destination_state' || alert === 'recording_state') {
       this.state.outputs ||= {};
       this.state.outputs[payload.output || payload.platform] = payload;
@@ -275,6 +305,13 @@ class PulseWeaverPlugin extends Plugin {
       case 'select_stage': return this.request(`/stage?name=${encodeURIComponent(String(params.stage || ''))}`, 'POST');
       case 'next_stage': return this.request('/stage/next', 'POST');
       case 'previous_stage': return this.request('/stage/previous', 'POST');
+      case 'run_motion': {
+        if (!params.action) throw new Error('Choose a saved Pulse Weaver motion action.');
+        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        return this.request(`/motion/run?id=${encodeURIComponent(String(params.action))}&request=${encodeURIComponent(requestId)}`, 'POST');
+      }
+      case 'stop_motion': return this.request('/motion/stop', 'POST');
+      case 'restore_motion': return this.request('/motion/stop', 'POST');
       case 'start_recording': case 'stop_recording': {
         const start = action.type === 'start_recording';
         await this.request(`/record/${start ? 'start' : 'stop'}`, 'POST');
@@ -305,12 +342,12 @@ class PulseWeaverPlugin extends Plugin {
         for (const action of config.actions || []) last = await this.runAction(action);
         const message = last?.message || 'Operation completed.';
         await this.updateVariables(); await this.setVariable('last_result', message);
-        return { newlyPassedVariables: { pulseweavercontrol_result: message, pulseweavercontrol_active_stage: this.state?.activeStage || '' }, shouldStop: false };
+        return { newlyPassedVariables: { pulseweavermotionpreview_result: message, pulseweavermotionpreview_active_stage: this.state?.activeStage || '' }, shouldStop: false };
       } catch (error) {
         const message = error.message || String(error);
         await this.setVariable('last_result', message);
         await this.lumia.showToast({ type: 'error', message: `Pulse Weaver: ${message}` });
-        return { newlyPassedVariables: { pulseweavercontrol_result: message }, shouldStop: true };
+        return { newlyPassedVariables: { pulseweavermotionpreview_result: message }, shouldStop: true };
       }
     };
 	// Stop controls must not sit behind a start waiting for a network handshake.

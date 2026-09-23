@@ -5,6 +5,7 @@
 #include "../../shared/qt/PulseLumiaOutput.hpp"
 #include "../../shared/qt/PulseOutputBitrates.hpp"
 #include "pulse-lumia-bridge.hpp"
+#include "pulse-motion-engine.hpp"
 #include "pulse-overlay-runtime.hpp"
 #include "pulse-overlay-alerts.hpp"
 #include "pulse-runtime-safety.hpp"
@@ -2065,6 +2066,12 @@ public:
 			if (eventLog)
 				eventLog->append("<span style='color:#fb7185'>" + message.toHtmlEscaped() + "</span>");
 		});
+		motion = new PulseMotionEngine(this, QFileInfo(pulseSettingsPath()).dir().filePath("pulseweaver-motion-actions.json"),
+			[this](QJsonObject event) {
+				if (lumiaBridge) lumiaBridge->deliver(event);
+				const QString type = event.value("event").toString("motion_state");
+				publishEvent("pulseweaver", type, QString::fromUtf8(QJsonDocument(event).toJson(QJsonDocument::Compact)));
+			});
 		actionNetwork = new QNetworkAccessManager(this);
 		loadBotCommands();
 		buildTwitchTab();
@@ -2076,6 +2083,7 @@ public:
 		buildAutomationTab();
 		buildAiTab();
 		buildApiTab();
+		tabs->addTab(motion->createEditor(tabs), "MOTION");
 		/* Keep unfinished systems intact for continued development without
 		 * presenting them as operator-ready. Connections and stream metadata are
 		 * the only Action surfaces enabled in this preview. */
@@ -2094,7 +2102,7 @@ public:
 		tabs->addTab(comingSoonPage, "COMING SOON");
 		for (int index = 0; index < tabs->count(); ++index) {
 			const QString label = tabs->tabText(index);
-			tabs->setTabVisible(index, label == "CONNECTIONS" || label == "COMING SOON");
+			tabs->setTabVisible(index, label == "CONNECTIONS" || label == "MOTION" || label == "COMING SOON");
 		}
 		loadRules();
 		lumiaBridge = new PulseLumiaBridge(this, [this] { return lumiaStateJson(); });
@@ -2224,6 +2232,7 @@ public:
 	void onFrontendEvent(obs_frontend_event event)
 	{
 		if (lumiaBridge) lumiaBridge->frontendEvent(event);
+		if (motion) motion->frontendEvent(event);
 		switch (event) {
 		case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 			if (overlays) overlays->sceneCollectionLoaded();
@@ -2297,6 +2306,7 @@ private:
 	TwitchRuntime *twitch = nullptr;
 	KickRuntime *kick = nullptr;
 	PulseOverlayRuntime *overlays = nullptr;
+	PulseMotionEngine *motion = nullptr;
 	QNetworkAccessManager *actionNetwork = nullptr;
 	QLabel *twitchAccount = nullptr;
 	QLabel *twitchStatus = nullptr;
@@ -2316,7 +2326,11 @@ private:
 	QJsonObject lastAiRestore;
 	QTreeWidget *moduleTree = nullptr;
 	QTcpServer *api = nullptr;
+#if defined(PULSEWEAVER_MOTION_PREVIEW)
+	quint16 apiPort = 18765;
+#else
 	quint16 apiPort = 18755;
+#endif
 	QString apiToken;
 	bool refreshing = false;
 	std::vector<Rule> rules;
@@ -4278,12 +4292,18 @@ private:
 		QString status;
 		if (auto *label = mainWindow ? mainWindow->findChild<QLabel *>("PulseWeaverDestinationStatus") : nullptr)
 			status = label->text();
-		return QJsonObject{{"product", "Pulse Weaver"}, {"connected", mainWindow != nullptr},
+		QJsonObject state{{"product", "Pulse Weaver"}, {"connected", mainWindow != nullptr},
 			{"live", mainWindow && mainWindow->property("pulseWeaverAnyLive").toBool()},
 			{"recording", mainWindow && mainWindow->property("pulseWeaverRecordingActive").toBool()},
 			{"activeStage", stageSelector ? pulseLumiaStageName(stageSelector, stageSelector->currentIndex()) : QString()},
 			{"activeStageIndex", stageSelector ? stageSelector->currentIndex() : -1},
 			{"stages", stages}, {"destinations", destinations}, {"status", status}};
+		if (motion) {
+			const QJsonObject motionState = motion->stateJson();
+			state.insert("motionActions", motionState.value("actions"));
+			state.insert("motion", motionState);
+		}
+		return state;
 	}
 
 	void startApi()
@@ -4347,13 +4367,15 @@ private:
 					const QUrl url = QUrl::fromEncoded(first[1]);
 					const QUrlQuery query(url);
 					const QByteArray body = request.mid(request.indexOf("\r\n\r\n") + 4);
+					QJsonObject input;
 					if (method == "POST" && !body.isEmpty()) {
 						QJsonParseError error;
-						const auto input = QJsonDocument::fromJson(body, &error);
-						if (error.error != QJsonParseError::NoError || !input.isObject()) {
+						const auto document = QJsonDocument::fromJson(body, &error);
+						if (error.error != QJsonParseError::NoError || !document.isObject()) {
 							respond(socket, 400, {{"error", "Expected a JSON object"}});
 							return;
 						}
+						input = document.object();
 					}
 					const QString path = url.path();
 					if (integrationClient == "lumia-plugin" && !path.startsWith("/api/v1/lumia/")) {
@@ -4378,6 +4400,8 @@ private:
 						respond(socket, 200, QJsonObject{{"actions", moduleJson()}});
 					else if (method == "GET" && path == "/api/v1/lumia/state")
 						respond(socket, 200, lumiaBridge->stateJson());
+					else if (method == "GET" && (path == "/api/v1/lumia/motion" || path == "/api/v1/motion"))
+						respond(socket, 200, motion ? motion->stateJson() : QJsonObject{{"actions", QJsonArray{}}});
 					else if (method == "GET" && path == "/api/v1/lumia/events") {
 						socket->setProperty("pulseLumiaSubscribed", true);
 						lumiaBridge->subscribe(socket);
@@ -4423,6 +4447,23 @@ private:
 						result.insert("ok", target >= 0);
 						result.insert("message", target >= 0 ? "Stage changed to “" + pulseLumiaStageName(selector, target) + "”." : "Stage was not found.");
 						respond(socket, target >= 0 ? 200 : 404, result);
+					}
+					else if (method == "POST" && (path == "/api/v1/lumia/motion/run" || path == "/api/v1/motion/run")) {
+						const QString action = query.queryItemValue("id", QUrl::FullyDecoded).isEmpty() ?
+							query.queryItemValue("name", QUrl::FullyDecoded) : query.queryItemValue("id", QUrl::FullyDecoded);
+						const QJsonObject result = motion ? motion->runAction(action, query.queryItemValue("request", QUrl::FullyDecoded)) :
+							QJsonObject{{"ok", false}, {"message", "Motion is unavailable."}};
+						respond(socket, result.value("ok").toBool() ? 202 : 400, result);
+					}
+					else if (method == "POST" && (path == "/api/v1/lumia/motion/stop" || path == "/api/v1/motion/stop")) {
+						const QJsonObject result = motion ? motion->stopAction(query.queryItemValue("execution", QUrl::FullyDecoded), true) :
+							QJsonObject{{"ok", false}, {"message", "Motion is unavailable."}};
+						respond(socket, result.value("ok").toBool() ? 202 : 400, result);
+					}
+					else if (method == "POST" && path == "/api/v1/motion/import") {
+						const QJsonObject result = motion ? motion->importDocument(input, integrationClient) :
+							QJsonObject{{"ok", false}, {"message", "Motion is unavailable."}};
+						respond(socket, result.value("ok").toBool() ? 200 : 400, result);
 					}
 					else if (method == "POST" && (path == "/api/v1/lumia/go-live" ||
 						 path == "/api/v1/lumia/end-stream")) {

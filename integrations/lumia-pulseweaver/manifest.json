@@ -1,9 +1,9 @@
 {
-  "id": "pulseweavercontrol",
-  "name": "Pulse Weaver",
-  "version": "1.1.3",
+  "id": "pulseweavermotionpreview",
+  "name": "Pulse Weaver Motion Preview",
+  "version": "1.2.0",
   "author": "Pulse Weaver",
-  "description": "Operate your existing Pulse Weaver show, individual platforms, sources, audio and media. Receive live operator alerts. Requires Pulse Weaver 1.11.42+.",
+  "description": "Operate your Pulse Weaver show, Stages, native motion actions, sources, audio and media from Lumia Stream or LumiCon.",
   "lumiaVersion": "^9.0.0",
   "category": "apps",
   "license": "MIT",
@@ -14,12 +14,12 @@
         "key": "port",
         "label": "Pulse Weaver port",
         "type": "number",
-        "defaultValue": 18755,
+        "defaultValue": 18765,
         "validation": {
           "min": 1024,
           "max": 65535
         },
-        "helperText": "Leave this at 18755 unless Pulse Weaver reports a different local port."
+        "helperText": "The Motion Preview uses 18765 so it can coexist with the normal Pulse Weaver installation."
       },
       {
         "key": "apiToken",
@@ -130,6 +130,33 @@
         "type": "previous_stage",
         "label": "Previous Stage",
         "description": "Activate the previous existing Stage.",
+        "fields": []
+      },
+      {
+        "type": "run_motion",
+        "label": "Run Saved Motion Action",
+        "description": "Run one action created in Pulse Weaver. Its Stage change, animation, hold and restore behaviour are handled as one operation.",
+        "fields": [
+          {
+            "key": "action",
+            "label": "Motion action",
+            "type": "select",
+            "required": true,
+            "dynamicOptions": true,
+            "options": []
+          }
+        ]
+      },
+      {
+        "type": "stop_motion",
+        "label": "Stop and Restore Motion",
+        "description": "Stop the running native motion action and restore only the sources it controls.",
+        "fields": []
+      },
+      {
+        "type": "restore_motion",
+        "label": "Restore Last Motion Layout",
+        "description": "Restore the source state saved before the most recently completed layout action.",
         "fields": []
       },
       {
@@ -312,6 +339,18 @@
       },
       {
         "name": "active_stage",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": ""
+      },
+      {
+        "name": "motion_status",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": "READY"
+      },
+      {
+        "name": "motion_action",
         "system": true,
         "origin": "pulseweaver",
         "value": ""
