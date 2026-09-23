@@ -13,9 +13,11 @@ GETTING STARTED
 1. Install PulseWeaver-Motion-Preview-Setup-1.13.0.exe.
 2. Open the separate Pulse Weaver Motion Preview shortcut.
 3. Open Action > Motion.
-4. Choose NEW CLOSE-UP or NEW LAYOUT, use ordinary names, and save it.
-5. Use RUN / PREVIEW ON OUTPUT. This changes the real program output.
-6. Import PulseWeaver-Motion-Preview-Lumia-1.2.0.lumiaplugin in Lumia Stream
+4. Choose NEW CLOSE-UP or NEW LAYOUT. Click sources directly on the live canvas;
+   for a close-up, drag the crosshair over the subject and use the zoom slider.
+5. Use an ordinary action name and save it.
+6. Use RUN / PREVIEW ON OUTPUT. This changes the real program output.
+7. Import PulseWeaver-Motion-Preview-Lumia-1.2.0.lumiaplugin in Lumia Stream
    to run the same saved action from Lumia or LumiCon.
 
 STREAM DECK

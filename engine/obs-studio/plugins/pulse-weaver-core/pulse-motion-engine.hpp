@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QPointF>
 #include <QPointer>
 #include <QTimer>
 #include <QWidget>
@@ -23,6 +24,7 @@ class QListWidget;
 class QPushButton;
 class QSpinBox;
 class QTreeWidget;
+class PulseMotionCanvas;
 
 class PulseMotionEngine final : public QObject {
 public:
@@ -107,10 +109,13 @@ private:
 	QPointer<QCheckBox> restoreField;
 	QPointer<QCheckBox> returnStageField;
 	QPointer<QTreeWidget> itemTree;
+	QPointer<PulseMotionCanvas> visualCanvas;
 	QPointer<QLabel> summaryLabel;
 	QPointer<QLabel> statusLabel;
 	QPointer<QPushButton> saveButton;
 	QString editingId;
+	QPointF editorFocus{0.5, 0.42};
+	qint64 visualSelectedItem = -1;
 
 	void load();
 	void save();
@@ -129,6 +134,8 @@ private:
 	void deleteEditorAction();
 	void importFromFile();
 	void refreshSummary();
+	void syncVisualCanvas();
+	void visualCanvasInteraction(qint64 itemId, const QPointF &focus, bool toggleLayoutItem);
 
 	QJsonArray sceneCatalogue() const;
 	QJsonArray itemCatalogue(const QString &container) const;

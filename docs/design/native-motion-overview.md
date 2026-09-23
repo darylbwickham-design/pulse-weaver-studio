@@ -37,20 +37,20 @@ The `codex/native-motion-engine` preview implements:
 
 ## Editor concept
 
-The Motion page uses a two-column layout. Saved actions are on the left. One plain form is on the right.
+The Motion page uses a two-column layout. Saved actions are on the left. A live visual canvas and its action controls are on the right.
 
 The form asks, in order:
 
 1. What should this be called?
 2. What should happen?
 3. Which Stage owns it?
-4. Which scene, group, camera or sources should it control?
+4. Which scene, group, camera or sources should it control? The user answers by clicking the live canvas.
 5. How quickly should it move and how long should it stay?
 6. Should it restore or return to the previous Stage?
 
-A sentence below the form describes the result before saving. Editing never changes output. `RUN / PREVIEW ON OUTPUT` is explicitly labelled because it does.
+A close-up uses a draggable crosshair placed directly over the subject and a cyan frame shows the resulting crop as the zoom slider changes. Layout mode outlines controlled sources and lets users include or exclude them by clicking their frames. A sentence below the canvas describes the result before saving. Editing never changes output. `RUN / PREVIEW ON OUTPUT` is explicitly labelled because it does.
 
-Advanced details belong behind an optional section in the next iteration: easing curve, focus point, per-source delay, visibility timing, collision policy and nested groups.
+Advanced details belong behind an optional section in the next iteration: easing curve, per-source delay, visibility timing, collision policy and nested groups.
 
 ## Execution contract
 
@@ -131,7 +131,7 @@ No configuration, source media, credentials, logs or recovery backups are packag
 ## Next iterations
 
 1. Replace transition-duration readiness with explicit Stage route completion signals from the frontend.
-2. Add visible focus-point selection for close-ups.
+2. Add draft drag and resize for layout targets without changing live output.
 3. Add easing choices and per-source delay with safe defaults.
 4. Add a capture/update comparison before overwriting a layout.
 5. Add source-set conflict analysis and compatible concurrent actions.

@@ -4,6 +4,11 @@
 
 #include <obs.h>
 
+#include <graphics/matrix4.h>
+#include <graphics/vec3.h>
+#include <graphics/vec4.h>
+
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
@@ -21,17 +26,35 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPaintEngine>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QSlider>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QUuid>
 #include <QVBoxLayout>
+#include <QWindow>
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <utility>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 
 namespace {
 
@@ -67,6 +90,346 @@ QJsonObject jsonObject(const QJsonValue &value)
 }
 
 } // namespace
+
+namespace {
+
+QPolygonF motionItemPolygon(obs_sceneitem_t *item)
+{
+	QPolygonF result;
+	if (!item) return result;
+	matrix4 transform;
+	obs_sceneitem_get_box_transform(item, &transform);
+	for (const QPointF &corner : {QPointF(0, 0), QPointF(1, 0), QPointF(1, 1), QPointF(0, 1)}) {
+		vec3 value;
+		vec3_set(&value, float(corner.x()), float(corner.y()), 0.0f);
+		vec3_transform(&value, &value, &transform);
+		result << QPointF(value.x, value.y);
+	}
+	return result;
+}
+
+bool motionItemContains(obs_sceneitem_t *item, const QPointF &canvasPoint)
+{
+	if (!item || !obs_sceneitem_visible(item)) return false;
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	if (!source || !(obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO)) return false;
+	matrix4 transform;
+	obs_sceneitem_get_box_transform(item, &transform);
+	if (!matrix4_inv(&transform, &transform)) return false;
+	vec3 point;
+	vec3_set(&point, float(canvasPoint.x()), float(canvasPoint.y()), 0.0f);
+	vec3_transform(&point, &point, &transform);
+	return point.x >= 0.0f && point.x <= 1.0f && point.y >= 0.0f && point.y <= 1.0f;
+}
+
+QPointF motionItemPoint(obs_sceneitem_t *item, const QPointF &canvasPoint)
+{
+	if (!item) return {0.5, 0.5};
+	matrix4 transform;
+	obs_sceneitem_get_box_transform(item, &transform);
+	if (!matrix4_inv(&transform, &transform)) return {0.5, 0.5};
+	vec3 point;
+	vec3_set(&point, float(canvasPoint.x()), float(canvasPoint.y()), 0.0f);
+	vec3_transform(&point, &point, &transform);
+	return {std::clamp(double(point.x), 0.0, 1.0), std::clamp(double(point.y), 0.0, 1.0)};
+}
+
+QPointF motionCanvasPoint(obs_sceneitem_t *item, const QPointF &itemPoint)
+{
+	if (!item) return {};
+	matrix4 transform;
+	obs_sceneitem_get_box_transform(item, &transform);
+	vec3 point;
+	vec3_set(&point, float(itemPoint.x()), float(itemPoint.y()), 0.0f);
+	vec3_transform(&point, &point, &transform);
+	return {point.x, point.y};
+}
+
+void motionDrawLines(const QPolygonF &points, uint32_t color, bool loop = true)
+{
+	if (points.size() < 2) return;
+	gs_render_start(true);
+	const qsizetype edges = loop ? points.size() : points.size() / 2;
+	for (qsizetype index = 0; index < edges; ++index) {
+		const QPointF &from = loop ? points.at(index) : points.at(index * 2);
+		const QPointF &to = loop ? points.at((index + 1) % points.size()) : points.at(index * 2 + 1);
+		gs_vertex2f(float(from.x()), float(from.y()));
+		gs_vertex2f(float(to.x()), float(to.y()));
+	}
+	gs_vertbuffer_t *lines = gs_render_save();
+	gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_SOLID);
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(effect, "color");
+	gs_effect_set_color(colorParam, color);
+	gs_load_vertexbuffer(lines);
+	while (gs_effect_loop(effect, "Solid")) gs_draw(GS_LINES, 0, 0);
+	gs_load_vertexbuffer(nullptr);
+	gs_vertexbuffer_destroy(lines);
+}
+
+void motionDrawSolid(float left, float top, float right, float bottom, uint32_t color)
+{
+	gs_render_start(true);
+	gs_vertex2f(left, top);
+	gs_vertex2f(left, bottom);
+	gs_vertex2f(right, top);
+	gs_vertex2f(right, bottom);
+	gs_vertbuffer_t *quad = gs_render_save();
+	gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_SOLID);
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(effect, "color");
+	gs_effect_set_color(colorParam, color);
+	gs_load_vertexbuffer(quad);
+	while (gs_effect_loop(effect, "Solid")) gs_draw(GS_TRISTRIP, 0, 0);
+	gs_load_vertexbuffer(nullptr);
+	gs_vertexbuffer_destroy(quad);
+}
+
+} // namespace
+
+class PulseMotionCanvas final : public QWidget {
+public:
+	using Interaction = std::function<void(qint64, const QPointF &, bool)>;
+
+	explicit PulseMotionCanvas(QWidget *parent = nullptr) : QWidget(parent)
+	{
+		setAttribute(Qt::WA_PaintOnScreen);
+		setAttribute(Qt::WA_StaticContents);
+		setAttribute(Qt::WA_NoSystemBackground);
+		setAttribute(Qt::WA_OpaquePaintEvent);
+		setAttribute(Qt::WA_DontCreateNativeAncestors);
+		setAttribute(Qt::WA_NativeWindow);
+		setMinimumHeight(300);
+		setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+		setCursor(Qt::CrossCursor);
+	}
+
+	~PulseMotionCanvas() override { display = nullptr; }
+
+	void setMotionState(QString container, qint64 selected, QSet<qint64> controlled, bool punch,
+		const QPointF &focus, double zoom)
+	{
+		std::lock_guard lock(stateMutex);
+		state.container = container.toUtf8();
+		state.selected = selected;
+		state.controlled = std::move(controlled);
+		state.punch = punch;
+		state.focus = focus;
+		state.zoom = std::clamp(zoom, 1.0, 4.0);
+	}
+
+	Interaction interacted;
+
+protected:
+	QPaintEngine *paintEngine() const override { return nullptr; }
+
+	void paintEvent(QPaintEvent *event) override
+	{
+		createDisplay();
+		QWidget::paintEvent(event);
+	}
+
+	void resizeEvent(QResizeEvent *event) override
+	{
+		QWidget::resizeEvent(event);
+		createDisplay();
+		if (display) {
+			const QSize pixels = pixelSize();
+			obs_display_resize(display, uint32_t(pixels.width()), uint32_t(pixels.height()));
+		}
+	}
+
+	void mousePressEvent(QMouseEvent *event) override
+	{
+		if (event->button() != Qt::LeftButton) return;
+		const State snapshot = snapshotState();
+		const QSize canvas = sourceSize(snapshot.container);
+		const QRectF surface = canvasRect(canvas);
+		if (!surface.contains(event->position())) return;
+		const QPointF point((event->position().x() - surface.left()) * canvas.width() / surface.width(),
+			(event->position().y() - surface.top()) * canvas.height() / surface.height());
+		const qint64 itemId = topItemAt(snapshot.container, point);
+		if (itemId < 0) return;
+		const QPointF focus = itemPoint(snapshot.container, itemId, point);
+		draggingFocus = snapshot.punch;
+		dragItem = itemId;
+		if (draggingFocus) grabMouse();
+		if (interacted) interacted(itemId, focus, !snapshot.punch);
+	}
+
+	void mouseMoveEvent(QMouseEvent *event) override
+	{
+		if (!draggingFocus || dragItem < 0) return;
+		const State snapshot = snapshotState();
+		const QSize canvas = sourceSize(snapshot.container);
+		const QRectF surface = canvasRect(canvas);
+		if (surface.isEmpty()) return;
+		const QPointF point((event->position().x() - surface.left()) * canvas.width() / surface.width(),
+			(event->position().y() - surface.top()) * canvas.height() / surface.height());
+		if (interacted) interacted(dragItem, itemPoint(snapshot.container, dragItem, point), false);
+	}
+
+	void mouseReleaseEvent(QMouseEvent *event) override
+	{
+		if (event->button() != Qt::LeftButton) return;
+		draggingFocus = false;
+		dragItem = -1;
+		if (mouseGrabber() == this) releaseMouse();
+	}
+
+private:
+	struct State {
+		QByteArray container;
+		qint64 selected = -1;
+		QSet<qint64> controlled;
+		bool punch = true;
+		QPointF focus{0.5, 0.42};
+		double zoom = 1.5;
+	};
+	mutable std::mutex stateMutex;
+	State state;
+	OBSDisplay display;
+	bool draggingFocus = false;
+	qint64 dragItem = -1;
+
+	State snapshotState() const
+	{
+		std::lock_guard lock(stateMutex);
+		return state;
+	}
+
+	QSize pixelSize() const
+	{
+		const qreal scale = devicePixelRatioF();
+		return QSize(std::max(1, qRound(width() * scale)), std::max(1, qRound(height() * scale)));
+	}
+
+	static QSize sourceSize(const QByteArray &container)
+	{
+		OBSSourceAutoRelease source = obs_get_source_by_name(container.constData());
+		int width = source ? int(obs_source_get_width(source)) : 0;
+		int height = source ? int(obs_source_get_height(source)) : 0;
+		if (width <= 0 || height <= 0) {
+			obs_video_info info{};
+			if (obs_get_video_info(&info)) {
+				width = int(info.base_width);
+				height = int(info.base_height);
+			}
+		}
+		return {std::max(1, width), std::max(1, height)};
+	}
+
+	QRectF canvasRect(const QSize &canvas) const
+	{
+		if (canvas.isEmpty()) return {};
+		const QRectF available(contentsRect());
+		const qreal scale = std::min(available.width() / canvas.width(), available.height() / canvas.height());
+		const QSizeF fitted(canvas.width() * scale, canvas.height() * scale);
+		return QRectF(QPointF((available.width() - fitted.width()) / 2.0,
+			(available.height() - fitted.height()) / 2.0), fitted);
+	}
+
+	static obs_scene_t *sceneFor(obs_source_t *source)
+	{
+		obs_scene_t *scene = source ? obs_scene_from_source(source) : nullptr;
+		return !scene && source ? obs_group_from_source(source) : scene;
+	}
+
+	static qint64 topItemAt(const QByteArray &container, const QPointF &point)
+	{
+		OBSSourceAutoRelease source = obs_get_source_by_name(container.constData());
+		obs_scene_t *scene = sceneFor(source);
+		if (!scene) return -1;
+		struct Hits { QPointF point; std::vector<qint64> ids; } hits{point, {}};
+		obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
+			auto &hits = *static_cast<Hits *>(opaque);
+			if (motionItemContains(item, hits.point)) hits.ids.push_back(obs_sceneitem_get_id(item));
+			return true;
+		}, &hits);
+		return hits.ids.empty() ? -1 : hits.ids.back();
+	}
+
+	static QPointF itemPoint(const QByteArray &container, qint64 itemId, const QPointF &point)
+	{
+		OBSSourceAutoRelease source = obs_get_source_by_name(container.constData());
+		obs_scene_t *scene = sceneFor(source);
+		obs_sceneitem_t *item = scene ? obs_scene_find_sceneitem_by_id(scene, itemId) : nullptr;
+		return motionItemPoint(item, point);
+	}
+
+	void createDisplay()
+	{
+		if (display || !windowHandle() || !windowHandle()->isExposed()) return;
+		const QSize pixels = pixelSize();
+		gs_init_data info{};
+		info.cx = uint32_t(pixels.width());
+		info.cy = uint32_t(pixels.height());
+		info.format = GS_BGRA;
+		info.zsformat = GS_ZS_NONE;
+#ifdef _WIN32
+		info.window.hwnd = reinterpret_cast<HWND>(windowHandle()->winId());
+#else
+		return;
+#endif
+		display = obs_display_create(&info, 0xFF0B0712);
+		if (display) obs_display_add_draw_callback(display, &PulseMotionCanvas::render, this);
+	}
+
+	static void render(void *opaque, uint32_t displayWidth, uint32_t displayHeight)
+	{
+		auto *canvas = static_cast<PulseMotionCanvas *>(opaque);
+		const State snapshot = canvas->snapshotState();
+		OBSSourceAutoRelease source = obs_get_source_by_name(snapshot.container.constData());
+		vec4 clearColor;
+		vec4_set(&clearColor, 0.015f, 0.01f, 0.03f, 1.0f);
+		gs_clear(GS_CLEAR_COLOR, &clearColor, 0.0f, 0);
+		if (!source || !displayWidth || !displayHeight) return;
+		const QSize sourcePixels = sourceSize(snapshot.container);
+		const uint32_t canvasWidth = uint32_t(sourcePixels.width());
+		const uint32_t canvasHeight = uint32_t(sourcePixels.height());
+		const float scale = std::min(float(displayWidth) / canvasWidth, float(displayHeight) / canvasHeight);
+		const int fittedWidth = int(canvasWidth * scale);
+		const int fittedHeight = int(canvasHeight * scale);
+		const int left = (int(displayWidth) - fittedWidth) / 2;
+		const int top = (int(displayHeight) - fittedHeight) / 2;
+		gs_viewport_push();
+		gs_projection_push();
+		gs_ortho(0.0f, float(canvasWidth), 0.0f, float(canvasHeight), -100.0f, 100.0f);
+		gs_set_viewport(left, top, fittedWidth, fittedHeight);
+		motionDrawSolid(0, 0, float(canvasWidth), float(canvasHeight), 0xFF000000);
+		obs_source_video_render(source);
+		obs_scene_t *scene = sceneFor(source);
+		if (scene) {
+			for (qint64 id : snapshot.controlled) {
+				obs_sceneitem_t *item = obs_scene_find_sceneitem_by_id(scene, id);
+				if (item) motionDrawLines(motionItemPolygon(item), 0xFFF3D33E);
+			}
+			obs_sceneitem_t *selected = snapshot.selected >= 0 ?
+				obs_scene_find_sceneitem_by_id(scene, snapshot.selected) : nullptr;
+			if (selected) {
+				motionDrawLines(motionItemPolygon(selected), 0xFFFF4BD8);
+				if (snapshot.punch) {
+					const double regionWidth = 1.0 / snapshot.zoom;
+					const double regionHeight = 1.0 / snapshot.zoom;
+					const double regionLeft = std::clamp(snapshot.focus.x() - regionWidth / 2.0, 0.0, 1.0 - regionWidth);
+					const double regionTop = std::clamp(snapshot.focus.y() - regionHeight / 2.0, 0.0, 1.0 - regionHeight);
+					QPolygonF region;
+					for (const QPointF &point : {QPointF(regionLeft, regionTop),
+						QPointF(regionLeft + regionWidth, regionTop),
+						QPointF(regionLeft + regionWidth, regionTop + regionHeight),
+						QPointF(regionLeft, regionTop + regionHeight)})
+						region << motionCanvasPoint(selected, point);
+					motionDrawLines(region, 0xFF5CFFFF);
+					const QPointF focus = motionCanvasPoint(selected, snapshot.focus);
+					const float radius = std::max(8.0f, 12.0f / scale);
+					motionDrawLines({focus + QPointF(-radius, 0), focus + QPointF(radius, 0),
+						focus + QPointF(0, -radius), focus + QPointF(0, radius)}, 0xFFFFFFFF, false);
+				}
+			}
+		}
+		gs_reset_viewport();
+		gs_projection_pop();
+		gs_viewport_pop();
+	}
+};
 
 PulseMotionEngine::PulseMotionEngine(QObject *parent, QString path, EventCallback callback)
 	: QObject(parent), storagePath(std::move(path)), eventCallback(std::move(callback))
@@ -242,23 +605,88 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	restoreField = new QCheckBox("Restore the original framing when finished");
 	restoreField->setChecked(true);
 	returnStageField = new QCheckBox("Return to the previous Stage afterwards");
+	policyField->setVisible(false);
+	auto *policyCards = new QWidget;
+	auto *policyLayout = new QHBoxLayout(policyCards);
+	policyLayout->setContentsMargins(0, 0, 0, 0);
+	policyLayout->setSpacing(6);
+	auto *policyGroup = new QButtonGroup(policyCards);
+	policyGroup->setExclusive(true);
+	for (const auto &[label, value] : std::initializer_list<std::pair<QString, QString>>{
+			{"GO TO STAGE\nthen move", "switch"}, {"STAGE ONLY\notherwise stop", "only"},
+			{"CURRENT STAGE\nmove here", "current"}}) {
+		auto *choice = new QToolButton;
+		choice->setText(label);
+		choice->setCheckable(true);
+		choice->setProperty("motionPolicy", value);
+		choice->setToolButtonStyle(Qt::ToolButtonTextOnly);
+		choice->setMinimumHeight(54);
+		choice->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+		choice->setChecked(value == "switch");
+		choice->setStyleSheet("QToolButton{border:1px solid #334155;border-radius:8px;padding:7px;background:#101827;color:#cbd5e1;}"
+			"QToolButton:checked{border:2px solid #22d3ee;background:#172033;color:white;}");
+		policyGroup->addButton(choice);
+		policyLayout->addWidget(choice);
+		connect(choice, &QToolButton::clicked, this, [this, value] {
+			const int row = policyField ? policyField->findData(value) : -1;
+			if (row >= 0) policyField->setCurrentIndex(row);
+		});
+	}
+	connect(policyField, &QComboBox::currentIndexChanged, policyCards, [this, policyGroup] {
+		for (QAbstractButton *button : policyGroup->buttons())
+			button->setChecked(button->property("motionPolicy").toString() == policyField->currentData().toString());
+	});
+
+	auto visualRange = [](QSpinBox *spin) {
+		auto *host = new QWidget;
+		auto *layout = new QHBoxLayout(host);
+		layout->setContentsMargins(0, 0, 0, 0);
+		auto *slider = new QSlider(Qt::Horizontal);
+		slider->setRange(spin->minimum(), spin->maximum());
+		slider->setValue(spin->value());
+		layout->addWidget(slider, 1);
+		layout->addWidget(spin);
+		QObject::connect(slider, &QSlider::valueChanged, spin, &QSpinBox::setValue);
+		QObject::connect(spin, &QSpinBox::valueChanged, slider, &QSlider::setValue);
+		return host;
+	};
 	form->addRow("Action name", nameField);
 	form->addRow("What should happen?", kindField);
-	form->addRow("Stage behaviour", policyField);
+	form->addRow("When this button is pressed", policyCards);
 	form->addRow("Assigned Stage", stageField);
 	form->addRow("Scene or group", sceneField);
 	form->addRow("Camera / source", sourceField);
-	form->addRow("How close?", zoomField);
-	form->addRow("Movement time", durationField);
-	form->addRow("Stay close for", holdField);
+	form->addRow("How close?", visualRange(zoomField));
+	form->addRow("Movement time", visualRange(durationField));
+	form->addRow("Stay close for", visualRange(holdField));
 	form->addRow("", restoreField);
 	form->addRow("", returnStageField);
 	detailsLayout->addLayout(form);
 
+	auto *canvasCard = new QFrame;
+	canvasCard->setObjectName("PulseWeaverCard");
+	canvasCard->setStyleSheet("QFrame#PulseWeaverCard{border:1px solid #263247;border-radius:10px;background:#080b14;}");
+	auto *canvasLayout = new QVBoxLayout(canvasCard);
+	canvasLayout->setContentsMargins(10, 8, 10, 10);
+	canvasLayout->setSpacing(6);
+	auto *canvasHeading = new QLabel("LIVE CANVAS  ·  CLICK THE SOURCE YOU WANT TO CONTROL");
+	canvasHeading->setStyleSheet("font-weight:700;color:#67e8f9;");
+	canvasLayout->addWidget(canvasHeading);
+	auto *canvasHelp = new QLabel("Close-up: click or drag the crosshair over the face.  Layout: click source frames to include or exclude them.");
+	canvasHelp->setWordWrap(true);
+	canvasHelp->setObjectName("Muted");
+	canvasLayout->addWidget(canvasHelp);
+	visualCanvas = new PulseMotionCanvas;
+	visualCanvas->interacted = [this](qint64 itemId, const QPointF &focus, bool toggle) {
+		visualCanvasInteraction(itemId, focus, toggle);
+	};
+	canvasLayout->addWidget(visualCanvas, 1);
+	detailsLayout->addWidget(canvasCard, 1);
+
 	itemTree = new QTreeWidget;
-	itemTree->setHeaderLabels({"CONTROL", "SOURCE", "CURRENT STATE"});
+	itemTree->setHeaderLabels({"IN LAYOUT", "SOURCE", "CURRENT STATE"});
 	itemTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-	itemTree->setMinimumHeight(145);
+	itemTree->setMaximumHeight(170);
 	detailsLayout->addWidget(itemTree);
 	summaryLabel = new QLabel;
 	summaryLabel->setWordWrap(true);
@@ -280,7 +708,11 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	statusLabel->setWordWrap(true);
 	statusLabel->setObjectName("Muted");
 	detailsLayout->addWidget(statusLabel);
-	splitter->addWidget(details);
+	auto *detailsScroll = new QScrollArea;
+	detailsScroll->setWidgetResizable(true);
+	detailsScroll->setFrameShape(QFrame::NoFrame);
+	detailsScroll->setWidget(details);
+	splitter->addWidget(detailsScroll);
 	splitter->setStretchFactor(1, 1);
 
 	connect(newPunch, &QPushButton::clicked, this, [this] {
@@ -298,16 +730,24 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 		if (!item) return;
 		loadActionIntoEditor(actionByIdentity(item->data(Qt::UserRole).toString()));
 	});
-	connect(kindField, &QComboBox::currentIndexChanged, this, [this] { populateItems(); refreshSummary(); });
+	connect(kindField, &QComboBox::currentIndexChanged, this, [this] { populateItems(); refreshSummary(); syncVisualCanvas(); });
 	connect(policyField, &QComboBox::currentIndexChanged, this, [this] { refreshSummary(); });
 	connect(stageField, &QComboBox::currentIndexChanged, this, [this] { refreshSummary(); });
-	connect(sceneField, &QComboBox::currentIndexChanged, this, [this] { populateSources(); populateItems(); refreshSummary(); });
-	connect(sourceField, &QComboBox::currentIndexChanged, this, [this] { refreshSummary(); });
-	connect(zoomField, &QSpinBox::valueChanged, this, [this] { refreshSummary(); });
+	connect(sceneField, &QComboBox::currentIndexChanged, this, [this] {
+		visualSelectedItem = -1;
+		if (itemTree) itemTree->clear();
+		populateSources();
+		populateItems();
+		refreshSummary();
+		syncVisualCanvas();
+	});
+	connect(sourceField, &QComboBox::currentIndexChanged, this, [this] { refreshSummary(); syncVisualCanvas(); });
+	connect(zoomField, &QSpinBox::valueChanged, this, [this] { refreshSummary(); syncVisualCanvas(); });
 	connect(durationField, &QSpinBox::valueChanged, this, [this] { refreshSummary(); });
 	connect(holdField, &QSpinBox::valueChanged, this, [this] { refreshSummary(); });
 	connect(restoreField, &QCheckBox::toggled, this, [this] { refreshSummary(); });
 	connect(returnStageField, &QCheckBox::toggled, this, [this] { refreshSummary(); });
+	connect(itemTree, &QTreeWidget::itemChanged, this, [this] { refreshSummary(); syncVisualCanvas(); });
 	connect(saveButton, &QPushButton::clicked, this, [this] { saveEditorAction(); });
 	connect(remove, &QPushButton::clicked, this, [this] { deleteEditorAction(); });
 	connect(run, &QPushButton::clicked, this, [this] {
@@ -346,6 +786,7 @@ void PulseMotionEngine::refreshEditor()
 	populateSources();
 	populateItems();
 	refreshSummary();
+	syncVisualCanvas();
 }
 
 QJsonArray PulseMotionEngine::sceneCatalogue() const
@@ -458,6 +899,7 @@ void PulseMotionEngine::populateSources()
 void PulseMotionEngine::populateItems()
 {
 	if (!itemTree || !sceneField || !kindField) return;
+	const QSignalBlocker blocker(itemTree);
 	QSet<QString> selected;
 	for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
 		QTreeWidgetItem *item = itemTree->topLevelItem(row);
@@ -509,8 +951,12 @@ void PulseMotionEngine::loadActionIntoEditor(const QJsonObject &action)
 	holdField->setValue(action.value("holdMs").toInt(5000));
 	restoreField->setChecked(action.value("restore").toBool(action.value("kind") == "punch"));
 	returnStageField->setChecked(action.value("returnStage").toBool());
+	editorFocus = QPointF(std::clamp(action.value("focusX").toDouble(0.5), 0.0, 1.0),
+		std::clamp(action.value("focusY").toDouble(0.42), 0.0, 1.0));
+	visualSelectedItem = action.value("itemId").toString().toLongLong();
 	populateItems();
 	const QJsonArray items = action.value("items").toArray();
+	const QSignalBlocker blocker(itemTree);
 	for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
 		QTreeWidgetItem *treeItem = itemTree->topLevelItem(row);
 		const QString id = treeItem->data(0, Qt::UserRole).toString();
@@ -520,6 +966,7 @@ void PulseMotionEngine::loadActionIntoEditor(const QJsonObject &action)
 		treeItem->setCheckState(0, checked ? Qt::Checked : Qt::Unchecked);
 	}
 	refreshSummary();
+	syncVisualCanvas();
 	setStatus(action.value("draft").toBool() ? "Imported draft: review the targets and press Save Action before running it." : "Editing does not change the live output.");
 }
 
@@ -533,6 +980,8 @@ QJsonObject PulseMotionEngine::editorAction() const
 		{"stage", stageField ? stageField->currentData().toString() : QString()},
 		{"container", sceneField ? sceneField->currentData().toString() : QString()},
 		{"zoomPercent", zoomField ? zoomField->value() : 150},
+		{"focusX", editorFocus.x()},
+		{"focusY", editorFocus.y()},
 		{"durationMs", durationField ? durationField->value() : 750},
 		{"holdMs", holdField ? holdField->value() : 5000},
 		{"restore", restoreField && restoreField->isChecked()},
@@ -631,6 +1080,50 @@ void PulseMotionEngine::refreshSummary()
 	restoreField->setVisible(punch);
 	stageField->setEnabled(action.value("policy") != "current");
 	returnStageField->setEnabled(action.value("policy") == "switch");
+	syncVisualCanvas();
+}
+
+void PulseMotionEngine::syncVisualCanvas()
+{
+	if (!visualCanvas || !sceneField || !kindField) return;
+	const bool punch = kindField->currentData().toString() == "punch";
+	QSet<qint64> controlled;
+	qint64 selected = visualSelectedItem;
+	if (punch && sourceField) {
+		selected = sourceField->currentData().toString().section('|', 0, 0).toLongLong();
+		visualSelectedItem = selected;
+	} else if (itemTree) {
+		for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
+			QTreeWidgetItem *item = itemTree->topLevelItem(row);
+			if (item->checkState(0) == Qt::Checked) controlled.insert(item->data(0, Qt::UserRole).toString().toLongLong());
+		}
+	}
+	visualCanvas->setMotionState(sceneField->currentData().toString(), selected, controlled, punch, editorFocus,
+		zoomField ? zoomField->value() / 100.0 : 1.5);
+}
+
+void PulseMotionEngine::visualCanvasInteraction(qint64 itemId, const QPointF &focus, bool toggleLayoutItem)
+{
+	if (!kindField || !sourceField || !itemTree) return;
+	visualSelectedItem = itemId;
+	if (kindField->currentData().toString() == "punch") {
+		for (int row = 0; row < sourceField->count(); ++row) {
+			if (sourceField->itemData(row).toString().section('|', 0, 0).toLongLong() == itemId) {
+				sourceField->setCurrentIndex(row);
+				break;
+			}
+		}
+		editorFocus = QPointF(std::clamp(focus.x(), 0.0, 1.0), std::clamp(focus.y(), 0.0, 1.0));
+	} else if (toggleLayoutItem) {
+		for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
+			QTreeWidgetItem *item = itemTree->topLevelItem(row);
+			if (item->data(0, Qt::UserRole).toString().toLongLong() != itemId) continue;
+			item->setCheckState(0, item->checkState(0) == Qt::Checked ? Qt::Unchecked : Qt::Checked);
+			break;
+		}
+	}
+	refreshSummary();
+	syncVisualCanvas();
 }
 
 void PulseMotionEngine::setStatus(const QString &text, bool error)

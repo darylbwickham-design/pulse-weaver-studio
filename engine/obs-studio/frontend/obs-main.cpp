@@ -56,6 +56,19 @@ static log_handler_t def_log_handler;
 #ifdef _WIN32
 static HANDLE pulse_weaver_job = nullptr;
 
+static void UsePulseWeaverExecutableDirectory()
+{
+	wchar_t executablePath[32768] = {};
+	const DWORD length = GetModuleFileNameW(nullptr, executablePath, DWORD(std::size(executablePath)));
+	if (!length || length >= std::size(executablePath))
+		return;
+	wchar_t *separator = wcsrchr(executablePath, L'\\');
+	if (!separator)
+		return;
+	*separator = L'\0';
+	SetCurrentDirectoryW(executablePath);
+}
+
 static void ConfigurePulseWeaverProcessTree()
 {
 	pulse_weaver_job = CreateJobObjectW(nullptr, nullptr);
@@ -942,6 +955,10 @@ int main(int argc, char *argv[])
 	if (vc_runtime_outdated()) {
 		return 1;
 	}
+
+	/* All portable paths are relative to bin/64bit. Keep direct EXE launches,
+	 * controller launches and shortcuts on the same isolated profile. */
+	UsePulseWeaverExecutableDirectory();
 
 	// Try to keep this as early as possible
 	install_dll_blocklist_hook();
