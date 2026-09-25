@@ -9,6 +9,7 @@
 #include <QUrlQuery>
 #include <functional>
 #include <cmath>
+#include <atomic>
 
 inline QString pulseLumiaStageName(const QComboBox *selector, int index)
 {
@@ -26,15 +27,31 @@ class PulseLumiaBridge : public QObject {
 	std::function<QJsonObject()> baseState;
 	quint64 sequence = 0;
 	bool primaryObserved = false;
+	std::atomic_bool shuttingDown{false};
+	void stopWatching()
+	{
+		if (shuttingDown.exchange(true)) return;
+		heartbeat.stop(); catalogueTimer.stop();
+		signal_handler_disconnect(obs_get_signal_handler(), "pulseweaver_operator_event", operatorEvent, this);
+		signal_handler_disconnect(obs_get_signal_handler(), "source_create", sourceCreated, this);
+		for (auto weak : std::as_const(sources)) {
+			obs_source_t *source = obs_weak_source_get_source(weak);
+			if (source) { signal_handler_disconnect_global(obs_source_get_signal_handler(source), sourceEvent, this); obs_source_release(source); }
+			obs_weak_source_release(weak);
+		}
+		sources.clear();
+	}
 	static void operatorEvent(void *data, calldata_t *parameters)
 	{
 		auto *self = static_cast<PulseLumiaBridge *>(data);
+		if (self->shuttingDown.load()) return;
 		const QJsonObject event = QJsonDocument::fromJson(QByteArray(calldata_string(parameters, "json"))).object();
 		QMetaObject::invokeMethod(self, [self, event] { self->deliver(event); }, Qt::QueuedConnection);
 	}
 	static void sourceCreated(void *data, calldata_t *parameters)
 	{
 		auto *self = static_cast<PulseLumiaBridge *>(data);
+		if (self->shuttingDown.load()) return;
 		auto *source = static_cast<obs_source_t *>(calldata_ptr(parameters, "source"));
 		if (!source || obs_obj_is_private(source)) return;
 		const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
@@ -47,6 +64,7 @@ class PulseLumiaBridge : public QObject {
 	static void sourceEvent(void *data, const char *signal, calldata_t *parameters)
 	{
 		auto *self = static_cast<PulseLumiaBridge *>(data);
+		if (self->shuttingDown.load()) return;
 		const QString name = QString::fromUtf8(signal);
 		if (name == "item_add" || name == "item_remove" || name == "rename" || name == "remove" || name == "destroy") {
 			QMetaObject::invokeMethod(self, [self] { self->catalogueChanged(); }, Qt::QueuedConnection);
@@ -80,7 +98,7 @@ class PulseLumiaBridge : public QObject {
 	}
 	void watch(obs_source_t *source)
 	{
-		if (obs_obj_is_private(source)) return;
+		if (shuttingDown.load() || obs_obj_is_private(source)) return;
 		const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
 		if (sources.contains(uuid)) return;
 		sources.insert(uuid, obs_source_get_weak_source(source));
@@ -88,6 +106,7 @@ class PulseLumiaBridge : public QObject {
 	}
 	void catalogueChanged()
 	{
+		if (shuttingDown.load()) return;
 		for (auto it = sources.begin(); it != sources.end();) {
 			obs_source_t *source = obs_weak_source_get_source(it.value());
 			if (!source || obs_source_removed(source)) {
@@ -139,13 +158,7 @@ public:
 	}
 	~PulseLumiaBridge() override
 	{
-		signal_handler_disconnect(obs_get_signal_handler(), "pulseweaver_operator_event", operatorEvent, this);
-		signal_handler_disconnect(obs_get_signal_handler(), "source_create", sourceCreated, this);
-		for (auto weak : std::as_const(sources)) {
-			obs_source_t *source = obs_weak_source_get_source(weak);
-			if (source) { signal_handler_disconnect_global(obs_source_get_signal_handler(source), sourceEvent, this); obs_source_release(source); }
-			obs_weak_source_release(weak);
-		}
+		stopWatching();
 		for (const auto &client : std::as_const(clients)) if (client) client->disconnectFromHost();
 	}
 	QJsonObject stateJson() const
@@ -206,6 +219,8 @@ public:
 	}
 	void frontendEvent(obs_frontend_event event)
 	{
+		if (event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN) { stopWatching(); return; }
+		if (shuttingDown.load()) return;
 		if (event == OBS_FRONTEND_EVENT_STREAMING_STARTING) {
 			obs_output_t *output = obs_frontend_get_streaming_output();
 			primaryObserved = output != nullptr;

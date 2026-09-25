@@ -1,7 +1,7 @@
 {
   "id": "pulseweavercontrol",
   "name": "Pulse Weaver",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "Pulse Weaver",
   "description": "Operate your Pulse Weaver show, Stages, native motion actions, sources, audio and media from Lumia Stream or LumiCon.",
   "lumiaVersion": "^9.0.0",
@@ -134,7 +134,7 @@
       },
       {
         "type": "run_motion",
-        "label": "Run Saved Motion Action",
+        "label": "Run Stage Look / Motion Action",
         "description": "Run one action created in Pulse Weaver. Its Stage change, animation, hold and restore behaviour are handled as one operation.",
         "fields": [
           {
@@ -157,6 +157,12 @@
         "type": "restore_motion",
         "label": "Restore Last Motion Layout",
         "description": "Restore the source state saved before the most recently completed layout action.",
+        "fields": []
+      },
+      {
+        "type": "restore_original_motion",
+        "label": "Restore Original Scenes",
+        "description": "Stop motion and restore the protected original positions, crops, visibility and layer order. Originals survive repeated actions and app restarts.",
         "fields": []
       },
       {

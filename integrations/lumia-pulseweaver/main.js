@@ -33,8 +33,12 @@ class PulseWeaverPlugin extends Plugin {
     const local = process.env.LOCALAPPDATA || '';
     const regular = local && path.join(local, 'Programs', 'Pulse Weaver', 'config', 'obs-studio', 'plugin_config', 'pulse-weaver-core', 'pulse-weaver.ini');
     const preview = local && path.join(local, 'Programs', 'Pulse Weaver Motion Preview', 'config', 'obs-studio', 'plugin_config', 'pulse-weaver-core', 'pulse-weaver.ini');
-    const previewPort = Number(this.settings.port || 18755) === 18765;
-    return [configured, ...(previewPort ? [preview, regular] : [regular, preview])].filter(Boolean);
+    const previewPort = this.connectionPort() === 18765;
+    return [configured, ...(previewPort ? [preview] : [regular])].filter(Boolean);
+  }
+  connectionPort() {
+    const defaultPort = this.manifest.config.settings.find(setting => setting.key === 'port')?.defaultValue || 18755;
+    return Number(this.settings.port || defaultPort);
   }
   connectionToken() {
     const configured = typeof this.settings.apiToken === 'string' ? this.settings.apiToken.trim() : '';
@@ -51,7 +55,7 @@ class PulseWeaverPlugin extends Plugin {
     throw new Error('Start Pulse Weaver or set its configuration path in the plugin settings.');
   }
   endpoint(route) {
-    const port = Number(this.settings.port || 18755);
+    const port = this.connectionPort();
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid Pulse Weaver port.');
     if (!route.startsWith('/') || route.includes('..') || route.includes('\\')) throw new Error('Invalid operation route.');
     return `http://127.0.0.1:${port}/api/v1/lumia${route}`;
@@ -315,6 +319,7 @@ class PulseWeaverPlugin extends Plugin {
       }
       case 'stop_motion': return this.request('/motion/stop', 'POST');
       case 'restore_motion': return this.request('/motion/stop', 'POST');
+      case 'restore_original_motion': return this.request('/motion/original', 'POST');
       case 'start_recording': case 'stop_recording': {
         const start = action.type === 'start_recording';
         await this.request(`/record/${start ? 'start' : 'stop'}`, 'POST');
@@ -345,12 +350,12 @@ class PulseWeaverPlugin extends Plugin {
         for (const action of config.actions || []) last = await this.runAction(action);
         const message = last?.message || 'Operation completed.';
         await this.updateVariables(); await this.setVariable('last_result', message);
-        return { newlyPassedVariables: { pulseweavercontrol_result: message, pulseweavercontrol_active_stage: this.state?.activeStage || '' }, shouldStop: false };
+        return { newlyPassedVariables: { [`${this.manifest.id}_result`]: message, [`${this.manifest.id}_active_stage`]: this.state?.activeStage || '' }, shouldStop: false };
       } catch (error) {
         const message = error.message || String(error);
         await this.setVariable('last_result', message);
         await this.lumia.showToast({ type: 'error', message: `Pulse Weaver: ${message}` });
-        return { newlyPassedVariables: { pulseweavercontrol_result: message }, shouldStop: true };
+        return { newlyPassedVariables: { [`${this.manifest.id}_result`]: message }, shouldStop: true };
       }
     };
 	// Stop controls must not sit behind a start waiting for a network handshake.

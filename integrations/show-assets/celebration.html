@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Pulse Weaver • Celebration</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#080914;color:#f7f5ff;font-family:'Segoe UI',sans-serif}
+body{background:radial-gradient(ellipse at 15% 15%,#45207680,transparent 55%),radial-gradient(ellipse at 90% 85%,#08788955,transparent 55%),#080914}
+.halo{position:absolute;width:95vw;height:95vw;border:1px solid #a964ff33;border-radius:50%;left:-20vw;top:-40vw;box-shadow:0 0 100px #a546ef18,inset 0 0 90px #a546ef18;animation:float 12s ease-in-out infinite alternate}.halo:after{content:'';position:absolute;inset:7%;border:1px solid #44e2fc20;border-radius:50%}
+.grid{position:absolute;inset:60% -50% -100%;background:linear-gradient(#af62ff20 1px,transparent 1px),linear-gradient(90deg,#af62ff20 1px,transparent 1px);background-size:70px 70px;transform:perspective(700px) rotateX(60deg);mask-image:linear-gradient(transparent,#000);animation:drift 12s linear infinite}
+header{position:absolute;left:7%;top:7%;width:86%}.eyebrow{font-size:19px;letter-spacing:.4em;color:#66e6ff;font-weight:600}h1{font-size:88px;letter-spacing:-.045em;line-height:1.05;margin:20px 0 14px;font-weight:800}h1 span{color:#bd88ff}.sub{font-size:25px;color:#bdb9d0;letter-spacing:.04em}
+.frame{position:absolute;left:7%;top:34%;width:58%;height:58%;border:2px solid #b574ff;border-radius:22px;background:#080b16;box-shadow:0 0 0 9px #b574ff09,0 0 55px #ac4bff22}
+.side{position:absolute;left:70%;top:41%;width:23%;font-size:18px;color:#9188b1;letter-spacing:.27em}.side strong{display:block;margin-top:15px;font-size:35px;letter-spacing:-.03em;color:#e2d9f5}.line{height:2px;background:linear-gradient(90deg,#56ddff,#af6df8,transparent);margin:28px 0}
+.mark{position:absolute;right:7%;bottom:7%;font-size:18px;letter-spacing:.23em;color:#958aa9}.spark{position:absolute;width:5px;height:5px;background:#ad71fb;box-shadow:0 0 18px #9e5fff;border-radius:50%;animation:rise 9s linear infinite;opacity:0}
+@keyframes float{to{transform:translate(12%,10%) scale(1.08)}}@keyframes drift{to{background-position:0 70px}}@keyframes rise{0%{transform:translateY(0);opacity:0}20%,70%{opacity:.55}100%{transform:translateY(-450px);opacity:0}}
+@media(max-aspect-ratio:1/1){header{top:9%;left:8%;width:84%}.eyebrow{font-size:25px}h1{font-size:110px;margin-top:30px}.sub{font-size:32px;line-height:1.5}.frame{left:7%;top:34%;width:86%;height:29%}.side{left:8%;top:69%;width:84%;font-size:23px}.side strong{font-size:42px}.mark{bottom:6%;left:8%;font-size:22px}.halo{width:160vw;height:160vw;top:-30vw}.grid{inset:60% -90% -30%}}
+</style>
+<div class="halo"></div><div class="grid"></div>
+<header><div class="eyebrow">PULSE WEAVER · COMMUNITY</div><h1></h1><div class="sub"></div></header>
+<div class="frame"></div><aside class="side"><div id="label"></div><strong id="message"></strong><div class="line"></div></aside><div class="mark">GOOD PEOPLE. GOOD COMPANY.</div>
+<script>
+const mode=new URLSearchParams(location.search).get('mode')||'raid';
+const content={raid:['WELCOME,<br><span>RAIDERS.</span>','Come on in. Make yourself at home.','THE COMMUNITY GROWS','Let’s meet the crew.'],shoutout:['IN THE<br><span>SPOTLIGHT.</span>','A little love for the people who make this special.','SHOW SOME LOVE','Meet someone brilliant.'],thanks:['YOU MAKE<br><span>THIS HAPPEN.</span>','Thank you for being part of the show.','ALL THE LOVE','Here’s to this community.']}[mode]||[];
+document.querySelector('h1').innerHTML=content[0];document.querySelector('.sub').textContent=content[1];document.querySelector('#label').textContent=content[2];document.querySelector('#message').textContent=content[3];
+for(let i=0;i<24;i++){const p=document.createElement('i');p.className='spark';p.style.left=(i*43%100)+'%';p.style.top=(45+i*17%55)+'%';p.style.animationDelay=(-i*.61)+'s';document.body.append(p)}
+</script>

@@ -1,14 +1,14 @@
-# Pulse Weaver for Lumia Stream — 1.2.0
+# Pulse Weaver for Lumia Stream — 1.2.1
 
-Version 1.2.0 updates the existing Pulse Weaver Lumia plugin. It keeps the `pulseweavercontrol` ID so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.2.0.lumiaplugin` over the existing plugin after installing the Pulse Weaver build that provides native motion.
+Version 1.2.1 updates the existing Pulse Weaver Lumia plugin. It keeps the `pulseweavercontrol` ID so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.2.1.lumiaplugin` over the existing plugin after installing the Pulse Weaver build that provides native motion.
 
-Version 1.2.0 adds the native motion catalogue, Run Motion, Stop + Restore and Restore Last controls for Lumia reactions and LumiCon buttons. These controls invoke the same guarded runner as Pulse Weaver's Motion page. It also retains the existing show, Stage, source, audio, media and recording controls.
+The motion catalogue includes named stage looks such as Game, Chatting, Printer and BRB. Run Stage Look / Motion Action triggers each look from Lumia reactions or LumiCon buttons. Restore Original Scenes returns the protected source state and original on-air scene even after repeated look changes or an app restart. The existing Stop + Restore and Restore Last controls remain available.
 
 ## Operating controls
 
 - Start/end the whole configured show, or start/stop Twitch, Kick and YouTube individually.
 - Activate an existing Stage, next Stage or previous Stage.
-- Run a named native motion action, stop and restore it, or restore the last completed layout.
+- Run a named stage look or motion action, stop and restore it, restore the last completed layout, or restore the original scenes.
 - Show/hide/toggle an existing scene item.
 - Mute/unmute/toggle and set volume (0–100%) on existing audio sources.
 - Play, pause, restart, stop, next and previous on existing controllable media sources.
@@ -31,7 +31,9 @@ Events arrive over one authenticated local event stream. There is no idle status
 
 ## Connection
 
-Port 18755 remains the default for the normal Pulse Weaver installation. To test the isolated Motion Preview build, change this existing plugin's port to 18765; token discovery then prefers `%LOCALAPPDATA%/Programs/Pulse Weaver Motion Preview`. Switching the port back to 18755 reconnects it to the normal installation. For a custom portable installation, set the full `config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini` path or enter its connection token.
+Port 18755 remains the default for the normal Pulse Weaver installation. The separate **Pulse Weaver Motion Preview** package uses manifest ID `pulseweavermotionpreview` and port 18765, so it can coexist with the release plugin. Build it with `packaging/Build-LumiaMotionPreview.ps1`. Its variables and action results use the `pulseweavermotionpreview_` prefix. Token discovery stays within the selected installation; it does not fall back to the other profile. For a custom portable installation, set the full `config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini` path or enter its connection token. The task-specific package includes its configuration path, never its token.
+
+Saved look requests are asynchronous: acceptance means the cue was queued, not that the animation has finished. A Stage change uses the configured transition before source movement. Within the same Stage, looks animate directly. Keep your Chatty layout actions in the same Lumia reaction; Pulse Weaver preserves Chatty as a locked full-canvas overlay.
 
 Do not use Lumia's generic OBS connection to bypass these operating controls. Build scenes, Stages and routing inside Pulse Weaver.
 

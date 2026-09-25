@@ -37,7 +37,11 @@ The `codex/native-motion-engine` preview implements:
 
 ## Editor concept
 
-The Motion page uses a two-column layout. Saved actions are on the left. A live visual canvas and its action controls are on the right.
+The Motion studio builds Starting, Intermission, Hangout, Gameplay and Celebration stages from the imported source references. It creates a landscape scene and a portrait scene for each stage, and saves 14 named animated looks. Starting has its own stage; BRB, Ending and Printer Break share Intermission. Hangout supports facecam, printer and screen share layouts. The new landscape scenes use Chatty, while the portrait scenes use vert chatty when that source is present. The imported scenes remain available. YouTube and Kick exclude the spotify and spotifysound sources from their audio mixes; Twitch keeps its existing stream and VOD track settings.
+
+The design canvas edits a private scene copy: drag to move, scroll to resize, choose visibility and layer order, and scrub or play the transition. Each saved look appears in Pulse Weaver, Lumia and LumiCon through the same action catalogue. Hidden sources enter or leave the frame during animation. Before the first live motion, the runner saves an original snapshot for the scene collection; Restore Original Scenes restores its transforms, visibility, layer order and original on-air scene across restarts.
+
+Motion lives in Show Control. The borderless Show / Control heading switches between the operating desk and the editor in place. Compact stage and look rows sit above paired portrait and landscape canvases. Clicking either canvas selects it for editing; its heading turns blue. Secondary commands live in Stage tools and Settings.
 
 The form asks, in order:
 
@@ -48,7 +52,11 @@ The form asks, in order:
 5. How quickly should it move and how long should it stay?
 6. Should it restore or return to the previous Stage?
 
-A close-up uses a draggable crosshair placed directly over the subject and a cyan frame shows the resulting crop as the zoom slider changes. Layout mode outlines controlled sources and lets users include or exclude them by clicking their frames. A sentence below the canvas describes the result before saving. Editing never changes output. `RUN / PREVIEW ON OUTPUT` is explicitly labelled because it does.
+A close-up uses a draggable crosshair over the subject and a cyan frame shows the resulting crop. Layout mode outlines only the selected source. Dragging, resizing, visibility and layer edits automatically include that source in the saved look. Both canvases are saved in one action, with separate private drafts and undo history. Save look persists the draft; Apply saved look runs it on programme. Adding an existing source creates a hidden scene item after protecting the scene's original snapshot. An overlay command can save consistent full-canvas framing across the collection's looks while its internal content remains externally controlled.
+
+Browser sources receive balanced showing references while the editor is visible, so inactive browser overlays render in the private previews. Restore Original Scenes restores saved framing and hides sources added after the snapshot; added references remain available so saved looks can run again.
+
+The existing-source picker supports searching by any part of the name. Newly added items are explicitly hidden in the stage's other saved looks, preventing a layer introduced for Ending or a printer view from leaking into another look. Changing looks with unsaved layout edits offers Save, Discard or Cancel.
 
 Advanced details belong behind an optional section in the next iteration: easing curve, per-source delay, visibility timing, collision policy and nested groups.
 
@@ -87,7 +95,7 @@ The safe sequence for an action assigned to another Stage is:
 
 - A manual Stage change always wins.
 - A close-up triggered again extends its hold instead of stacking another crop.
-- A second different action is rejected with an understandable message while one is active.
+- A new saved layout can replace an active layout transition from its current position. Other conflicting action types are rejected with an understandable message.
 - Stop with restore returns only sources owned by the active execution.
 - Restore Last applies only to the most recently completed layout and discards its restore point after use.
 - Missing Stage or source references fail before output changes.
@@ -120,7 +128,7 @@ The local API exposes the same catalogue, state, run and stop operations. Contro
 
 Every saved, reviewed action also registers `Pulse Weaver Motion: <name>` in the OBS hotkey system. A user can assign a key once in Pulse Weaver and select it in Stream Deck without installing another bridge. The hotkey calls the same runner; it cannot bypass Stage or restore rules.
 
-The Lumia package updates the existing `pulseweavercontrol` plugin, so existing Lumia and LumiCon alert bindings remain attached to the same integration. Port 18755 remains the normal default. A tester can point that plugin at the isolated preview on port 18765; token discovery follows the selected port and reads the matching Pulse Weaver installation.
+The release Lumia package retains `pulseweavercontrol` and port 18755. The isolated Motion Preview package has its own `pulseweavermotionpreview` ID, result namespace, and default port 18765. Token discovery stays within the selected installation. `packaging/Build-LumiaMotionPreview.ps1` produces the separate package without embedding credentials.
 
 ## Storage
 
@@ -130,8 +138,8 @@ No configuration, source media, credentials, logs or recovery backups are packag
 
 ## Next iterations
 
-1. Replace transition-duration readiness with explicit Stage route completion signals from the frontend.
-2. Add draft drag and resize for layout targets without changing live output.
+1. Extend the current main/portrait transition activity checks to explicit completion signals for every destination route.
+2. Extend paired-canvas transition scrubbing with per-source timing controls.
 3. Add easing choices and per-source delay with safe defaults.
 4. Add a capture/update comparison before overwriting a layout.
 5. Add source-set conflict analysis and compatible concurrent actions.

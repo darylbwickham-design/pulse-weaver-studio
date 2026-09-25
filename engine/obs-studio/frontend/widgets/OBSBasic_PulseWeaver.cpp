@@ -501,7 +501,7 @@ obs_canvas_t *pulseConfigureOutputCanvas(const QString &provider, const QJsonObj
 		}, &excluded);
 		target = obs_scene_get_source(duplicate);
 		pulseOutputSceneTransformSyncs.insert(
-			key, std::make_shared<PulseOutputSceneTransformSync>(base, duplicate));
+			key, std::make_shared<PulseOutputSceneTransformSync>(base, duplicate, excluded));
 	} else {
 		pulseOutputSceneTransformSyncs.remove(key);
 	}
@@ -643,14 +643,16 @@ void pulseIcon(QAbstractButton *button, const QString &name, int size = 24)
     update();
 }
 
-QLabel *pulseEmblem(const QString &name, int size = 32)
+QLabel *pulseEmblem(const QString &name, int size = 32, bool glyph = false)
 {
     auto *label = new QLabel;
     label->setFixedSize(size, size);
     label->setAttribute(Qt::WA_TransparentForMouseEvents);
-    auto update = [label, name, size] {
+    auto update = [label, name, size, glyph] {
         const qreal ratio = label->devicePixelRatioF();
-        label->setPixmap(QIcon(pulseAssetPath(name)).pixmap(QSize(size, size), ratio));
+        QString path = pulseAssetPath(name);
+        if (glyph) path.replace("/icons/", "/glyphs/");
+        label->setPixmap(QIcon(path).pixmap(QSize(size, size), ratio));
     };
     QObject::connect(App(), &OBSApp::StyleChanged, label, update);
     update();
@@ -1123,7 +1125,7 @@ void OBSBasic::InitPulseWeaverShell()
     auto *showHead = new QHBoxLayout(showBanner);
     showHead->setContentsMargins(12, 3, 12, 3);
     showHead->setSpacing(12);
-    showHead->addWidget(pulseEmblem("show", 32));
+    showHead->addWidget(pulseEmblem("show", 28, true));
 	auto *showTitleBox = new QVBoxLayout;
 	auto *showKicker = new QLabel("Live production");
 	showKicker->setObjectName("PulseWeaverKicker");
@@ -1132,7 +1134,24 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *showTitle = new QLabel("Show Control");
 	showTitle->setObjectName("PulseWeaverHeading");
 	showTitleBox->addWidget(showTitle);
+	showTitle->hide();
 	showHead->addLayout(showTitleBox);
+	auto *showMode = new QPushButton("Show", showBanner);
+	auto *controlMode = new QPushButton("Control", showBanner);
+	auto *showModeGroup = new QButtonGroup(showBanner);
+	showModeGroup->setExclusive(true);
+	for (QPushButton *choice : {showMode, controlMode}) {
+		choice->setCheckable(true);
+		choice->setCursor(Qt::PointingHandCursor);
+		choice->setMinimumHeight(32);
+		choice->setStyleSheet("QPushButton{background:transparent;border:0;padding:4px 2px;color:#9aabc5;font-size:20px;font-weight:600;}"
+			"QPushButton:hover{color:#acdfff;}QPushButton:checked{color:#57baff;}");
+		showModeGroup->addButton(choice);
+		showHead->addWidget(choice);
+	}
+	showMode->setObjectName("PulseWeaverShowMode");
+	controlMode->setObjectName("PulseWeaverControlMode");
+	showMode->setChecked(true);
 	showHead->addStretch();
 	pulseEngineStatus = new QLabel("Preparing studio…");
 	pulseEngineStatus->setObjectName("PulseWeaverStatus");
@@ -1503,7 +1522,26 @@ void OBSBasic::InitPulseWeaverShell()
 	showBody->setStretchFactor(0, 5);
 	showBody->setStretchFactor(1, 2);
 	showBody->setSizes({1100, 360});
-	showLayout->addWidget(showBody, 1);
+	auto *showContent = new QStackedWidget(pulseShowPage);
+	showContent->setObjectName("PulseWeaverShowContentStack");
+	showContent->addWidget(showBody);
+	auto *motionMount = new QWidget(showContent);
+	motionMount->setObjectName("PulseWeaverMotionPluginMount");
+	auto *motionMountLayout = new QVBoxLayout(motionMount);
+	motionMountLayout->setContentsMargins(0, 0, 0, 0);
+	motionMountLayout->setSpacing(0);
+	showContent->addWidget(motionMount);
+	showLayout->addWidget(showContent, 1);
+	connect(showMode, &QPushButton::clicked, this, [this, showContent, showTitle] {
+		showContent->setCurrentIndex(0);
+		showTitle->setText("Show Control");
+		UpdatePulseWeaverPreviewVisibility();
+	});
+	connect(controlMode, &QPushButton::clicked, this, [this, showContent, showTitle] {
+		showContent->setCurrentIndex(1);
+		showTitle->setText("Motion Control");
+		UpdatePulseWeaverPreviewVisibility();
+	});
 
 	auto *stageBar = new PulseResponsiveStageBar(showMain);
 	auto *stageLabel = new QLabel("Stage");
@@ -2323,7 +2361,8 @@ void OBSBasic::UpdatePulseWeaverPreviewVisibility()
 		return;
 	const int index = pulsePages->currentIndex();
 	const bool visible = isVisible() && !isMinimized();
-	const bool show = visible && index == 0;
+	const auto *showContent = findChild<QStackedWidget *>("PulseWeaverShowContentStack");
+	const bool show = visible && index == 0 && (!showContent || showContent->currentIndex() == 0);
 	const bool camera = visible && index == 2;
 	/* OBS displays continue drawing on Windows after their Qt page is hidden.
 	 * Keep only the visible workspace's preview surfaces active so streaming
@@ -2337,12 +2376,26 @@ void OBSBasic::UpdatePulseWeaverPreviewVisibility()
 					(previewEnabled || IsPreviewProgramMode()));
 	if (program && program->GetDisplay())
 		obs_display_set_enabled(program->GetDisplay(), false);
+	if (!show) {
+		pulseHorizontalProgramShowing.SetShowing(false);
+		pulseVerticalProgramShowing.SetShowing(false);
+	} else {
+		RefreshPulseWeaverPlatformPreviews();
+	}
 }
 
 void OBSBasic::SetPulseWeaverWorkspace(int index)
 {
 	if (!pulsePages || index < 0 || index >= pulsePages->count())
 		return;
+	if (index == 0) {
+		if (auto *showContent = findChild<QStackedWidget *>("PulseWeaverShowContentStack"))
+			showContent->setCurrentIndex(0);
+		if (auto *showMode = findChild<QPushButton *>("PulseWeaverShowMode"))
+			showMode->setChecked(true);
+		if (auto *title = pulseShowPage ? pulseShowPage->findChild<QLabel *>("PulseWeaverHeading") : nullptr)
+			title->setText("Show Control");
+	}
 	pulsePages->setCurrentIndex(index);
 	for (auto *button : findChildren<QPushButton *>()) {
 		if (button->property("pulseWorkspaceIndex").isValid()) {
@@ -2817,6 +2870,8 @@ void OBSBasic::ShutdownPulseWeaverShell()
 	/* saveAll() runs after shell shutdown; retain the selection until
 	 * ClearSceneData() so its UUID survives the final collection save. */
 	pulsePortraitPreview.SetShowing(false);
+	pulseHorizontalProgramShowing.Clear();
+	pulseVerticalProgramShowing.Clear();
 	for (obs_canvas_t *canvas : std::as_const(pulseOutputCanvases)) {
 		obs_canvas_remove(canvas);
 		obs_canvas_release(canvas);
@@ -3109,8 +3164,30 @@ void OBSBasic::RefreshPulseWeaverStages()
 			++it;
 	}
 	const QByteArray signature = QJsonDocument(stages).toJson(QJsonDocument::Compact);
-	if (signature == pulseStageSignature)
+	if (signature == pulseStageSignature) {
+		// The selector is built before the collection finishes loading. Recover
+		// its saved landscape scene's stage once both canvases are available.
+		if (!pulseStageSelector->property("motionStageRecovered").toBool()) {
+			OBSSourceAutoRelease current = obs_frontend_get_current_scene();
+			const QString scene = current ? QString::fromUtf8(obs_source_get_name(current)) : QString();
+			for (int index = 0; !scene.isEmpty() && index < pulseStageSelector->count(); ++index) {
+				const auto stage = QJsonDocument::fromJson(pulseStageSelector->itemData(index).toString().toUtf8()).object();
+				if (stage.value("horizontal").toString() != scene) continue;
+				const QString portraitName = stage.value("vertical").toString();
+				if (!portraitName.isEmpty()) {
+					OBSCanvasAutoRelease canvas = obs_get_canvas_by_name("Pulse Weaver Vertical");
+					OBSSceneAutoRelease portrait = canvas ? obs_canvas_get_scene_by_name(canvas, portraitName.toUtf8().constData()) : nullptr;
+					if (!portrait) continue;
+				}
+				const QSignalBlocker blocker(pulseStageSelector);
+				pulseStageSelector->setCurrentIndex(index);
+				pulseStageSelector->setProperty("motionStageRecovered", true);
+				ApplyPulseWeaverStage(index, false);
+				break;
+			}
+		}
 		return;
+	}
 	pulseStageSignature = signature;
 	const QString currentName = pulseStageSelector->currentData(Qt::UserRole + 1).toString();
 	QSignalBlocker blocker(pulseStageSelector);
@@ -3224,6 +3301,24 @@ void OBSBasic::RefreshPulseWeaverPlatformPreviews()
 			"Current Stage output for " + (provider.isEmpty() ? QString("this canvas") : provider.toUpper());
 		if (display && display->toolTip() != toolTip)
 			display->setToolTip(toolTip);
+		// Rendering an idle destination canvas does not activate its browser
+		// sources. Keep a balanced showing reference for the visible preview.
+		OBSSourceAutoRelease previewSource;
+		if (!provider.isEmpty()) {
+			OBSCanvasAutoRelease canvas = obs_get_canvas_by_name(pulseOutputCanvasName(provider, route).toUtf8().constData());
+			if (canvas) previewSource = obs_canvas_get_channel(canvas, 0);
+		}
+		if (!previewSource && route == "vertical") {
+			OBSCanvasAutoRelease canvas = PulseWeaverGetVerticalCanvas();
+			if (canvas) previewSource = obs_canvas_get_channel(canvas, 0);
+		} else if (!previewSource) {
+			previewSource = obs_frontend_get_current_scene();
+		}
+		if (previewSource && obs_source_get_type(previewSource) == OBS_SOURCE_TYPE_TRANSITION)
+			previewSource = obs_transition_get_active_source(previewSource);
+		auto &showing = route == "vertical" ? pulseVerticalProgramShowing : pulseHorizontalProgramShowing;
+		showing.Select(previewSource ? obs_scene_from_source(previewSource) : nullptr);
+		showing.SetShowing(display && display->isVisible() && !isMinimized());
 	};
 	refresh("horizontal", pulseHorizontalPreviewProvider, pulseHorizontalPreviewTitle, pulseHorizontalDisplay);
 	refresh("vertical", pulseVerticalPreviewProvider, pulseVerticalPreviewTitle, pulseVerticalDisplay);
@@ -3374,6 +3469,7 @@ void OBSBasic::CyclePulseWeaverStreamStats(int direction)
 
 void OBSBasic::ActivatePulseWeaverStage(int index)
 {
+	if (pulseStageSelector) pulseStageSelector->setProperty("motionStageRecovered", true);
 	ApplyPulseWeaverStage(index, true);
 }
 
@@ -3550,7 +3646,13 @@ void OBSBasic::ApplyPulseWeaverStage(int index, bool runTransitions)
 	}
 	if (!verticalTransitionStarted && pulseVerticalEditor)
 		pulseVerticalEditor->Refresh();
-	if (verticalTransitionStarted || outputTransitionStarted)
+	/* The programme preview may be the only showing reference for a browser
+	 * source. Keep it through the horizontal programme transition too. */
+	const bool horizontalTransitionExpected = runTransitions && horizontalTransition &&
+		!horizontalName.isEmpty() && horizontalTransitionId != "cut";
+	const bool stageTransitionPending = horizontalTransitionExpected || verticalTransitionStarted || outputTransitionStarted;
+	setProperty("pulseWeaverStageTransitionPending", stageTransitionPending);
+	if (stageTransitionPending)
 		QTimer::singleShot(50, this, [this, transitionSerial,
 			verticalScene = verticalTransitionStarted ? verticalName : QString(),
 			pendingRoutes = outputTransitionStarted ? routed : QHash<QString, QJsonObject>{}] {
@@ -3564,7 +3666,8 @@ void OBSBasic::FinalizePulseWeaverStageTransitions(quint64 serial, const QString
 {
 	if (serial != pulseStageTransitionSerial)
 		return;
-	bool active = false;
+	OBSSourceAutoRelease horizontalTransition = obs_frontend_get_current_transition();
+	bool active = horizontalTransition && obs_transition_is_active(horizontalTransition);
 	if (!verticalScene.isEmpty()) {
 		obs_canvas_t *canvas = PulseWeaverGetVerticalCanvas();
 		obs_source_t *current = canvas ? obs_canvas_get_channel(canvas, 0) : nullptr;
@@ -3600,6 +3703,7 @@ void OBSBasic::FinalizePulseWeaverStageTransitions(quint64 serial, const QString
 		const QString provider = it.key().section('_', 0, 0);
 		pulseConfigureOutputCanvas(provider, it.value());
 	}
+	setProperty("pulseWeaverStageTransitionPending", false);
 	RefreshPulseWeaverPlatformPreviews();
 }
 

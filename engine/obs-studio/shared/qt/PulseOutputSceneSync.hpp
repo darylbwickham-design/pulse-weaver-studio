@@ -3,6 +3,7 @@
 #include <obs.hpp>
 
 #include <QHash>
+#include <QSet>
 
 #include <vector>
 
@@ -18,7 +19,9 @@ class PulseOutputSceneTransformSync {
 	OBSSource sourceScene;
 	OBSSource outputScene;
 	QHash<int64_t, int64_t> outputItemIds;
+	QSet<QString> excludedSources;
 	OBSSignal transformSignal;
+	OBSSignal reorderSignal;
 	bool tickRegistered = false;
 
 	static std::vector<ItemIdentity> SceneItems(obs_scene_t *scene)
@@ -71,6 +74,11 @@ class PulseOutputSceneTransformSync {
 			obs_sceneitem_set_info2(outputItem, &sourceTransform);
 		if (cropChanged)
 			obs_sceneitem_set_crop(outputItem, &sourceCrop);
+		obs_source_t *itemSource = obs_sceneitem_get_source(sourceItem);
+		const QString sourceName = itemSource ? QString::fromUtf8(obs_source_get_name(itemSource)) : QString();
+		const bool visible = obs_sceneitem_visible(sourceItem) && !excludedSources.contains(sourceName);
+		if (obs_sceneitem_visible(outputItem) != visible)
+			obs_sceneitem_set_visible(outputItem, visible);
 	}
 
 	void SynchronizeAll()
@@ -82,6 +90,31 @@ class PulseOutputSceneTransformSync {
 			static_cast<PulseOutputSceneTransformSync *>(opaque)->SynchronizeItem(item);
 			return true;
 		}, this);
+	}
+
+	void SynchronizeOrder()
+	{
+		obs_scene_t *source = obs_scene_from_source(sourceScene);
+		obs_scene_t *output = obs_scene_from_source(outputScene);
+		if (!source || !output)
+			return;
+		for (const ItemIdentity &identity : SceneItems(source)) {
+			const auto mapped = outputItemIds.constFind(identity.id);
+			if (mapped == outputItemIds.constEnd())
+				continue;
+			obs_sceneitem_t *item = obs_scene_find_sceneitem_by_id(output, mapped.value());
+			obs_sceneitem_t *original = obs_scene_find_sceneitem_by_id(source, identity.id);
+			if (item && original &&
+			    obs_sceneitem_get_order_position(item) != obs_sceneitem_get_order_position(original))
+				obs_sceneitem_set_order_position(item, obs_sceneitem_get_order_position(original));
+		}
+	}
+
+	static void SourceReordered(void *opaque, calldata_t *)
+	{
+		auto *sync = static_cast<PulseOutputSceneTransformSync *>(opaque);
+		if (sync)
+			sync->SynchronizeOrder();
 	}
 
 	static void SourceItemTransformed(void *opaque, calldata_t *params)
@@ -99,9 +132,9 @@ class PulseOutputSceneTransformSync {
 	}
 
 public:
-	PulseOutputSceneTransformSync(obs_scene_t *source, obs_scene_t *output)
+	PulseOutputSceneTransformSync(obs_scene_t *source, obs_scene_t *output, QSet<QString> excluded = {})
 		: sourceScene(source ? obs_scene_get_source(source) : nullptr),
-		  outputScene(output ? obs_scene_get_source(output) : nullptr)
+		  outputScene(output ? obs_scene_get_source(output) : nullptr), excludedSources(std::move(excluded))
 	{
 		const auto sourceItems = SceneItems(source);
 		const auto outputItems = SceneItems(output);
@@ -120,6 +153,8 @@ public:
 		if (sourceScene && outputScene)
 			transformSignal.Connect(obs_source_get_signal_handler(sourceScene), "item_transform",
 						&SourceItemTransformed, this);
+		if (sourceScene && outputScene)
+			reorderSignal.Connect(obs_source_get_signal_handler(sourceScene), "reorder", &SourceReordered, this);
 		/* Some animation filters update scene-item transforms during their video
 		 * tick without producing an item_transform signal on every frame.  Keep a
 		 * frame-paced reconciliation as a fallback so the live destination copy

@@ -18,7 +18,7 @@ $payloadArchive = "$payloadRoot.zip"
 $publishRoot = Join-Path $artifactRoot 'installer-publish'
 $setupName = "PulseWeaver-Motion-Preview-Setup-$Version.exe"
 $setupPath = Join-Path $artifactRoot $setupName
-$lumiaName = "PulseWeaver-Lumia-1.2.0.lumiaplugin"
+$lumiaName = "PulseWeaver-Motion-Preview-Lumia-1.3.0.lumiaplugin"
 $lumiaPath = Join-Path $artifactRoot $lumiaName
 $frontend = Join-Path $RuntimeRoot 'bin/64bit/PulseWeaverCore.exe'
 $core = Join-Path $RuntimeRoot 'obs-plugins/64bit/pulse-weaver-core.dll'
@@ -57,14 +57,7 @@ if (Test-Path -LiteralPath (Join-Path $payloadRoot 'config')) {
 }
 Compress-Archive -Path (Join-Path $payloadRoot '*') -DestinationPath $payloadArchive -CompressionLevel Optimal
 
-$lumiaStage = Join-Path $artifactRoot 'lumia-package'
-New-Item -ItemType Directory -Path $lumiaStage | Out-Null
-foreach ($entry in @('main.js', 'manifest.json', 'package.json', 'README.md', 'assets')) {
-    Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/lumia-pulseweaver' $entry) -Destination $lumiaStage -Recurse
-}
-$lumiaZip = [IO.Path]::ChangeExtension($lumiaPath, '.zip')
-Compress-Archive -Path (Join-Path $lumiaStage '*') -DestinationPath $lumiaZip -CompressionLevel Optimal
-Move-Item -LiteralPath $lumiaZip -Destination $lumiaPath
+& (Join-Path $PSScriptRoot 'Build-LumiaMotionPreview.ps1') -OutputDirectory $artifactRoot | Out-Null
 
 & dotnet publish (Join-Path $projectRoot 'packaging/PulseWeaver.PrivateSetup/PulseWeaver.PrivateSetup.csproj') `
     -c Release -r win-x64 --self-contained true `

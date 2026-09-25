@@ -39,6 +39,7 @@ async function fixture() {
   if(url.pathname.endsWith('/source'))return res.end(JSON.stringify({ok:true,message:'Applied'}));
   if(url.pathname.endsWith('/motion/run'))return res.end(JSON.stringify({ok:true,accepted:true,message:'Motion started'}));
   if(url.pathname.endsWith('/motion/stop'))return res.end(JSON.stringify({ok:true,accepted:true,message:'Motion restored'}));
+  if(url.pathname.endsWith('/motion/original'))return res.end(JSON.stringify({ok:true,message:'Original scenes restored'}));
   res.statusCode=404;res.end(JSON.stringify({error:'Unknown route'}));
  });
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
@@ -49,9 +50,9 @@ async function fixture() {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.2.0');
+ assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.2.1');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
- assert.equal(manifest.config.actions.length,17);assert.equal(manifest.config.alerts.length,36);
+ assert.equal(manifest.config.actions.length,18);assert.equal(manifest.config.alerts.length,36);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
  for(const action of manifest.config.actions)assert.ok(!/create|delete|transform|filter|raw|url|file/i.test(action.type));
  assert.equal(new Set(manifest.config.alerts.map(a=>a.key)).size,36);
@@ -66,6 +67,10 @@ test('Saved motion actions populate the existing plugin and use the guarded moti
   await f.plugin.actions({actions:[{type:'stop_motion'}]});
   assert.ok(f.requests.some(route=>route==='/api/v1/lumia/motion/stop'));
   assert.equal(run.newlyPassedVariables.pulseweavercontrol_result,'Motion started');
+  const original=await f.plugin.actions({actions:[{type:'restore_original_motion'}]});
+  assert.equal(original.shouldStop,false);
+  assert.ok(f.requests.includes('/api/v1/lumia/motion/original'));
+  assert.equal(original.newlyPassedVariables.pulseweavercontrol_result,'Original scenes restored');
  }finally{await f.close();}
 });
 test('Split SSE frames, initial snapshot without alerts, dynamic existing-source lists, no idle polling',async()=>{

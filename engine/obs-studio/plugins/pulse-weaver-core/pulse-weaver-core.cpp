@@ -2083,7 +2083,12 @@ public:
 		buildAutomationTab();
 		buildAiTab();
 		buildApiTab();
-		tabs->addTab(motion->createEditor(tabs), "MOTION");
+		QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window());
+		QWidget *motionMount = mainWindow ? mainWindow->findChild<QWidget *>("PulseWeaverMotionPluginMount") : nullptr;
+		if (motionMount && motionMount->layout())
+			motionMount->layout()->addWidget(motion->createEditor(motionMount));
+		else
+			tabs->addTab(motion->createEditor(tabs), "MOTION");
 		/* Keep unfinished systems intact for continued development without
 		 * presenting them as operator-ready. Connections and stream metadata are
 		 * the only Action surfaces enabled in this preview. */
@@ -2102,7 +2107,7 @@ public:
 		tabs->addTab(comingSoonPage, "COMING SOON");
 		for (int index = 0; index < tabs->count(); ++index) {
 			const QString label = tabs->tabText(index);
-			tabs->setTabVisible(index, label == "CONNECTIONS" || label == "MOTION" || label == "COMING SOON");
+			tabs->setTabVisible(index, label == "CONNECTIONS" || (label == "MOTION" && !motionMount) || label == "COMING SOON");
 		}
 		loadRules();
 		lumiaBridge = new PulseLumiaBridge(this, [this] { return lumiaStateJson(); });
@@ -4459,6 +4464,14 @@ private:
 						const QJsonObject result = motion ? motion->stopAction(query.queryItemValue("execution", QUrl::FullyDecoded), true) :
 							QJsonObject{{"ok", false}, {"message", "Motion is unavailable."}};
 						respond(socket, result.value("ok").toBool() ? 202 : 400, result);
+					}
+					else if (method == "POST" && (path == "/api/v1/lumia/motion/original" || path == "/api/v1/motion/original")) {
+						const QJsonObject result = motion ? motion->restoreOriginals() : QJsonObject{{"ok", false}, {"message", "Motion is unavailable."}};
+						respond(socket, result.value("ok").toBool() ? 200 : 400, result);
+					}
+					else if (method == "POST" && path == "/api/v1/motion/show/create") {
+						const QJsonObject result = motion ? motion->createShowStages() : QJsonObject{{"ok", false}, {"message", "Motion is unavailable."}};
+						respond(socket, result.value("ok").toBool() ? 200 : 400, result);
 					}
 					else if (method == "POST" && path == "/api/v1/motion/import") {
 						const QJsonObject result = motion ? motion->importDocument(input, integrationClient) :

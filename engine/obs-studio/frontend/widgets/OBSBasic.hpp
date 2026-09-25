@@ -320,6 +320,8 @@ private:
 	QPointer<QWidget> pulseActionHost;
 	QPointer<OBSQTDisplay> pulseHorizontalDisplay;
 	QPointer<OBSQTDisplay> pulseVerticalDisplay;
+	PulseEditor::Selection pulseHorizontalProgramShowing;
+	PulseEditor::Selection pulseVerticalProgramShowing;
 	QPointer<QLabel> pulseHorizontalPreviewTitle;
 	QPointer<QLabel> pulseVerticalPreviewTitle;
 	QPointer<QWidget> pulseVerticalPreviewCard;
