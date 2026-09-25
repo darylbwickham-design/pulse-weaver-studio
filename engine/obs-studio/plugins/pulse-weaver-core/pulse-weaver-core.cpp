@@ -4465,6 +4465,11 @@ private:
 							QJsonObject{{"ok", false}, {"message", "Motion is unavailable."}};
 						respond(socket, result.value("ok").toBool() ? 202 : 400, result);
 					}
+					else if (method == "POST" && (path == "/api/v1/lumia/motion/restore" || path == "/api/v1/motion/restore")) {
+						const QJsonObject result = motion ? motion->restoreLast() :
+							QJsonObject{{"ok", false}, {"message", "Motion is unavailable."}};
+						respond(socket, result.value("ok").toBool() ? 200 : 400, result);
+					}
 					else if (method == "POST" && (path == "/api/v1/lumia/motion/original" || path == "/api/v1/motion/original")) {
 						const QJsonObject result = motion ? motion->restoreOriginals() : QJsonObject{{"ok", false}, {"message", "Motion is unavailable."}};
 						respond(socket, result.value("ok").toBool() ? 200 : 400, result);

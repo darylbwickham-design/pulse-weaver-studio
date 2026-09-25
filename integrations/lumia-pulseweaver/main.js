@@ -318,7 +318,7 @@ class PulseWeaverPlugin extends Plugin {
         return this.request(`/motion/run?id=${encodeURIComponent(String(params.action))}&request=${encodeURIComponent(requestId)}`, 'POST');
       }
       case 'stop_motion': return this.request('/motion/stop', 'POST');
-      case 'restore_motion': return this.request('/motion/stop', 'POST');
+      case 'restore_motion': return this.request('/motion/restore', 'POST');
       case 'restore_original_motion': return this.request('/motion/original', 'POST');
       case 'start_recording': case 'stop_recording': {
         const start = action.type === 'start_recording';

@@ -52,6 +52,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <mutex>
 #include <utility>
 
@@ -324,6 +325,7 @@ protected:
 			dragItem = snapshot.selected;
 			resizeCorner = handle;
 			resizeCornerStart = corners.at(handle);
+			resizePressPoint = point;
 			resizeAnchor = corners.at((handle + 2) % 4);
 			resizePolygon = corners;
 			resizeAppliedX = resizeAppliedY = 1.0;
@@ -335,8 +337,7 @@ protected:
 			event->accept();
 			return;
 		}
-		const qint64 itemId = selected && !obs_sceneitem_locked(selected) && motionItemContains(selected, point) ?
-			snapshot.selected : topItemAt(snapshot.source, point);
+		const qint64 itemId = topItemAt(snapshot.source, point);
 		if (itemId < 0) return;
 		const QPointF focus = itemPoint(snapshot.source, itemId, point);
 		draggingFocus = snapshot.punch;
@@ -367,17 +368,20 @@ protected:
 		}
 		if (dragItem < 0) return;
 		if (draggingResize) {
+			const double dragThreshold = 5.0 * canvas.width() / surface.width();
+			if (!dragEditStarted && (point - resizePressPoint).manhattanLength() < dragThreshold) return;
+			const QPointF adjustedPoint = point + resizeCornerStart - resizePressPoint;
 			const QPointF diagonal = resizeCornerStart - resizeAnchor;
 			const double lengthSquared = QPointF::dotProduct(diagonal, diagonal);
 			if (lengthSquared < 1.0) return;
-			double desiredX = std::clamp(QPointF::dotProduct(point - resizeAnchor, diagonal) / lengthSquared, 0.05, 20.0);
+			double desiredX = std::clamp(QPointF::dotProduct(adjustedPoint - resizeAnchor, diagonal) / lengthSquared, 0.05, 20.0);
 			double desiredY = desiredX;
 			if (resizeFree && resizePolygon.size() == 4) {
 				const QPointF horizontal = resizePolygon.at(1) - resizePolygon.at(0);
 				const QPointF vertical = resizePolygon.at(3) - resizePolygon.at(0);
 				const double determinant = horizontal.x() * vertical.y() - horizontal.y() * vertical.x();
 				if (std::abs(determinant) > 1.0) {
-					const QPointF offset = point - resizeAnchor;
+					const QPointF offset = adjustedPoint - resizeAnchor;
 					desiredX = std::clamp(std::abs((offset.x() * vertical.y() - offset.y() * vertical.x()) / determinant), 0.05, 20.0);
 					desiredY = std::clamp(std::abs((horizontal.x() * offset.y() - horizontal.y() * offset.x()) / determinant), 0.05, 20.0);
 				}
@@ -390,7 +394,8 @@ protected:
 			return;
 		}
 		if (draggingLayout) {
-			if ((point - lastDrag).manhattanLength() < 0.5) return;
+			const double dragThreshold = dragEditStarted ? 0.5 : 5.0 * canvas.width() / surface.width();
+			if ((point - lastDrag).manhattanLength() < dragThreshold) return;
 			if (!dragEditStarted && beginEdit) { beginEdit(); dragEditStarted = true; }
 			if (transformed) transformed(dragItem, point - lastDrag, 1.0, 1.0, -1, false);
 			lastDrag = point;
@@ -440,6 +445,7 @@ private:
 	qint64 dragItem = -1;
 	int resizeCorner = -1;
 	QPointF resizeCornerStart;
+	QPointF resizePressPoint;
 	QPointF resizeAnchor;
 	QPolygonF resizePolygon;
 	double resizeAppliedX = 1.0;
@@ -503,13 +509,18 @@ private:
 	{
 		obs_scene_t *scene = sceneFor(source);
 		if (!scene) return -1;
-		struct Hits { QPointF point; std::vector<qint64> ids; } hits{point, {}};
+		struct Hits { QPointF point; qint64 id = -1; double area = std::numeric_limits<double>::infinity(); } hits{point};
 		obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
 			auto &hits = *static_cast<Hits *>(opaque);
-			if (!obs_sceneitem_locked(item) && motionItemContains(item, hits.point)) hits.ids.push_back(obs_sceneitem_get_id(item));
+			if (obs_sceneitem_locked(item) || !motionItemContains(item, hits.point)) return true;
+			const QRectF bounds = motionItemPolygon(item).boundingRect();
+			const double area = std::max(1.0, bounds.width() * bounds.height());
+			// Full-canvas chat and event overlays often have transparent pixels.
+			// Prefer the smaller visible item underneath so inset cameras can be selected by clicking them.
+			if (area <= hits.area) { hits.id = obs_sceneitem_get_id(item); hits.area = area; }
 			return true;
 		}, &hits);
-		return hits.ids.empty() ? -1 : hits.ids.back();
+		return hits.id;
 	}
 
 	static QPointF itemPoint(obs_source_t *source, qint64 itemId, const QPointF &point)
@@ -3385,6 +3396,7 @@ QJsonObject PulseMotionEngine::stopAction(const QString &executionId, bool resto
 
 QJsonObject PulseMotionEngine::restoreLast()
 {
+	if (active) return { {"ok", false}, {"message", "Stop the current motion before restoring the last layout."} };
 	if (lastRestore.empty()) return {{"ok", true}, {"message", "There is no completed layout to restore."}};
 	int restored = 0;
 	for (Track &track : lastRestore) {
