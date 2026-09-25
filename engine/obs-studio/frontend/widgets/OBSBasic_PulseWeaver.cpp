@@ -2331,14 +2331,11 @@ void OBSBasic::RestorePulseWeaverYouTubeAccount()
 	if (pulseYouTubeAuth || !Config())
 		return;
 	if (config_get_int(Config(), "YouTube", "PulseLegalVersion") < PulseLegal::PolicyVersion) {
-		if (!AcceptPulseWeaverYouTubeTerms(this)) {
-			if (pulseDestinationStatus)
-				pulseDestinationStatus->setText(
-					"YouTube paused · review and accept the current privacy notice to reconnect.");
-			return;
-		}
-		config_set_int(Config(), "YouTube", "PulseLegalVersion", PulseLegal::PolicyVersion);
-		activeConfiguration.SaveSafe("tmp");
+		/* Do not interrupt startup with a consent dialog. The Connect action
+		 * presents it immediately before opening Google's sign-in page. */
+		if (pulseDestinationStatus)
+			pulseDestinationStatus->setText("Connect YouTube to review the privacy notice and sign in.");
+		return;
 	}
 	auto saved = std::make_shared<YoutubeApiWrappers>(youtubeServices.at(1));
 	if (!saved->LoadPulseWeaverAccount())
