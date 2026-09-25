@@ -300,6 +300,16 @@ def main():
         for target in targets:
             if target["source"] in UNUSED_VISUALS:
                 apply_to_scene_item(by_id[int(target["itemId"])], target["transform"])
+    # The standard Starting facecam crop is aimed at the pixel board. Enlarge
+    # that portrait inset while keeping its lower-right anchor; landscape and
+    # every other look retain their existing transforms.
+    starting = next(action for action in actions["actions"]
+                    if action.get("name") == "PW Starting · Starting")
+    pixel_board = next(target for target in starting["items"]
+                       if target["container"] == "PW Vert Starting"
+                       and target["source"] == "second facecam")
+    pixel_board["transform"].update(positionX=642, positionY=12,
+                                    scaleX=0.42, scaleY=0.42)
     # The portable app may reopen directly on any PW Stage. Seed each new
     # scene with its first saved look so the first programme frame is complete,
     # including the portrait focus region. Only PW scenes are changed.
