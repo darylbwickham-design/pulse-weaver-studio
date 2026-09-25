@@ -2026,6 +2026,12 @@ public:
 	{
 		QSettings settings(pulseSettingsPath(), QSettings::IniFormat);
 		apiToken = settings.value("api/token").toString();
+		bool validPort = false;
+		const int savedPort = settings.value("api/port", apiPort).toInt(&validPort);
+		if (validPort && savedPort >= 1024 && savedPort <= 65535)
+			apiPort = static_cast<quint16>(savedPort);
+		if (!settings.contains("api/port"))
+			settings.setValue("api/port", apiPort);
 		if (apiToken.isEmpty()) {
 			apiToken = QUuid::createUuid().toString(QUuid::WithoutBraces).remove('-');
 			settings.setValue("api/token", apiToken);

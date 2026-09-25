@@ -112,7 +112,7 @@ class Updater : public QObject {
 			settings->sync();
 			if (!manual && !settings->value("automatic", true).toBool())
 				return;
-			pending = selectRelease(releases, installed);
+			pending = selectRelease(releases, installed, settings->value("includeAlpha", false).toBool());
 			if (pending)
 				offer();
 			else if (manual)
@@ -137,7 +137,10 @@ class Updater : public QObject {
 		pending.reset();
 		if (QMessageBox::question(window, "Pulse Weaver update available",
 			"Installed: " + installed.tag + "\nAvailable: " + candidate.identity.tag +
-			"\n\nDownload this update from GitHub? Your shows and connections will be preserved.",
+			(candidate.identity.channel == "windows-alpha" ?
+			 "\n\nThis is an experimental alpha. Setup will verify a full backup before upgrading your existing installation. "
+			 "Your credentials, scenes and Lumia connection stay in place. Use Updates → Restore a backup to return to your previous version.\n\nDownload the alpha?" :
+			 "\n\nDownload this update from GitHub? Setup backs up your app and settings before updating."),
 			QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
 			return;
 		directory = std::make_unique<QTemporaryDir>(QDir::tempPath() + "/PulseWeaver-update-XXXXXX");
@@ -272,7 +275,7 @@ public:
 			installed = {};
 		const QString state = QDir::homePath() + "/Library/Application Support/Pulse Weaver Mac Preview/pulseweaver/updates.ini";
 #else
-		if (installed.channel != "windows-public" && installed.channel != "windows-private")
+		if (installed.channel != "windows-public" && installed.channel != "windows-private" && installed.channel != "windows-alpha")
 			installed = {};
 		const QString state = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../config/pulseweaver/updates.ini");
 #endif
@@ -280,6 +283,37 @@ public:
 		auto *updates = menu->addMenu("Updates");
 		auto *check = updates->addAction("Check for updates…");
 		connect(check, &QAction::triggered, this, [this] { checkNow(true); });
+#ifdef Q_OS_WIN
+		if (installed.channel == "windows-private" || installed.channel == "windows-alpha") {
+			auto *alpha = updates->addAction("Include experimental alpha builds");
+			alpha->setCheckable(true);
+			alpha->setChecked(installed.channel == "windows-alpha" || settings->value("includeAlpha", false).toBool());
+			alpha->setEnabled(installed.channel != "windows-alpha");
+			connect(alpha, &QAction::toggled, this, [this](bool enabled) {
+				settings->setValue("includeAlpha", enabled);
+				settings->sync();
+				pending.reset();
+				if (enabled) checkNow(true);
+			});
+			auto *restore = updates->addAction("Restore a backup / leave alpha…");
+			connect(restore, &QAction::triggered, this, [this] {
+				if (outputsActive()) {
+					message("Stop all outputs before restoring a backup.");
+					return;
+				}
+				const QString maintenance = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../Uninstall Pulse Weaver.exe");
+				if (!QFile::exists(maintenance)) {
+					message("Open the release or alpha installer and choose Restore backup to recover your previous app and settings.");
+					return;
+				}
+				if (QMessageBox::question(window, "Restore Pulse Weaver",
+					"Close Pulse Weaver and open Setup & Recovery? Choose your pre-alpha backup there to restore the previous version and settings together.",
+					QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes || outputsActive()) return;
+				if (startUpdateInstaller(maintenance)) window->close();
+				else message("Setup & Recovery could not be opened. Run your downloaded installer instead.");
+			});
+		}
+#endif
 		auto *automatic = updates->addAction("Check automatically each day");
 		automatic->setCheckable(true);
 		automatic->setChecked(settings->value("automatic", true).toBool());

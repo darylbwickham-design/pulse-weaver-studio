@@ -8,12 +8,40 @@ namespace PulseWeaver.Setup;
 
 internal static class Program
 {
-    const string ProductName = "Pulse Weaver Streaming Studio";
+#if PULSE_MOTION_PREVIEW
+    internal const string ProductName = "Pulse Weaver Motion Preview";
+    internal const string ProductLabel = "Pulse Weaver Motion Preview";
+    const string InstallFolderName = "Pulse Weaver Motion Preview";
+    const string ShortcutFileName = "Pulse Weaver Motion Preview.lnk";
+    const string RegistryProductKey = "PulseWeaverMotionPreview";
+    const string UpdateChannel = "windows-motion-preview";
+    internal const string InstallerSubtitle = "MOTION PREVIEW";
+#else
+    internal const string ProductName = "Pulse Weaver Streaming Studio";
+    internal const string ProductLabel = "Pulse Weaver";
+    const string InstallFolderName = "Pulse Weaver";
+    const string ShortcutFileName = "Pulse Weaver.lnk";
+    const string RegistryProductKey = "PulseWeaver";
+#if PULSE_ALPHA
+    const string UpdateChannel = "windows-alpha";
+    internal const string InstallerSubtitle = "STREAMING STUDIO  ·  EXPERIMENTAL ALPHA";
+#else
+    const string UpdateChannel = "windows-private";
+    internal const string InstallerSubtitle = "STREAMING STUDIO  ·  BETA";
+#endif
+#endif
     internal static readonly string Version = Assembly.GetExecutingAssembly().GetName().Version!.ToString(3);
+#if PULSE_ALPHA
+    internal static readonly string ReleaseTag = "v" + Version + "-alpha." + Assembly.GetExecutingAssembly()
+        .GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "AlphaRevision").Value;
+#else
+    internal static readonly string ReleaseTag = "v" + Version;
+#endif
     const string InstallManifestName = ".pulseweaver-installed-files.txt";
-    internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Pulse Weaver");
+    internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", InstallFolderName);
     internal static readonly string AppPath = Path.Combine(InstallDirectory, "bin", "64bit", "PulseWeaverCore.exe");
-    internal static readonly string UninstallerPath = Path.Combine(InstallDirectory, "Uninstall Pulse Weaver.exe");
+    internal static readonly string UninstallerPath = Path.Combine(InstallDirectory, $"Uninstall {ProductLabel}.exe");
+    internal static readonly string UninstallRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + RegistryProductKey;
     static bool upgradeSelfTest;
 
     [STAThread]
@@ -21,7 +49,7 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
         try { if (DetachedLaunch.Bootstrap(args)) return 0; }
-        catch (Exception ex) { MessageBox.Show(ex.Message, "Pulse Weaver setup", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+        catch (Exception ex) { MessageBox.Show(ex.Message, ProductLabel + " setup", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
         if (args.Length >= 2 && args[0].Equals("/upgrade-test",StringComparison.OrdinalIgnoreCase)) return VerifyUpgrade(args[1],args.Length>2?args[2]:null,args.Length>3?args[3]:null);
         if (args.Length==3 && args[0]=="/restore-test") {
             // Only allow the other installer's self-test to target its disposable tree.
@@ -44,14 +72,14 @@ internal static class Program
         if (Process.GetProcessesByName("PulseWeaverCore").Length > 0) throw new InvalidOperationException("Pulse Weaver is running. Close it, then try the installation again.");
         using var operationLock = Recovery.Acquire(InstallDirectory);
         if (Recovery.Pending(InstallDirectory)) throw new IOException("Recover the interrupted operation before installing.");
-        if (System.Version.TryParse(Recovery.InstalledVersion(InstallDirectory), out var installed) && installed > System.Version.Parse(Version))
+        if (Recovery.RequiresRestore(InstallDirectory, ReleaseTag))
             throw new IOException("A newer version is installed. Use RESTORE BACKUP to roll back app files and settings together; installing old binaries over newer settings is blocked.");
         InstallInto(InstallDirectory,languageCode,LegacyRegistrationExpected(),progress);
         var current = Environment.ProcessPath ?? throw new InvalidOperationException("Setup could not locate itself.");
         if (!Path.GetFullPath(current).Equals(UninstallerPath,StringComparison.OrdinalIgnoreCase)) File.Copy(current, UninstallerPath, true);
-        progress(80, "Creating shortcuts…"); var startMenu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", "Pulse Weaver.lnk"); CreateShortcut(startMenu, AppPath, "Pulse Weaver"); if (desktopShortcut) CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Pulse Weaver.lnk"), AppPath, "Pulse Weaver");
-        progress(90, "Registering maintenance and update support…"); using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PulseWeaver")) { key.SetValue("DisplayName", ProductName); key.SetValue("DisplayVersion", Version); key.SetValue("Publisher", "Pulse Weaver"); key.SetValue("InstallLocation", InstallDirectory); key.SetValue("DisplayIcon", AppPath); key.SetValue("UninstallString", '"' + UninstallerPath + '"' + " /uninstall"); key.SetValue("ModifyPath", '"' + UninstallerPath + '"'); key.SetValue("NoModify", 0, RegistryValueKind.DWord); key.SetValue("NoRepair", 0, RegistryValueKind.DWord); key.SetValue("EstimatedSize", InstalledSizeKb(InstallDirectory), RegistryValueKind.DWord); }
-        progress(100, "Pulse Weaver is ready."); if (launch) Process.Start(new ProcessStartInfo(AppPath) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(AppPath)! });
+        progress(80, "Creating shortcuts…"); var startMenu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", ShortcutFileName); CreateShortcut(startMenu, AppPath, ProductLabel); if (desktopShortcut) CreateShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), ShortcutFileName), AppPath, ProductLabel);
+        progress(90, "Registering maintenance and update support…"); using (var key = Registry.CurrentUser.CreateSubKey(UninstallRegistryPath)) { key.SetValue("DisplayName", ProductName); key.SetValue("DisplayVersion", Version); key.SetValue("Publisher", "Pulse Weaver"); key.SetValue("InstallLocation", InstallDirectory); key.SetValue("DisplayIcon", AppPath); key.SetValue("UninstallString", '"' + UninstallerPath + '"' + " /uninstall"); key.SetValue("ModifyPath", '"' + UninstallerPath + '"'); key.SetValue("NoModify", 0, RegistryValueKind.DWord); key.SetValue("NoRepair", 0, RegistryValueKind.DWord); key.SetValue("EstimatedSize", InstalledSizeKb(InstallDirectory), RegistryValueKind.DWord); }
+        progress(100, ProductLabel + " is ready."); if (launch) Process.Start(new ProcessStartInfo(AppPath) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(AppPath)! });
     }
 
     internal static void InstallInto(string root, string languageCode, bool migrateCredentials, Action<int,string> progress)
@@ -83,13 +111,13 @@ internal static class Program
         if(Recovery.Pending(InstallDirectory)) throw new IOException("Recover the interrupted operation first.");
         if(operation=="backup") { progress(10,"Backing up and verifying app files and settings…"); var saved=Recovery.Backup(InstallDirectory); progress(100,"Backup verified: "+saved); return; }
         var restoredVersion=Recovery.Restore(InstallDirectory,backup ?? throw new IOException("Choose a backup first."),progress);
-        using var key=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PulseWeaver",true);
+        using var key=Registry.CurrentUser.OpenSubKey(UninstallRegistryPath,true);
         if(key is not null) key.SetValue("DisplayVersion",restoredVersion);
     }
 
     static void WriteUpdateIdentity(string destination)
     {
-        var identity = new { schema = 1, channel = "windows-private", tag = "v" + Version };
+        var identity = new { schema = 1, channel = UpdateChannel, tag = ReleaseTag };
         File.WriteAllText(Path.Combine(destination, "bin", "64bit", "pulseweaver-update.json"),
             System.Text.Json.JsonSerializer.Serialize(identity));
     }
@@ -97,9 +125,9 @@ internal static class Program
     internal static int Uninstall()
     {
         if (Process.GetProcessesByName("PulseWeaverCore").Length > 0) { MessageBox.Show("Close Pulse Weaver before uninstalling it.", ProductName, MessageBoxButtons.OK, MessageBoxIcon.Warning); return 1; }
-        if (MessageBox.Show($"Remove Pulse Weaver {Version} from this PC?\n\nThis removes this portable copy, including its local settings. Back up the config folder first if you want to keep it.", "Uninstall Pulse Weaver", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return 0;
-        TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", "Pulse Weaver.lnk")); TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Pulse Weaver.lnk")); Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PulseWeaver", false);
-        var command = $"/c ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"{InstallDirectory}\""; Process.Start(new ProcessStartInfo("cmd.exe", command) { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden }); MessageBox.Show("Pulse Weaver was uninstalled. Its isolated local config folder was removed with the application.", ProductName, MessageBoxButtons.OK, MessageBoxIcon.Information); return 0;
+        if (MessageBox.Show($"Remove {ProductLabel} {Version} from this PC?\n\nThis removes this portable copy, including its local settings. Back up the config folder first if you want to keep it.", "Uninstall " + ProductLabel, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return 0;
+        TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", ShortcutFileName)); TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), ShortcutFileName)); Registry.CurrentUser.DeleteSubKeyTree(UninstallRegistryPath, false);
+        var command = $"/c ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"{InstallDirectory}\""; Process.Start(new ProcessStartInfo("cmd.exe", command) { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden }); MessageBox.Show(ProductLabel + " was uninstalled. Its isolated local config folder was removed with the application.", ProductName, MessageBoxButtons.OK, MessageBoxIcon.Information); return 0;
     }
 
     static int VerifyPayload()
@@ -136,8 +164,8 @@ internal static class Program
             if (File.ReadAllText(savedScene) != sceneJson || File.ReadAllText(savedConfig) != "keep") return 9;
             WriteUpdateIdentity(root);
             using (var identity = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "bin", "64bit", "pulseweaver-update.json"))))
-                if (identity.RootElement.GetProperty("channel").GetString() != "windows-private" ||
-                    identity.RootElement.GetProperty("tag").GetString() != "v" + Version) return 7;
+                if (identity.RootElement.GetProperty("channel").GetString() != UpdateChannel ||
+                    identity.RootElement.GetProperty("tag").GetString() != ReleaseTag) return 7;
             var app = Path.Combine(root, "bin", "64bit", "PulseWeaverCore.exe");
             using (var stream = File.OpenRead(app))
                 if (stream.Length <= 1_000_000 || stream.ReadByte() != 'M' || stream.ReadByte() != 'Z') return 2;
@@ -168,16 +196,26 @@ internal static class Program
                 if(string.IsNullOrEmpty(entry.Name))continue;
                 var file=Recovery.SafePath(root,entry.FullName);Directory.CreateDirectory(Path.GetDirectoryName(file)!);entry.ExtractToFile(file);
             }
-            File.WriteAllText(Path.Combine(root,"bin","64bit","pulseweaver-update.json"),"{\"schema\":1,\"channel\":\"windows-private\",\"tag\":\"v1.12.13\"}");
+            var identityPath = Path.Combine(root,"bin","64bit","pulseweaver-update.json");
+            if (!File.Exists(identityPath)) File.WriteAllText(identityPath,System.Text.Json.JsonSerializer.Serialize(new { schema=1,channel="windows-private",tag="v1.12.15" }));
+            var previousVersion = Recovery.InstalledVersion(root);
             var config=Path.Combine(root,"config");
             if(copiedConfig is not null) Recovery.CopyTree(copiedConfig,config);
-            else {Directory.CreateDirectory(config);File.WriteAllText(Path.Combine(config,"preserved.json"),"{\"scene\":\"existing\",\"x\":137.5,\"rotation\":23.5}");}
+            else {
+                Directory.CreateDirectory(config);
+                File.WriteAllText(Path.Combine(config,"preserved.json"),"{\"scene\":\"existing\",\"x\":137.5,\"rotation\":23.5}");
+                var api = Path.Combine(config,"obs-studio","plugin_config","pulse-weaver-core"); Directory.CreateDirectory(api);
+                File.WriteAllText(Path.Combine(api,"pulse-weaver.ini"),"[api]\nport=19755\ntoken=synthetic-retained-token\n");
+                var credentials = Path.Combine(config,"pulseweaver"); Directory.CreateDirectory(credentials);
+                File.WriteAllText(Path.Combine(credentials,"app-credentials.ini"),"[youtube]\nrefresh_token=synthetic-opaque-credential\n");
+                File.WriteAllText(Path.Combine(credentials,"updates.ini"),"[General]\nincludeAlpha=true\n");
+            }
             var before=Digests(root);var configBefore=Digests(config);
             upgradeSelfTest=true;
             try { using(Recovery.Acquire(root)) InstallInto(root,ConfiguredLanguage(root),false,(_,_)=>{}); }
             finally { upgradeSelfTest=false; }
             if(!Equal(configBefore,Digests(config)))throw new IOException("Upgrade changed copied configuration bytes.");
-            if(Recovery.InstalledVersion(root)!=Version)throw new IOException("Upgrade identity mismatch.");
+            if(Recovery.InstalledVersion(root)!=ReleaseTag.TrimStart('v'))throw new IOException("Upgrade identity mismatch.");
             var saved=Directory.GetFiles(Recovery.BackupDirectory(root),"*.zip").Single();
             if(recoveryExe is null) {using var held=Recovery.Acquire(root);Recovery.Restore(root,saved,(_,_)=>{});}
             else {
@@ -186,7 +224,7 @@ internal static class Program
                 using var recovery=Process.Start(start)!;recovery.WaitForExit();if(recovery.ExitCode!=0)throw new IOException("Separate recovery installer test failed: "+recovery.ExitCode);
             }
             if(!Equal(before,Digests(root)))throw new IOException("Restored runtime/configuration differs from pre-upgrade state.");
-            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: 1.12.13 -> {Version} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
+            File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),$"PASS: {previousVersion} -> {ReleaseTag} -> full restore{(recoveryExe is null?"":" using separate recovery EXE")}; {configBefore.Count} config files and {before.Count} total files preserved byte-for-byte. No installed files or registry changed.");
             return 0;
         }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"upgrade-test-result.txt"),"FAIL: "+ex);return 61;}
         finally{try{Directory.Delete(parent,true);}catch{}}
@@ -366,7 +404,7 @@ internal static class Program
     {
         try
         {
-            var value = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PulseWeaver")
+            var value = Registry.CurrentUser.OpenSubKey(UninstallRegistryPath)
                                       ?.GetValue("DisplayVersion")?.ToString();
             return System.Version.TryParse(value, out var installed) &&
                    installed.CompareTo(new System.Version(1, 11, 53)) < 0;
@@ -388,11 +426,11 @@ internal sealed class SetupForm : Form
 {
     readonly ProgressBar progress = new() { Minimum = 0, Maximum = 100, Height = 12, Dock = DockStyle.Top, Style = ProgressBarStyle.Continuous };
     readonly Label status = new() { Text = "Ready to install", ForeColor = Color.FromArgb(150, 166, 194), AutoSize = true };
-    readonly Button install = new() { Text = "INSTALL PULSE WEAVER", Width = 205, Height = 44, BackColor = Color.FromArgb(126, 45, 190), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+    readonly Button install = new() { Text = "INSTALL " + Program.ProductLabel.ToUpperInvariant(), Width = 260, Height = 44, BackColor = Color.FromArgb(126, 45, 190), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
     readonly Button cancel = new() { Text = "CANCEL", Width = 110, Height = 44, BackColor = Color.FromArgb(30, 38, 58), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
     readonly Button uninstall = new() { Text = "UNINSTALL", Width = 125, Height = 44, BackColor = Color.FromArgb(69, 25, 35), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Visible = false };
     readonly CheckBox desktop = new() { Text = "Create a desktop shortcut", Checked = true, AutoSize = true, ForeColor = Color.FromArgb(220, 226, 240) };
-    readonly CheckBox launch = new() { Text = "Launch Pulse Weaver after installation", Checked = true, AutoSize = true, ForeColor = Color.FromArgb(220, 226, 240) };
+    readonly CheckBox launch = new() { Text = "Launch " + Program.ProductLabel + " after installation", Checked = true, AutoSize = true, ForeColor = Color.FromArgb(220, 226, 240) };
     readonly ComboBox language = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList };
     readonly Button backup = new() { Text = "BACK UP NOW", AutoSize = true, Height = 40 };
     readonly Button restore = new() { Text = "RESTORE BACKUP / ROLL BACK", AutoSize = true, Height = 40 };
@@ -403,21 +441,21 @@ internal sealed class SetupForm : Form
     public SetupForm()
     {
 		var existingInstall = File.Exists(Program.AppPath);
-		downgrade = System.Version.TryParse(Recovery.InstalledVersion(Program.InstallDirectory),out var currentVersion) && currentVersion > System.Version.Parse(Program.Version);
+		downgrade = Recovery.RequiresRestore(Program.InstallDirectory, Program.ReleaseTag);
 		if (existingInstall) {
-			var installedVersion = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\PulseWeaver")?.GetValue("DisplayVersion")?.ToString();
+			var installedVersion = Registry.CurrentUser.OpenSubKey(Program.UninstallRegistryPath)?.GetValue("DisplayVersion")?.ToString();
 			var update = string.IsNullOrWhiteSpace(installedVersion) || !string.Equals(installedVersion, Program.Version, StringComparison.OrdinalIgnoreCase);
-			install.Text = downgrade ? "ROLL BACK VIA BACKUP" : update ? $"UPDATE TO {Program.Version}" : "REPAIR PULSE WEAVER";
+			install.Text = downgrade ? "ROLL BACK VIA BACKUP" : update ? $"UPDATE TO {Program.Version}" : "REPAIR " + Program.ProductLabel.ToUpperInvariant();
 			uninstall.Visible = true;
-			status.Text = update ? $"Pulse Weaver {installedVersion} is installed — update available" : $"Pulse Weaver {Program.Version} is installed — repair or uninstall";
+			status.Text = update ? $"{Program.ProductLabel} {installedVersion} is installed — update available" : $"{Program.ProductLabel} {Program.Version} is installed — repair or uninstall";
 		}
-        Text = $"Pulse Weaver {Program.Version} Setup & Recovery"; ClientSize = new Size(780, 760); MinimumSize = new Size(800, 800); StartPosition = FormStartPosition.CenterScreen; BackColor = Color.FromArgb(8, 11, 20); ForeColor = Color.White; Font = new Font("Segoe UI", 10); AutoScaleMode = AutoScaleMode.Dpi; FormBorderStyle = FormBorderStyle.Sizable; MaximizeBox = true;
+        Text = $"{Program.ProductLabel} {Program.Version} Setup & Recovery"; ClientSize = new Size(780, 760); MinimumSize = new Size(800, 800); StartPosition = FormStartPosition.CenterScreen; BackColor = Color.FromArgb(8, 11, 20); ForeColor = Color.White; Font = new Font("Segoe UI", 10); AutoScaleMode = AutoScaleMode.Dpi; FormBorderStyle = FormBorderStyle.Sizable; MaximizeBox = true;
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(30), RowCount = 7, ColumnCount = 1, BackColor = BackColor }; root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 102)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 88)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 110)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 125)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70)); root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var brand = new Panel { Dock = DockStyle.Fill };
         var logo = Icon.ExtractAssociatedIcon(Application.ExecutablePath)?.ToBitmap();
         brand.Controls.Add(new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(56, 56), Location = new Point(0, 4) });
         brand.Controls.Add(new Label { Text = "PULSE WEAVER", Font = new Font("Segoe UI", 18, FontStyle.Bold), ForeColor = Color.White, AutoSize = true, Location = new Point(72, 6) });
-        brand.Controls.Add(new Label { Text = $"STREAMING STUDIO  ·  {Program.Version} BETA", Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Color.FromArgb(251, 146, 60), AutoSize = true, Location = new Point(74, 40) });
+        brand.Controls.Add(new Label { Text = $"{Program.InstallerSubtitle}  ·  {Program.Version}", Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Color.FromArgb(251, 146, 60), AutoSize = true, Location = new Point(74, 40) });
         root.Controls.Add(brand);
         var heading = new Panel { Dock = DockStyle.Fill }; heading.Controls.Add(new Label { Text = "Everything your show needs. Together.", Font = new Font("Segoe UI", 23, FontStyle.Bold), ForeColor = Color.White, AutoSize = true, Location = new Point(0, 4) }); heading.Controls.Add(new Label { Text = "Install the performer-first Lights, Camera and Action studio for this Windows account.", Font = new Font("Segoe UI", 10), ForeColor = Color.FromArgb(160, 175, 200), AutoSize = true, Location = new Point(2, 50) }); root.Controls.Add(heading);
         var destination = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(17, 23, 39), Padding = new Padding(14) }; destination.Controls.Add(new Label { Text = "INSTALL LOCATION", Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Color.FromArgb(34, 211, 238), AutoSize = true, Location = new Point(14, 12) }); destination.Controls.Add(new Label { Text = Program.InstallDirectory, ForeColor = Color.FromArgb(215, 224, 240), AutoEllipsis = true, Size = new Size(555, 25), Location = new Point(14, 38) }); root.Controls.Add(destination);

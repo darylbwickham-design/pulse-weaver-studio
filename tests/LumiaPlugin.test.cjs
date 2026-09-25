@@ -9,14 +9,15 @@ const root = path.resolve(__dirname, '../integrations/lumia-pulseweaver');
 const manifest = JSON.parse(fs.readFileSync(path.join(root,'manifest.json')));
 const sleep = ms => new Promise(resolve=>setTimeout(resolve,ms));
 async function until(fn) { for(let n=0;n<100;n++){ if(fn())return; await sleep(10); } throw Error('Timed out'); }
-function load(lumia,port) {
+function load(lumia,port,overrides={}) {
  const sandbox = {module:{exports:{}},exports:{},require:id=>id==='@lumiastream/plugin'?{Plugin:class {constructor(m){this.manifest=m;this.lumia=lumia;this.settings={port,apiToken:'test-token'};}}}:require(id),process,Buffer,URLSearchParams,AbortController,fetch,setTimeout,clearTimeout,console};
+ Object.assign(sandbox,overrides);
  vm.runInNewContext(fs.readFileSync(path.join(root,'main.js'),'utf8'),sandbox,{filename:'main.js'});
  return new sandbox.module.exports(manifest,{});
 }
 async function fixture() {
  const alerts=[],variables=new Map(),options=[],requests=[],toasts=[],sockets=new Set();
- const state={operatorApi:2,activeStage:'Starting',stages:['Starting','Gaming'],destinations:{twitch:'horizontal',kick:'horizontal',youtube:'dual'},outputs:{},sources:[{id:'mic',name:'Microphone',audio:true},{id:'media',name:'Clip',media:true},{id:'scene',name:'Main',items:[{itemId:'22',name:'Camera',visible:true}]}]};
+ const state={operatorApi:2,activeStage:'Starting',stages:['Starting','Gaming'],destinations:{twitch:'horizontal',kick:'horizontal',youtube:'dual'},outputs:{},motion:{active:false,status:'READY',execution:null},motionActions:[{id:'motion-1',name:'Camera close-up',stage:'Gaming'}],sources:[{id:'mic',name:'Microphone',audio:true},{id:'media',name:'Clip',media:true},{id:'scene',name:'Main',items:[{itemId:'22',name:'Camera',visible:true}]}]};
  let subscriber; const outputTimers = new Map();
  const emit = event => { if(event.platform)state.outputs[event.output || event.platform]=event; subscriber?.write('data: '+JSON.stringify({kind:'event',...event})+'\n\n'); };
  const server = http.createServer((req,res)=>{
@@ -37,19 +38,68 @@ async function fixture() {
    return res.end(JSON.stringify({ok:true,message:'Accepted'}));
   }
   if(url.pathname.endsWith('/source'))return res.end(JSON.stringify({ok:true,message:'Applied'}));
+  if(url.pathname.endsWith('/motion/run'))return res.end(JSON.stringify({ok:true,accepted:true,message:'Motion started'}));
+  if(url.pathname.endsWith('/motion/stop'))return res.end(JSON.stringify({ok:true,accepted:true,message:'Motion restored'}));
+  if(url.pathname.endsWith('/motion/original'))return res.end(JSON.stringify({ok:true,message:'Original scenes restored'}));
   res.statusCode=404;res.end(JSON.stringify({error:'Unknown route'}));
  });
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const lumia={updateConnection:async()=>{},setVariable:async(k,v)=>variables.set(k,v),updateActionFieldOptions:async v=>options.push(v),triggerAlert:async v=>alerts.push(v),showToast:async v=>toasts.push(v)};
- const plugin=load(lumia,server.address().port);await plugin.onload();await until(()=>plugin.state && options.length===5);
+ const plugin=load(lumia,server.address().port);await plugin.onload();await until(()=>plugin.state && options.length===6);
  return {plugin,state,alerts,variables,options,requests,toasts,emit,close:async()=>{await plugin.onunload();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));}};
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.config.actions.length,14);assert.equal(manifest.config.alerts.length,36);
+ assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.0');
+ assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
+ assert.equal(manifest.config.actions.length,18);assert.equal(manifest.config.alerts.length,36);
+ assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
  for(const action of manifest.config.actions)assert.ok(!/create|delete|transform|filter|raw|url|file/i.test(action.type));
  assert.equal(new Set(manifest.config.alerts.map(a=>a.key)).size,36);
+});
+test('Saved motion actions populate the existing plugin and use the guarded motion routes',async()=>{
+ const f=await fixture();try{
+  const motion=f.options.find(option=>option.actionType==='run_motion');
+  assert.equal(JSON.stringify(motion.options),JSON.stringify([{label:'Camera close-up · Gaming',value:'motion-1'}]));
+  const run=await f.plugin.actions({actions:[{type:'run_motion',value:{action:'motion-1'}}]});
+  assert.equal(run.shouldStop,false);
+  assert.ok(f.requests.some(route=>route.startsWith('/api/v1/lumia/motion/run?id=motion-1&request=')));
+  await f.plugin.actions({actions:[{type:'stop_motion'}]});
+  assert.ok(f.requests.some(route=>route==='/api/v1/lumia/motion/stop'));
+  assert.equal(run.newlyPassedVariables.pulseweavercontrol_result,'Motion started');
+  const original=await f.plugin.actions({actions:[{type:'restore_original_motion'}]});
+  assert.equal(original.shouldStop,false);
+  assert.ok(f.requests.includes('/api/v1/lumia/motion/original'));
+  assert.equal(original.newlyPassedVariables.pulseweavercontrol_result,'Original scenes restored');
+ }finally{await f.close();}
+});
+
+test('Custom ports, tokens and explicit config paths keep their installation identity',()=>{
+ const plugin=load({},19755);
+ assert.equal(plugin.connectionPort(),19755);
+ assert.equal(plugin.connectionToken(),'test-token');
+ plugin.settings.port=18765;
+ assert.ok(plugin.configCandidates().every(file=>!file.includes('Motion Preview')));
+ plugin.settings.configPath='C:\\portable\\pulse-weaver.ini';
+ assert.equal(JSON.stringify(plugin.configCandidates()),JSON.stringify(['C:\\portable\\pulse-weaver.ini']));
+ assert.equal(plugin.connectionPort(),18765);
+});
+
+test('Long installer downtime keeps retrying and refreshes only the discovered token',()=>{
+ const delays=[];
+ const plugin=load({updateConnection:async()=>{},setVariable:async()=>{}},19755,
+   {setTimeout:(_,delay)=>{delays.push(delay);return delays.length;},clearTimeout:()=>{}});
+ plugin.enabled=true;
+ plugin.endpoint=()=>{throw new Error('App closed for update');};
+ for(let n=0;n<12;n++){plugin.token='cached-token';plugin.connect();assert.equal(plugin.token,'');}
+ assert.equal(delays.length,12);
+ assert.equal(delays.at(-1),30000);
+ assert.equal(plugin.connectionPort(),19755);
+ assert.equal(plugin.settings.apiToken,'test-token');
+ plugin.enabled=false;
+ plugin.connect();
+ assert.equal(delays.length,12);
 });
 test('Split SSE frames, initial snapshot without alerts, dynamic existing-source lists, no idle polling',async()=>{
  const f=await fixture();try{

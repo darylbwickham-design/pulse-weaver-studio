@@ -22,6 +22,19 @@ internal static class Recovery
             return json.RootElement.GetProperty("tag").GetString()!.TrimStart('v'); }
         catch { return "unknown"; }
     }
+    internal static Version? InstalledBaseVersion(string root) =>
+        Version.TryParse(InstalledVersion(root).Split('-')[0], out var version) ? version : null;
+    internal static bool RequiresRestore(string root, string targetTag)
+    {
+        var current = InstalledVersion(root);
+        var target = targetTag.TrimStart('v');
+        if (!Version.TryParse(current.Split('-')[0], out var from) ||
+            !Version.TryParse(target.Split('-')[0], out var to)) return false;
+        if (from != to) return from > to;
+        static int Revision(string value) => value.Contains("-alpha.") &&
+            int.TryParse(value.Split("-alpha.")[1], out var revision) ? revision : int.MaxValue;
+        return Revision(current) > Revision(target);
+    }
     internal static void SafeTree(string root)
     {
         root = Path.GetFullPath(root);
@@ -71,7 +84,8 @@ internal static class Recovery
     {
         SafeTree(root);
         var backupRoot = BackupDirectory(root); Directory.CreateDirectory(backupRoot); SafeTree(backupRoot);
-        var path = Path.Combine(backupRoot, $"PulseWeaver-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zip");
+        var versionLabel = System.Text.RegularExpressions.Regex.Replace(InstalledVersion(root), "[^A-Za-z0-9.-]", "_");
+        var path = Path.Combine(backupRoot, $"PulseWeaver-{versionLabel}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zip");
         var partial = path + ".partial";
         var entries = new List<Entry>();
         using (var output = new FileStream(partial,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {
