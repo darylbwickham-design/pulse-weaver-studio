@@ -22,16 +22,18 @@ struct Version {
 inline std::optional<Version> version(const Identity &identity)
 {
 	const bool mac = identity.channel == "mac-arm64-preview";
-	if (!mac && identity.channel != "windows-public" && identity.channel != "windows-private")
+	const bool alphaChannel = identity.channel == "windows-alpha";
+	if (!mac && !alphaChannel && identity.channel != "windows-public" && identity.channel != "windows-private")
 		return {};
 	const QRegularExpression expression(mac ? "^mac-v([0-9]+\\.[0-9]+\\.[0-9]+)-alpha\\.([0-9]+)$" :
+					 alphaChannel ? "^v([0-9]+\\.[0-9]+\\.[0-9]+)-alpha\\.([0-9]+)$" :
 						 "^v([0-9]+\\.[0-9]+\\.[0-9]+)$");
 	const auto match = expression.match(identity.tag);
 	if (!match.hasMatch())
 		return {};
 	const auto base = QVersionNumber::fromString(match.captured(1));
 	bool ok = true;
-	const int alpha = mac ? match.captured(2).toInt(&ok) : -1;
+	const int alpha = (mac || alphaChannel) ? match.captured(2).toInt(&ok) : -1;
 	if (!ok || base.segmentCount() != 3)
 		return {};
 	return Version{base, alpha};
@@ -39,7 +41,8 @@ inline std::optional<Version> version(const Identity &identity)
 inline bool newer(const Version &left, const Version &right)
 {
 	const int comparison = QVersionNumber::compare(left.base, right.base);
-	return comparison > 0 || (comparison == 0 && left.alpha > right.alpha);
+	return comparison > 0 || (comparison == 0 && left.alpha != right.alpha &&
+		(left.alpha == -1 || (right.alpha != -1 && left.alpha > right.alpha)));
 }
 inline QString assetName(const Identity &identity)
 {
@@ -47,6 +50,8 @@ inline QString assetName(const Identity &identity)
 		return "PulseWeaver-Mac-" + identity.tag + "-AppleSilicon.dmg";
 	if (identity.channel == "windows-public")
 		return "PulseWeaver-Public-Dist-" + identity.tag.mid(1) + "-Setup.exe";
+	if (identity.channel == "windows-alpha")
+		return "PulseWeaver-Setup-" + identity.tag.mid(1) + ".exe";
 	return "PulseWeaver-Setup-" + identity.tag.mid(1) + "-BETA.exe";
 }
 struct Release {
@@ -57,7 +62,8 @@ struct Release {
 	qint64 size = 0;
 };
 // Only exact assets from this repository and this installation's channel qualify.
-inline std::optional<Release> selectRelease(const QJsonArray &releases, const Identity &installed)
+inline std::optional<Release> selectRelease(const QJsonArray &releases, const Identity &installed,
+					   bool includeAlpha = false)
 {
 	auto bestVersion = version(installed);
 	if (!bestVersion)
@@ -67,7 +73,13 @@ inline std::optional<Release> selectRelease(const QJsonArray &releases, const Id
 		const auto release = item.toObject();
 		if (!release.contains("draft") || release.value("draft").toBool(true))
 			continue;
-		Identity candidate{installed.channel, release.value("tag_name").toString()};
+		const QString tag = release.value("tag_name").toString();
+		QString channel = installed.channel;
+		if (installed.channel == "windows-private" && includeAlpha && tag.contains("-alpha."))
+			channel = "windows-alpha";
+		else if (installed.channel == "windows-alpha" && !tag.contains("-alpha."))
+			channel = "windows-private";
+		Identity candidate{channel, tag};
 		const auto candidateVersion = version(candidate);
 		if (!candidateVersion || !newer(*candidateVersion, *bestVersion))
 			continue;
