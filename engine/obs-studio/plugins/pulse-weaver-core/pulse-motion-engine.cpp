@@ -3150,6 +3150,64 @@ QJsonObject PulseMotionEngine::restoreOriginals()
 	return {{"ok", true}, {"message", "Original scenes restored. Protected snapshots remain available for future restores."}};
 }
 
+void PulseMotionEngine::prepareCoveragePairs(Execution &execution)
+{
+	execution.coveragePairs.clear();
+	std::vector<bool> paired(execution.tracks.size(), false);
+	for (std::size_t i = 0; i < execution.tracks.size(); ++i) {
+		if (paired[i]) continue;
+		const Track &a = execution.tracks[i];
+		if (!a.from.visible || !a.target.visible) continue;
+		obs_scene_t *scene = obs_sceneitem_get_scene(a.item);
+		obs_source_t *owner = scene ? obs_scene_get_source(scene) : nullptr;
+		const float width = owner ? float(obs_source_get_width(owner)) : 0.0f;
+		const float height = owner ? float(obs_source_get_height(owner)) : 0.0f;
+		if (width <= 0.0f || height <= 0.0f) continue;
+		const auto full = [width, height](const Transform &t) {
+			return t.boundsType != OBS_BOUNDS_NONE && t.pos.x < width * 0.08f &&
+				t.pos.y < height * 0.08f && t.bounds.x >= width * 0.9f &&
+				t.bounds.y >= height * 0.9f;
+		};
+		const auto inset = [width, height](const Transform &t) {
+			return t.boundsType != OBS_BOUNDS_NONE && t.pos.x >= width * 0.45f &&
+				t.pos.y < height * 0.2f && t.bounds.x <= width * 0.45f &&
+				t.bounds.y <= height * 0.45f;
+		};
+		const auto top = [width, height](const Transform &t) {
+			return t.boundsType != OBS_BOUNDS_NONE && t.pos.y < height * 0.08f &&
+				t.bounds.x >= width * 0.9f && t.bounds.y >= height * 0.2f &&
+				t.bounds.y < height * 0.5f;
+		};
+		const auto bottom = [width, height](const Transform &t) {
+			return t.boundsType != OBS_BOUNDS_NONE && t.pos.y >= height * 0.2f &&
+				t.bounds.x >= width * 0.9f && t.bounds.y > height * 0.5f &&
+				t.pos.y + t.bounds.y >= height * 0.9f;
+		};
+		for (std::size_t j = i + 1; j < execution.tracks.size(); ++j) {
+			if (paired[j]) continue;
+			const Track &b = execution.tracks[j];
+			if (a.container != b.container || !b.from.visible || !b.target.visible) continue;
+			if (width > height * 1.2f && full(a.from) && inset(a.target) &&
+			    inset(b.from) && full(b.target)) {
+				execution.coveragePairs.push_back({Execution::CoveragePair::Kind::FullInset, j, i, width, height});
+			} else if (width > height * 1.2f && inset(a.from) && full(a.target) &&
+			           full(b.from) && inset(b.target)) {
+				execution.coveragePairs.push_back({Execution::CoveragePair::Kind::FullInset, i, j, width, height});
+			} else if (height > width * 1.2f && top(a.from) && bottom(a.target) &&
+			           bottom(b.from) && top(b.target)) {
+				execution.coveragePairs.push_back({Execution::CoveragePair::Kind::PortraitSplit, i, j, width, height});
+			} else if (height > width * 1.2f && bottom(a.from) && top(a.target) &&
+			           top(b.from) && bottom(b.target)) {
+				execution.coveragePairs.push_back({Execution::CoveragePair::Kind::PortraitSplit, j, i, width, height});
+			} else {
+				continue;
+			}
+			paired[i] = paired[j] = true;
+			break;
+		}
+	}
+}
+
 QJsonObject PulseMotionEngine::runAction(const QString &idOrName, const QString &requestId)
 {
 	if (!requestId.isEmpty() && requestResults.contains(requestId))
@@ -3179,13 +3237,21 @@ QJsonObject PulseMotionEngine::runAction(const QString &idOrName, const QString 
 	QString error;
 	if (!prepareExecution(*execution, error) || !preserveOriginals(*execution, error))
 		return {{"ok", false}, {"message", error}};
-	if (active) complete(false, "Transition replaced by the next stage look.");
+	if (active) {
+		complete(false, "Transition replaced by the next stage look.");
+		for (Track &track : execution->tracks)
+			track.baseline = track.from = capture(track.item);
+	}
 	active = std::move(execution);
 	const QString policy = action.value("policy").toString("switch");
 	const int targetStage = policy == "switch" ? findStage(action.value("stage").toString()) : -1;
 	if (targetStage >= 0 && stageSelector() && targetStage != stageSelector()->currentIndex()) {
 		active->phase = "changing_stage";
 		active->clock.start();
+		// The destination scenes are still off air. Load the requested look into
+		// them now so the stinger reveals the finished composition at its cut.
+		for (Track &track : active->tracks) apply(track.item, track.target, true);
+		active->preloadedStage = true;
 		switchStage(targetStage);
 		stageTimer.start(stageReadinessDelay(action));
 		setStatus("Changing to Stage “" + action.value("stage").toString() + "”…");
@@ -3221,6 +3287,10 @@ void PulseMotionEngine::beginAfterStage()
 			stageTimer.start(50); return;
 		}
 	}
+	if (active->preloadedStage) {
+		finishMove();
+		return;
+	}
 	active->phase = "moving";
 	active->clock.restart();
 	active->orderCommitted = false;
@@ -3242,6 +3312,7 @@ void PulseMotionEngine::beginAfterStage()
 			obs_sceneitem_set_order_position(track.item, track.target.order);
 		obs_sceneitem_set_visible(track.item, track.from.visible || track.target.visible);
 	}
+	if (active->action.value("kind") == "layout") prepareCoveragePairs(*active);
 	setStatus("Running “" + active->action.value("name").toString() + "”…");
 	emitEvent("motion_state", {{"state", "running"}, {"executionId", active->id},
 		{"action", active->action.value("id")}, {"name", active->action.value("name")}, {"stage", activeStageName()}});
@@ -3267,6 +3338,10 @@ void PulseMotionEngine::tick()
 	if (active->phase != "moving" && active->phase != "restoring") return;
 	const double progress = active->durationMs <= 0 ? 1.0 :
 		std::min(1.0, double(active->clock.elapsed()) / double(active->durationMs));
+	std::vector<bool> covered(active->tracks.size(), false);
+	if (!active->restoring)
+		for (const Execution::CoveragePair &pair : active->coveragePairs)
+			covered[pair.incoming] = covered[pair.outgoing] = true;
 	if (!active->restoring && !active->graphicCommitted && progress >= 0.5) {
 		// Hide old artwork before revealing the new full-canvas graphics.
 		for (Track &track : active->tracks)
@@ -3281,11 +3356,68 @@ void PulseMotionEngine::tick()
 		// Swap the stack after continuous sources have travelled most of the way.
 		// Incoming sources were prepared off canvas before their first visible frame.
 		for (Track &track : active->tracks)
-			if (track.from.visible && track.target.visible)
+			if (!covered[&track - active->tracks.data()] && track.from.visible && track.target.visible)
 				obs_sceneitem_set_order_position(track.item, track.target.order);
 		active->orderCommitted = true;
 	}
+	if (!active->restoring) {
+		for (Execution::CoveragePair &pair : active->coveragePairs) {
+			Track &incoming = active->tracks[pair.incoming];
+			Track &outgoing = active->tracks[pair.outgoing];
+			Transform enterFrame, leaveFrame;
+			if (pair.kind == Execution::CoveragePair::Kind::FullInset) {
+				if (progress < 0.5) {
+					enterFrame = interpolate(incoming.from, incoming.target, progress * 2.0);
+					enterFrame.boundsType = OBS_BOUNDS_SCALE_OUTER;
+					enterFrame.boundsCrop = true;
+					leaveFrame = outgoing.from;
+				} else {
+					enterFrame = incoming.target;
+					Transform insetStart = outgoing.target;
+					insetStart.pos.x += insetStart.bounds.x * 0.5f;
+					insetStart.pos.y += insetStart.bounds.y * 0.5f;
+					insetStart.bounds = {1.0f, 1.0f};
+					leaveFrame = interpolate(insetStart, outgoing.target, (progress - 0.5) * 2.0);
+					if (!pair.orderCommitted) {
+						obs_sceneitem_set_order_position(incoming.item, incoming.target.order);
+						obs_sceneitem_set_order_position(outgoing.item, outgoing.target.order);
+						pair.orderCommitted = true;
+					}
+				}
+			} else {
+				auto fullFrame = [&pair](const Transform &value) {
+					Transform full = value;
+					full.pos = {0.0f, 0.0f};
+					full.bounds = {pair.width, pair.height};
+					full.boundsType = OBS_BOUNDS_SCALE_OUTER;
+					full.boundsCrop = true;
+					full.boundsAlignment = 0;
+					full.alignment = 5;
+					return full;
+				};
+				const Transform enterFull = fullFrame(incoming.from);
+				const Transform leaveFull = fullFrame(outgoing.from);
+				if (progress < 0.4) {
+					enterFrame = interpolate(incoming.from, enterFull, progress / 0.4);
+					leaveFrame = outgoing.from;
+				} else if (progress < 0.7) {
+					enterFrame = enterFull;
+					leaveFrame = interpolate(outgoing.from, leaveFull, (progress - 0.4) / 0.3);
+				} else {
+					enterFrame = interpolate(enterFull, incoming.target, (progress - 0.7) / 0.3);
+					leaveFrame = interpolate(leaveFull, outgoing.target, (progress - 0.7) / 0.3);
+				}
+				if (progress > 0.0 && progress < 1.0) {
+					enterFrame.boundsType = leaveFrame.boundsType = OBS_BOUNDS_SCALE_OUTER;
+					enterFrame.boundsCrop = leaveFrame.boundsCrop = true;
+				}
+			}
+			apply(incoming.item, enterFrame, progress >= 1.0);
+			apply(outgoing.item, leaveFrame, progress >= 1.0);
+		}
+	}
 	for (Track &track : active->tracks) {
+		if (covered[&track - active->tracks.data()]) continue;
 		if (!active->restoring && motionGraphicSwitch(track.sourceName) &&
 		    track.from.visible != track.target.visible)
 			continue;
@@ -3348,6 +3480,8 @@ void PulseMotionEngine::complete(bool ok, const QString &message)
 	if (!active) return;
 	animationTimer.stop();
 	stageTimer.stop();
+	if (!ok && active->preloadedStage && active->phase == "changing_stage")
+		for (Track &track : active->tracks) apply(track.item, track.baseline, true);
 	const QString executionId = active->id;
 	const QString actionId = active->action.value("id").toString();
 	const QString name = active->action.value("name").toString();
@@ -3379,6 +3513,8 @@ QJsonObject PulseMotionEngine::stopAction(const QString &executionId, bool resto
 	if (restore) {
 		if (active->phase == "changing_stage") {
 			const QString id = active->id;
+			if (active->preloadedStage)
+				for (Track &track : active->tracks) apply(track.item, track.baseline, true);
 			complete(true, "Motion stopped before source movement began.");
 			return {{"ok", true}, {"accepted", true}, {"executionId", id},
 				{"message", "Motion stopped before source movement began."}};
@@ -3417,6 +3553,8 @@ void PulseMotionEngine::cancelForManualStageChange()
 	if (!active) return;
 	if (active->phase == "changing_stage") {
 		const QString name = active->action.value("name").toString();
+		if (active->preloadedStage)
+			for (Track &track : active->tracks) apply(track.item, track.baseline, true);
 		active.reset();
 		stageTimer.stop();
 		setStatus("“" + name + "” was cancelled because you changed Stage.");

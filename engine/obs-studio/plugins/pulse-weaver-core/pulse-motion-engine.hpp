@@ -13,6 +13,7 @@
 #include <QWidget>
 
 #include <functional>
+#include <cstddef>
 #include <memory>
 #include <vector>
 
@@ -72,6 +73,14 @@ private:
 		Transform target;
 	};
 	struct Execution {
+		struct CoveragePair {
+			enum class Kind { FullInset, PortraitSplit } kind;
+			std::size_t incoming = 0;
+			std::size_t outgoing = 0;
+			float width = 0.0f;
+			float height = 0.0f;
+			bool orderCommitted = false;
+		};
 		QString id;
 		QString requestId;
 		QJsonObject action;
@@ -79,6 +88,7 @@ private:
 		QString actionStage;
 		QString phase;
 		std::vector<Track> tracks;
+		std::vector<CoveragePair> coveragePairs;
 		QElapsedTimer clock;
 		qint64 holdUntil = 0;
 		int durationMs = 0;
@@ -86,6 +96,7 @@ private:
 		bool restoring = false;
 		bool orderCommitted = false;
 		bool graphicCommitted = false;
+		bool preloadedStage = false;
 	};
 
 	QString storagePath;
@@ -209,6 +220,7 @@ private:
 	static Transform punchTarget(obs_sceneitem_t *item, const Transform &original, double zoom, double focusX, double focusY);
 	OBSSceneItem resolveItem(const QString &container, qint64 itemId, const QString &sourceName, bool recursive = true) const;
 	bool prepareExecution(Execution &execution, QString &error);
+	void prepareCoveragePairs(Execution &execution);
 	void beginAfterStage();
 	void tick();
 	void finishMove();
