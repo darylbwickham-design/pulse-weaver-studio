@@ -941,8 +941,8 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	auto *canvasCard = new QFrame;
 	canvasCard->setObjectName("PulseWeaverCard");
 	auto *canvasLayout = new QVBoxLayout(canvasCard);
-	canvasLayout->setContentsMargins(8, 4, 8, 4);
-	canvasLayout->setSpacing(4);
+	canvasLayout->setContentsMargins(12, 10, 12, 10);
+	canvasLayout->setSpacing(8);
 	auto *canvasHeading = new QLabel("DESIGN CANVAS  ·  EDIT WITHOUT CHANGING OUTPUT");
 	canvasHeading->setObjectName("PulseWeaverCardTitle");
 	canvasLayout->addWidget(canvasHeading);
@@ -960,11 +960,11 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 		visualCanvasInteraction(itemId, focus, toggle);
 	};
 	auto *previewSurfaces = new QHBoxLayout;
-	previewSurfaces->setSpacing(10);
+	previewSurfaces->setSpacing(12);
 	auto *portraitPanel = new QWidget(canvasCard);
 	auto *portraitLayout = new QVBoxLayout(portraitPanel);
-	portraitLayout->setContentsMargins(0, 0, 0, 0);
-	portraitLayout->setSpacing(3);
+	portraitLayout->setContentsMargins(6, 0, 6, 6);
+	portraitLayout->setSpacing(8);
 	auto *portraitLabel = new QLabel("9:16 · Portrait · click to edit", portraitPanel);
 	portraitLabel->setObjectName("MotionPortraitLabel");
 	portraitLayout->addWidget(portraitLabel);
@@ -981,8 +981,8 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	previewSurfaces->addWidget(portraitPanel, 1);
 	auto *landscapePanel = new QWidget(canvasCard);
 	auto *landscapeLayout = new QVBoxLayout(landscapePanel);
-	landscapeLayout->setContentsMargins(0, 0, 0, 0);
-	landscapeLayout->setSpacing(3);
+	landscapeLayout->setContentsMargins(6, 0, 6, 6);
+	landscapeLayout->setSpacing(8);
 	auto *landscapeLabel = new QLabel("16:9 · Landscape · click to edit", landscapePanel);
 	landscapeLabel->setObjectName("MotionLandscapeLabel");
 	landscapeLayout->addWidget(landscapeLabel);

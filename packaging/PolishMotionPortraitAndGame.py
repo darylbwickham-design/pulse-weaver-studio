@@ -308,8 +308,20 @@ def main():
     pixel_board = next(target for target in starting["items"]
                        if target["container"] == "PW Vert Starting"
                        and target["source"] == "second facecam")
-    pixel_board["transform"].update(positionX=642, positionY=12,
-                                    scaleX=0.42, scaleY=0.42)
+    pixel_board["transform"].update(
+        positionX=524, positionY=-371,
+        scaleX=0.8187204003334045, scaleY=0.8185389041900635,
+        cropLeft=381, cropTop=167, cropRight=491, cropBottom=0)
+    starting_stack = sorted(
+        (target for target in starting["items"]
+         if target["container"] == "PW Vert Starting" and target is not pixel_board),
+        key=lambda target: target["transform"]["order"])
+    printer_index = next(index for index, target in enumerate(starting_stack)
+                         if target["source"] == "Video Capture Device"
+                         and target["transform"]["visible"])
+    starting_stack.insert(printer_index, pixel_board)
+    for order, target in enumerate(starting_stack):
+        target["transform"]["order"] = order
     # The portable app may reopen directly on any PW Stage. Seed each new
     # scene with its first saved look so the first programme frame is complete,
     # including the portrait focus region. Only PW scenes are changed.
