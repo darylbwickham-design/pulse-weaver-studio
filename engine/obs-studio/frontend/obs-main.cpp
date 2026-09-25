@@ -734,10 +734,6 @@ static int run_program(fstream &logFile, int argc, char *argv[])
 
 #ifdef _WIN32
 
-#define CRASH_MESSAGE                                                      \
-	"Woops, OBS has crashed!\n\nWould you like to copy the crash log " \
-	"to the clipboard? The crash log will still be saved to:\n\n%s"
-
 static void main_crash_handler(const char *format, va_list args, void * /* param */)
 {
 	char *text = new char[MAX_CRASH_REPORT_SIZE];
@@ -765,38 +761,8 @@ static void main_crash_handler(const char *format, va_list args, void * /* param
 #endif
 	file << text;
 	file.close();
-
-	string pathString(path.Get());
-
-#ifdef _WIN32
-	std::replace(pathString.begin(), pathString.end(), '/', '\\');
-#endif
-
-	string absolutePath = canonical(filesystem::path(pathString)).u8string();
-
-	size_t size = snprintf(nullptr, 0, CRASH_MESSAGE, absolutePath.c_str());
-
-	unique_ptr<char[]> message_buffer(new char[size + 1]);
-
-	snprintf(message_buffer.get(), size + 1, CRASH_MESSAGE, absolutePath.c_str());
-
-	string finalMessage = string(message_buffer.get(), message_buffer.get() + size);
-
-	int ret = MessageBoxA(NULL, finalMessage.c_str(), "OBS has crashed!", MB_YESNO | MB_ICONERROR | MB_TASKMODAL);
-
-	if (ret == IDYES) {
-		size_t len = strlen(text);
-
-		HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, len);
-		memcpy(GlobalLock(mem), text, len);
-		GlobalUnlock(mem);
-
-		OpenClipboard(0);
-		EmptyClipboard();
-		SetClipboardData(CF_TEXT, mem);
-		CloseClipboard();
-	}
-
+	/* Keep the local crash report without opening OBS's native dialog. */
+	delete[] text;
 	exit(-1);
 }
 
