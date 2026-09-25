@@ -9,8 +9,9 @@ const root = path.resolve(__dirname, '../integrations/lumia-pulseweaver');
 const manifest = JSON.parse(fs.readFileSync(path.join(root,'manifest.json')));
 const sleep = ms => new Promise(resolve=>setTimeout(resolve,ms));
 async function until(fn) { for(let n=0;n<100;n++){ if(fn())return; await sleep(10); } throw Error('Timed out'); }
-function load(lumia,port) {
+function load(lumia,port,overrides={}) {
  const sandbox = {module:{exports:{}},exports:{},require:id=>id==='@lumiastream/plugin'?{Plugin:class {constructor(m){this.manifest=m;this.lumia=lumia;this.settings={port,apiToken:'test-token'};}}}:require(id),process,Buffer,URLSearchParams,AbortController,fetch,setTimeout,clearTimeout,console};
+ Object.assign(sandbox,overrides);
  vm.runInNewContext(fs.readFileSync(path.join(root,'main.js'),'utf8'),sandbox,{filename:'main.js'});
  return new sandbox.module.exports(manifest,{});
 }
@@ -83,6 +84,22 @@ test('Custom ports, tokens and explicit config paths keep their installation ide
  plugin.settings.configPath='C:\\portable\\pulse-weaver.ini';
  assert.equal(JSON.stringify(plugin.configCandidates()),JSON.stringify(['C:\\portable\\pulse-weaver.ini']));
  assert.equal(plugin.connectionPort(),18765);
+});
+
+test('Long installer downtime keeps retrying and refreshes only the discovered token',()=>{
+ const delays=[];
+ const plugin=load({updateConnection:async()=>{},setVariable:async()=>{}},19755,
+   {setTimeout:(_,delay)=>{delays.push(delay);return delays.length;},clearTimeout:()=>{}});
+ plugin.enabled=true;
+ plugin.endpoint=()=>{throw new Error('App closed for update');};
+ for(let n=0;n<12;n++){plugin.token='cached-token';plugin.connect();assert.equal(plugin.token,'');}
+ assert.equal(delays.length,12);
+ assert.equal(delays.at(-1),30000);
+ assert.equal(plugin.connectionPort(),19755);
+ assert.equal(plugin.settings.apiToken,'test-token');
+ plugin.enabled=false;
+ plugin.connect();
+ assert.equal(delays.length,12);
 });
 test('Split SSE frames, initial snapshot without alerts, dynamic existing-source lists, no idle polling',async()=>{
  const f=await fixture();try{
