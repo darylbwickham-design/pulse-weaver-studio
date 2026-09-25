@@ -1,6 +1,6 @@
-# Pulse Weaver for Lumia Stream — 1.2.1
+# Pulse Weaver for Lumia Stream — 1.4.0
 
-Version 1.2.1 updates the existing Pulse Weaver Lumia plugin. It keeps the `pulseweavercontrol` ID so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.2.1.lumiaplugin` over the existing plugin after installing the Pulse Weaver build that provides native motion.
+Version 1.4.0 updates the existing Pulse Weaver Lumia plugin for both release and alpha. It keeps the `pulseweavercontrol` ID, action IDs and field keys so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.4.0.lumiaplugin` over the existing regular plugin. Keep your existing port and credentials; in-place alpha upgrades use the same installation and connection. Motion controls are available when the connected build supports them.
 
 The motion catalogue includes named stage looks such as Game, Chatting, Printer and BRB. Run Stage Look / Motion Action triggers each look from Lumia reactions or LumiCon buttons. Restore Original Scenes returns the protected source state and original on-air scene even after repeated look changes or an app restart. The existing Stop + Restore and Restore Last controls remain available.
 
@@ -27,13 +27,13 @@ All 36 alerts default to **Off** in Lumia. Enable individual alerts when you con
 
 Existing status variables remain, with motion, Twitch, Kick and YouTube status variables. Action return variables keep Lumia's existing `pulseweavercontrol_` prefix. A start command only reports success after live state is observed; a timeout stops the Lumia action chain and tells you to check the app. A failed whole-show start may leave successful destinations running, and its error says so.
 
-Events arrive over one authenticated local event stream. There is no idle status polling. Source lists update when their catalogue changes, variables/options update only when changed, and the connection sends a small heartbeat every 20 seconds while subscribed. Reconnection retries back off and stop after eight failed attempts; use Reconnect or re-enable the plugin afterwards. Reconnecting refreshes the current state without replaying historical alerts. Normal successful actions do not create toast spam or Event List entries.
+Events arrive over one authenticated local event stream. There is no idle status polling. Source lists update when their catalogue changes, variables/options update only when changed, and the connection sends a small heartbeat every 20 seconds while subscribed. Reconnection retries back off to once every 30 seconds while Pulse Weaver is closed for an upgrade or rollback. Automatically discovered tokens are reread on reconnect; explicitly supplied credentials remain unchanged. Reconnecting refreshes the current state without replaying historical alerts.
 
 ## Connection
 
 Port 18755 remains the default for the normal Pulse Weaver installation. The separate **Pulse Weaver Motion Preview** package uses manifest ID `pulseweavermotionpreview` and port 18765, so it can coexist with the release plugin. Build it with `packaging/Build-LumiaMotionPreview.ps1`. Its variables and action results use the `pulseweavermotionpreview_` prefix. Token discovery stays within the selected installation; it does not fall back to the other profile. For a custom portable installation, set the full `config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini` path or enter its connection token. The task-specific package includes its configuration path, never its token. The 1.3.1 preview package routes Restore Last Motion Layout separately from Stop and Restore Motion.
 
-Saved look requests are asynchronous: acceptance means the cue was queued, not that the animation has finished. A Stage change uses the configured transition before source movement. Within the same Stage, looks animate directly. Keep your Chatty layout actions in the same Lumia reaction; Pulse Weaver preserves Chatty as a locked full-canvas overlay.
+Saved look requests are asynchronous: acceptance means the cue was queued, not that the animation has finished. A Stage change preloads the saved layout before the configured stinger reveals it. Within the same Stage, looks animate directly. Keep your Chatty layout actions in the same Lumia reaction; Pulse Weaver preserves Chatty as a locked full-canvas overlay.
 
 Do not use Lumia's generic OBS connection to bypass these operating controls. Build scenes, Stages and routing inside Pulse Weaver.
 
