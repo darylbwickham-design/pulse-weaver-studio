@@ -22,10 +22,21 @@ internal static class Program
     const string InstallFolderName = "Pulse Weaver";
     const string ShortcutFileName = "Pulse Weaver.lnk";
     const string RegistryProductKey = "PulseWeaver";
+#if PULSE_ALPHA
+    const string UpdateChannel = "windows-alpha";
+    internal const string InstallerSubtitle = "STREAMING STUDIO  ·  EXPERIMENTAL ALPHA";
+#else
     const string UpdateChannel = "windows-private";
     internal const string InstallerSubtitle = "STREAMING STUDIO  ·  BETA";
 #endif
+#endif
     internal static readonly string Version = Assembly.GetExecutingAssembly().GetName().Version!.ToString(3);
+#if PULSE_ALPHA
+    internal static readonly string ReleaseTag = "v" + Version + "-alpha." + Assembly.GetExecutingAssembly()
+        .GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "AlphaRevision").Value;
+#else
+    internal static readonly string ReleaseTag = "v" + Version;
+#endif
     const string InstallManifestName = ".pulseweaver-installed-files.txt";
     internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", InstallFolderName);
     internal static readonly string AppPath = Path.Combine(InstallDirectory, "bin", "64bit", "PulseWeaverCore.exe");
@@ -61,7 +72,7 @@ internal static class Program
         if (Process.GetProcessesByName("PulseWeaverCore").Length > 0) throw new InvalidOperationException("Pulse Weaver is running. Close it, then try the installation again.");
         using var operationLock = Recovery.Acquire(InstallDirectory);
         if (Recovery.Pending(InstallDirectory)) throw new IOException("Recover the interrupted operation before installing.");
-        if (System.Version.TryParse(Recovery.InstalledVersion(InstallDirectory), out var installed) && installed > System.Version.Parse(Version))
+        if (Recovery.RequiresRestore(InstallDirectory, ReleaseTag))
             throw new IOException("A newer version is installed. Use RESTORE BACKUP to roll back app files and settings together; installing old binaries over newer settings is blocked.");
         InstallInto(InstallDirectory,languageCode,LegacyRegistrationExpected(),progress);
         var current = Environment.ProcessPath ?? throw new InvalidOperationException("Setup could not locate itself.");
@@ -106,7 +117,7 @@ internal static class Program
 
     static void WriteUpdateIdentity(string destination)
     {
-        var identity = new { schema = 1, channel = UpdateChannel, tag = "v" + Version };
+        var identity = new { schema = 1, channel = UpdateChannel, tag = ReleaseTag };
         File.WriteAllText(Path.Combine(destination, "bin", "64bit", "pulseweaver-update.json"),
             System.Text.Json.JsonSerializer.Serialize(identity));
     }
@@ -154,7 +165,7 @@ internal static class Program
             WriteUpdateIdentity(root);
             using (var identity = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "bin", "64bit", "pulseweaver-update.json"))))
                 if (identity.RootElement.GetProperty("channel").GetString() != UpdateChannel ||
-                    identity.RootElement.GetProperty("tag").GetString() != "v" + Version) return 7;
+                    identity.RootElement.GetProperty("tag").GetString() != ReleaseTag) return 7;
             var app = Path.Combine(root, "bin", "64bit", "PulseWeaverCore.exe");
             using (var stream = File.OpenRead(app))
                 if (stream.Length <= 1_000_000 || stream.ReadByte() != 'M' || stream.ReadByte() != 'Z') return 2;
@@ -194,7 +205,7 @@ internal static class Program
             try { using(Recovery.Acquire(root)) InstallInto(root,ConfiguredLanguage(root),false,(_,_)=>{}); }
             finally { upgradeSelfTest=false; }
             if(!Equal(configBefore,Digests(config)))throw new IOException("Upgrade changed copied configuration bytes.");
-            if(Recovery.InstalledVersion(root)!=Version)throw new IOException("Upgrade identity mismatch.");
+            if(Recovery.InstalledVersion(root)!=ReleaseTag.TrimStart('v'))throw new IOException("Upgrade identity mismatch.");
             var saved=Directory.GetFiles(Recovery.BackupDirectory(root),"*.zip").Single();
             if(recoveryExe is null) {using var held=Recovery.Acquire(root);Recovery.Restore(root,saved,(_,_)=>{});}
             else {
@@ -420,7 +431,7 @@ internal sealed class SetupForm : Form
     public SetupForm()
     {
 		var existingInstall = File.Exists(Program.AppPath);
-		downgrade = System.Version.TryParse(Recovery.InstalledVersion(Program.InstallDirectory),out var currentVersion) && currentVersion > System.Version.Parse(Program.Version);
+		downgrade = Recovery.RequiresRestore(Program.InstallDirectory, Program.ReleaseTag);
 		if (existingInstall) {
 			var installedVersion = Registry.CurrentUser.OpenSubKey(Program.UninstallRegistryPath)?.GetValue("DisplayVersion")?.ToString();
 			var update = string.IsNullOrWhiteSpace(installedVersion) || !string.Equals(installedVersion, Program.Version, StringComparison.OrdinalIgnoreCase);

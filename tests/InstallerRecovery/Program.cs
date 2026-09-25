@@ -41,6 +41,16 @@ try{
    var blocked=false;try{using var second=Recovery.Acquire(root);}catch(IOException){blocked=true;}Check(blocked,"concurrent maintenance allowed");
  }
  var backup=Recovery.Backup(root);Check(Recovery.Inspect(backup).Version=="1.12.7","wrong backup version");
+ var alphaRoot=Path.Combine(temp,"alpha");Seed(alphaRoot,"1.13.0-alpha.2");
+ Check(Recovery.RequiresRestore(alphaRoot,"v1.12.16"),"alpha rollback must require full restore");
+ Check(Recovery.RequiresRestore(alphaRoot,"v1.13.0-alpha.1"),"older alpha must require full restore");
+ Check(!Recovery.RequiresRestore(alphaRoot,"v1.13.0"),"final release should upgrade alpha");
+ Check(!Recovery.RequiresRestore(alphaRoot,"v1.13.0-alpha.3"),"newer alpha should upgrade");
+ Put(alphaRoot,"config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini","[api]\nport=19755\ntoken=synthetic-token\n");
+ var alphaBackup=Recovery.Backup(alphaRoot);
+ Put(alphaRoot,"config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini","changed");
+ Recovery.Restore(alphaRoot,alphaBackup,(_,_)=>{});
+ Check(File.ReadAllText(Path.Combine(alphaRoot,"config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini")).Contains("port=19755\ntoken=synthetic-token"),"rollback must restore Lumia credentials and port");
  var newer=Path.Combine(temp,"new");Seed(newer,"1.12.8");Put(newer,"new-only.dll","new");
  Recovery.Replace(root,newer);Check(Recovery.InstalledVersion(root)=="1.12.8","update failed");
  Recovery.Restore(root,backup,(_,_)=>{});Check(Recovery.InstalledVersion(root)=="1.12.7","rollback version failed");Check(File.ReadAllText(Path.Combine(root,"config/scenes.json")).EndsWith("1.12.7"),"settings not restored");Check(!File.Exists(Path.Combine(root,"new-only.dll")),"rollback left new files");

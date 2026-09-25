@@ -12,6 +12,8 @@
     <Product Condition="'$(PreviewChannel)' != 'true'">Pulse Weaver Streaming Studio Setup</Product>
     <Product Condition="'$(PreviewChannel)' == 'true'">Pulse Weaver Motion Preview Setup</Product>
     <DefineConstants Condition="'$(PreviewChannel)' == 'true'">$(DefineConstants);PULSE_MOTION_PREVIEW</DefineConstants>
+    <DefineConstants Condition="'$(AlphaChannel)' == 'true'">$(DefineConstants);PULSE_ALPHA</DefineConstants>
+    <AlphaRevision Condition="'$(AlphaRevision)' == ''">1</AlphaRevision>
     <Version>$(ReleaseVersion)</Version>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>none</DebugType>
@@ -19,6 +21,7 @@
     <ApplicationIcon>..\..\engine\obs-studio\frontend\cmake\windows\pulseweaver.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyMetadata Include="AlphaRevision" Value="$(AlphaRevision)" />
     <EmbeddedResource Include="$(PayloadArchive)"
                       LogicalName="PulseWeaver.Payload.zip"
                       Condition="'$(SkipPayloadEmbedding)' != 'true'" />

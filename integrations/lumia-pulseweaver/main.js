@@ -33,8 +33,8 @@ class PulseWeaverPlugin extends Plugin {
     const local = process.env.LOCALAPPDATA || '';
     const regular = local && path.join(local, 'Programs', 'Pulse Weaver', 'config', 'obs-studio', 'plugin_config', 'pulse-weaver-core', 'pulse-weaver.ini');
     const preview = local && path.join(local, 'Programs', 'Pulse Weaver Motion Preview', 'config', 'obs-studio', 'plugin_config', 'pulse-weaver-core', 'pulse-weaver.ini');
-    const previewPort = this.connectionPort() === 18765;
-    return [configured, ...(previewPort ? [preview] : [regular])].filter(Boolean);
+    const isolatedPreview = this.manifest.id === 'pulseweavermotionpreview';
+    return configured ? [configured] : (isolatedPreview ? [preview] : [regular]).filter(Boolean);
   }
   connectionPort() {
     const defaultPort = this.manifest.config.settings.find(setting => setting.key === 'port')?.defaultValue || 18755;
@@ -80,12 +80,14 @@ class PulseWeaverPlugin extends Plugin {
       if (ended || generation !== this.generation) return;
       ended = true; this.stream?.destroy(); this.stream = null; this.state = null;
       this.changes.emit('state');
+      this.token = ''; // Re-read the retained installation token after an upgrade or rollback.
       void this.lumia.updateConnection(false).catch(() => {});
 	  for (const name of ['stream_status','recording_status','twitch_status','kick_status','youtube_status'])
 	    void this.setVariable(name, 'DISCONNECTED').catch(() => {});
       void this.setVariable('last_result', error?.message || 'Pulse Weaver disconnected.').catch(() => {});
-      if (this.enabled && this.retry < 8) {
+      if (this.enabled) {
         const delay = Math.min(30000, 1000 * 2 ** this.retry++);
+        this.retry = Math.min(this.retry, 6);
         this.retryTimer = setTimeout(() => this.connect(), delay);
       }
     };

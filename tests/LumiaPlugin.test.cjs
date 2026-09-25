@@ -50,7 +50,7 @@ async function fixture() {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.2.1');
+ assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.0');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
  assert.equal(manifest.config.actions.length,18);assert.equal(manifest.config.alerts.length,36);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
@@ -72,6 +72,17 @@ test('Saved motion actions populate the existing plugin and use the guarded moti
   assert.ok(f.requests.includes('/api/v1/lumia/motion/original'));
   assert.equal(original.newlyPassedVariables.pulseweavercontrol_result,'Original scenes restored');
  }finally{await f.close();}
+});
+
+test('Custom ports, tokens and explicit config paths keep their installation identity',()=>{
+ const plugin=load({},19755);
+ assert.equal(plugin.connectionPort(),19755);
+ assert.equal(plugin.connectionToken(),'test-token');
+ plugin.settings.port=18765;
+ assert.ok(plugin.configCandidates().every(file=>!file.includes('Motion Preview')));
+ plugin.settings.configPath='C:\\portable\\pulse-weaver.ini';
+ assert.equal(JSON.stringify(plugin.configCandidates()),JSON.stringify(['C:\\portable\\pulse-weaver.ini']));
+ assert.equal(plugin.connectionPort(),18765);
 });
 test('Split SSE frames, initial snapshot without alerts, dynamic existing-source lists, no idle polling',async()=>{
  const f=await fixture();try{

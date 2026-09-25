@@ -29,6 +29,16 @@ int main(int argc, char **argv)
 	const Identity windows{"windows-public", "v1.12.1"};
 	const Identity privateWindows{"windows-private", "v1.12.1"};
 	const Identity mac{"mac-arm64-preview", "mac-v0.1.0-alpha.1"};
+	const Identity alpha{"windows-alpha", "v1.13.0-alpha.1"};
+	const QJsonArray alphaReleases{release(alpha), release({"windows-alpha", "v1.13.0-alpha.10"}),
+		release({"windows-private", "v1.12.16"})};
+	check(selectRelease(alphaReleases, privateWindows)->identity.tag == "v1.12.16", "Alpha is opt-in");
+	check(selectRelease(alphaReleases, privateWindows, true)->identity.tag == "v1.13.0-alpha.10", "Alpha opt-in selects numeric revision");
+	check(selectRelease(alphaReleases, alpha)->identity.tag == "v1.13.0-alpha.10", "Alpha keeps receiving alpha updates");
+	check(!selectRelease(QJsonArray{release({"windows-private", "v1.12.16"})}, alpha), "Return to older release requires recovery");
+	check(selectRelease(QJsonArray{release({"windows-private", "v1.13.0"})}, alpha)->identity.channel == "windows-private", "Final release supersedes alpha with same base version");
+	check(!selectRelease(QJsonArray{release(alpha)}, {"windows-private", "v1.13.0"}, true), "Alpha cannot downgrade final release");
+	check(!selectRelease(QJsonArray{release(alpha)}, windows, true), "Legacy public installation is not cross-targeted");
 	if (argc > 2) {
 		QFile fixture(QString::fromLocal8Bit(argv[2]));
 		check(fixture.open(QIODevice::ReadOnly), "Open GitHub metadata fixture");
