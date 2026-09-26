@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.28...3.30)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
+option(PULSEWEAVER_KICK_PROTOCOL_TESTS "Build Kick protocol regression tests" OFF)
+if(PULSEWEAVER_KICK_PROTOCOL_TESTS)
+  add_executable(pulse-weaver-kick-protocol-tests tests/PulseKickProtocolTests.cpp)
+  target_link_libraries(pulse-weaver-kick-protocol-tests PRIVATE Qt::Network)
+  add_test(NAME pulse-weaver-kick-protocol-tests COMMAND pulse-weaver-kick-protocol-tests)
+endif()
+
 add_library(pulse-weaver-core MODULE)
 add_library(PulseWeaver::core ALIAS pulse-weaver-core)
 

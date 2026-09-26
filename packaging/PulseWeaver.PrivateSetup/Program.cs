@@ -59,6 +59,20 @@ internal static class Program
             try {using var held=Recovery.Acquire(root);Recovery.Restore(root,args[2],(_,_)=>{});return 0;}catch{return 65;}
         }
         if (args.Any(x => x.Equals("/migration-test", StringComparison.OrdinalIgnoreCase))) return LegacyCredentialMigration.VerifySyntheticMigration();
+        if (args.Any(x => x.Equals("/adopt-test", StringComparison.OrdinalIgnoreCase))) return ProfileAdoption.VerifySyntheticAdoption();
+        if (args.Length == 2 && args[0].Equals("/adopt-profile", StringComparison.OrdinalIgnoreCase)) {
+            try {
+                if (Process.GetProcessesByName("PulseWeaverCore").Length > 0)
+                    throw new IOException("Close every Pulse Weaver window before importing the isolated profile.");
+                var backup = ProfileAdoption.Adopt(args[1], InstallDirectory);
+                File.WriteAllText(Path.Combine(Recovery.BackupDirectory(InstallDirectory), "last-profile-adoption.txt"),
+                    "Isolated profile copied into the installed app. The previous complete installation is backed up at " + backup);
+                return 0;
+            } catch (Exception ex) {
+                MessageBox.Show(ex.Message, "Profile import failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return 1;
+            }
+        }
         if (args.Any(x => x.Equals("/test", StringComparison.OrdinalIgnoreCase))) return VerifyPayload();
         if (args.Any(x => x.Equals("/layout-test", StringComparison.OrdinalIgnoreCase))) return VerifyLayout();
         if (args.Any(x => x.Equals("/language-test", StringComparison.OrdinalIgnoreCase))) return VerifyLanguage();

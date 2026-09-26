@@ -2,6 +2,7 @@
 #include "../../shared/qt/PulseLegal.hpp"
 #include "../../shared/qt/PulsePlatformApplicationIds.hpp"
 #include "../../shared/qt/PulseChat.hpp"
+#include "../../shared/qt/PulseKickProtocol.hpp"
 #include "../../shared/qt/PulseLumiaOutput.hpp"
 #include "../../shared/qt/PulseOutputBitrates.hpp"
 #include "pulse-lumia-bridge.hpp"
@@ -1313,7 +1314,8 @@ public:
 		streamKey = unprotectCredential(settings.value("kick/stream_key").toString());
 		accountName = settings.value("kick/account_name").toString();
 		broadcasterUserId = settings.value("kick/broadcaster_user_id").toLongLong();
-		moderationScopes = settings.value("kick/scopes").toString().split(' ', Qt::SkipEmptyParts);
+		/* Saved scopes are informational only. Protected actions wait for Kick's
+		 * introspection result for the current user access token. */
 		tokenExpiresAtMs = settings.value("kick/token_expires_at_ms").toLongLong();
 		connect(&callback, &QTcpServer::newConnection, this, [this] { acceptCallback(); });
 		relayPollTimer.setInterval(1500);
@@ -1325,6 +1327,7 @@ public:
 		QPushButton *connectButton, QPushButton *disconnectButton, QLineEdit *chat, QPushButton *send)
 	{
 		clientField = application; accountLabel = account; status = state; canvasRoute = route;
+		reauthoriseButton = connectButton;
 		chatInput = chat; chatSend = send;
 		if (clientField) {
 			clientField->setText("Pulse Weaver registered Kick app");
@@ -1338,6 +1341,61 @@ public:
 		updateUi();
 		if (!accessToken.isEmpty())
 			fetchChannel();
+	}
+	void setTitleWidgets(QLineEdit *editor, QLabel *result)
+	{
+		titleEditor = editor;
+		titleResult = result;
+		if (titleEditor && !currentTitle.isEmpty()) titleEditor->setText(currentTitle);
+	}
+	void setPermissionLabel(QLabel *label)
+	{
+		permissionLabel = label;
+		if (permissionLabel)
+			permissionLabel->setText(grantVerified ? "Kick permissions verified for this account." :
+				"Kick permissions will be checked against the connected account.");
+	}
+	void updateTitle(const QString &requested, bool retried = false)
+	{
+		const QString title = requested.trimmed();
+		if (title.isEmpty()) { setTitleStatus("Enter a Kick title first."); return; }
+		if (accessToken.isEmpty() || broadcasterUserId <= 0) {
+			setTitleStatus("Connect Kick and load your channel before changing its title."); return;
+		}
+		if (!retried && tokenExpired()) {
+			refreshAccessToken([this, title](bool ok) { if (ok) updateTitle(title, true); });
+			return;
+		}
+		inspectGrant([this, title, retried](bool verified) {
+			if (!verified) return;
+			if (!moderationScopes.contains("channel:write")) {
+				setTitleStatus("Kick did not grant channel:write. Select Reauthorise Kick, then retry."); return;
+			}
+			QNetworkRequest request(QUrl("https://api.kick.com/public/v1/channels"));
+			request.setTransferTimeout(15000);
+			request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
+			request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+			const QByteArray body = QJsonDocument(PulseKick::titleBody(title)).toJson(QJsonDocument::Compact);
+			QNetworkReply *reply = network.sendCustomRequest(request, "PATCH", body);
+			setTitleStatus("Updating Kick title…");
+			connect(reply, &QNetworkReply::finished, this, [this, reply, title, retried] {
+				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+				const QByteArray response = reply->readAll();
+				const QString error = PulseKick::safeError(code, response, reply->errorString(),
+					{accessToken, refreshToken, streamKey});
+				reply->deleteLater();
+				if (code == 401 && !retried) {
+					refreshAccessToken([this, title](bool ok) { if (ok) updateTitle(title, true); }); return;
+				}
+				if (PulseKick::accepted("title", code)) {
+					currentTitle = title;
+					if (titleEditor) titleEditor->setModified(false);
+					setTitleStatus("Kick accepted the new title.");
+				}
+				else setTitleStatus("Kick title update failed: " + error +
+					(code == 403 ? " Check channel role or reauthorise Kick." : ""));
+			});
+		});
 	}
 	void bindShell(QWidget *mainWindow)
 	{
@@ -1403,7 +1461,7 @@ public:
 		QUrlQuery query;
 		query.addQueryItem("response_type", "code"); query.addQueryItem("client_id", clientId);
 		query.addQueryItem("redirect_uri", "http://localhost:18757/auth/callback"); query.addQueryItem("state", stateToken);
-		query.addQueryItem("scope", "user:read channel:read channel:write chat:write streamkey:read events:subscribe moderation:ban moderation:chat_message:manage");
+		query.addQueryItem("scope", QString::fromLatin1(PulseKick::RequiredScopes));
 		query.addQueryItem("code_challenge", QString::fromLatin1(challenge)); query.addQueryItem("code_challenge_method", "S256");
 		url.setQuery(query);
 		setStatus("Opening Kick in your normal browser…");
@@ -1492,7 +1550,7 @@ public:
 private:
 	QNetworkAccessManager network{this}; QTcpServer callback{this}; EventCallback eventCallback;
 	QTimer relayPollTimer{this};
-	QString clientId, accessToken, refreshToken, stateToken, serverUrl, streamKey, accountName;
+	QString clientId, accessToken, refreshToken, stateToken, serverUrl, streamKey, accountName, currentTitle;
 	QString relaySessionToken;
 	qint64 broadcasterUserId = 0;
 	qint64 tokenExpiresAtMs = 0;
@@ -1504,10 +1562,12 @@ private:
 	QByteArray codeVerifier; obs_output_t *output = nullptr; obs_service_t *ownedService = nullptr;
 	obs_encoder_t *ownedVideo = nullptr; obs_encoder_t *ownedAudio = nullptr;
 	QString activeOutputRoute;
-	QPointer<QLineEdit> clientField, chatInput, shellChatInput;
-	QPointer<QLabel> accountLabel, status, shellChatStatus, shellDestinationStatus;
+	QPointer<QLineEdit> clientField, chatInput, shellChatInput, titleEditor;
+	QPointer<QLabel> accountLabel, status, shellChatStatus, shellDestinationStatus, titleResult, permissionLabel;
 	QPointer<QListWidget> shellChatFeed;
 	QStringList moderationScopes;
+	QPointer<QPushButton> reauthoriseButton;
+	bool grantVerified = false;
 	void showChatActions(const QPoint &position)
 	{
 		auto *item = shellChatFeed ? shellChatFeed->itemAt(position) : nullptr;
@@ -1520,8 +1580,8 @@ private:
 		menu.addSection("KICK · " + name);
 		auto *copy = menu.addAction("Copy message");
 		connect(copy, &QAction::triggered, this, [text] { QApplication::clipboard()->setText(text); });
-		const bool canDelete = moderationScopes.contains("moderation:chat_message:manage");
-		const bool canBan = moderationScopes.contains("moderation:ban");
+		const bool canDelete = grantVerified && moderationScopes.contains("moderation:chat_message:manage");
+		const bool canBan = grantVerified && moderationScopes.contains("moderation:ban");
 		if (!canDelete || !canBan) {
 			menu.addSection("Reconnect Kick to enable moderation");
 			auto *reconnect = menu.addAction("Grant Kick moderation access…");
@@ -1543,34 +1603,53 @@ private:
 	void moderateChat(const QString &messageId, const QString &target, int minutes, bool retried = false)
 	{
 		if (accessToken.isEmpty() || broadcasterUserId <= 0) { setStatus("Reconnect Kick before moderating chat."); return; }
+		const bool deleting = !messageId.isEmpty();
+		bool numericTarget = false;
+		const qint64 targetId = target.toLongLong(&numericTarget);
+		if (!deleting && (!numericTarget || targetId <= 0 || targetId == broadcasterUserId)) {
+			setStatus("Kick moderation requires a valid viewer user ID."); return;
+		}
 		if (!retried && tokenExpired()) {
 			refreshAccessToken([this, messageId, target, minutes](bool ok) { if (ok) moderateChat(messageId, target, minutes, true); });
 			return;
 		}
-		const bool deleting = !messageId.isEmpty();
-		QNetworkRequest request(QUrl(deleting ? "https://api.kick.com/public/v1/chat/" +
-			QString::fromLatin1(QUrl::toPercentEncoding(messageId)) : "https://api.kick.com/public/v1/moderation/bans"));
-		request.setTransferTimeout(15000);
-		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
-		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-		const QJsonObject body = PulseChat::kickBanBody(broadcasterUserId, target.toLongLong(), minutes);
-		const auto json = QJsonDocument(body).toJson(QJsonDocument::Compact);
-		auto *reply = deleting ? network.deleteResource(request) : minutes < 0 ?
-			network.sendCustomRequest(request, "DELETE", json) : network.post(request, json);
-		setStatus("Applying Kick moderation…");
-		connect(reply, &QNetworkReply::finished, this, [this, reply, messageId, target, minutes, deleting, retried] {
-			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-			const auto result = QJsonDocument::fromJson(reply->readAll()).object();
-			const QString error = reply->errorString(); reply->deleteLater();
-			if (code == 401 && !retried) {
-				refreshAccessToken([this, messageId, target, minutes](bool ok) { if (ok) moderateChat(messageId, target, minutes, true); }); return;
+		inspectGrant([this, messageId, target, targetId, minutes, deleting, retried](bool verified) {
+			if (!verified) return;
+			const QString scope = deleting ? "moderation:chat_message:manage" : "moderation:ban";
+			if (!moderationScopes.contains(scope)) {
+				setStatus("Kick did not grant " + scope + ". Select Reauthorise Kick, then retry."); return;
 			}
-			if (code >= 200 && code < 300) {
-				if (deleting || minutes >= 0) PulseChat::markDeleted(shellChatFeed, "kick", messageId, target);
-				setStatus(deleting ? "Kick message deleted." : minutes > 0 ? "Kick user timed out for 10 minutes." :
-					minutes < 0 ? "Kick ban / timeout removed." : "Kick user banned.");
-			} else setStatus(QString("Kick moderation failed (%1): ").arg(code) + result.value("message").toString(error) +
-				(code == 403 ? " Reconnect Kick to grant moderation access." : ""));
+			QNetworkRequest request(QUrl(deleting ? "https://api.kick.com/public/v1/chat/" +
+				QString::fromLatin1(QUrl::toPercentEncoding(messageId)) : "https://api.kick.com/public/v1/moderation/bans"));
+			request.setTransferTimeout(15000);
+			request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
+			request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+			const QByteArray body = QJsonDocument(PulseChat::kickBanBody(broadcasterUserId, targetId, minutes))
+				.toJson(QJsonDocument::Compact);
+			QNetworkReply *reply = deleting ? network.deleteResource(request) : minutes < 0 ?
+				network.sendCustomRequest(request, "DELETE", body) : network.post(request, body);
+			setStatus("Applying Kick moderation…");
+			connect(reply, &QNetworkReply::finished, this, [this, reply, messageId, target, minutes, deleting, retried] {
+				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+				const QByteArray response = reply->readAll();
+				const QString error = PulseKick::safeError(code, response, reply->errorString(),
+					{accessToken, refreshToken, streamKey});
+				reply->deleteLater();
+				if (code == 401 && !retried) {
+					refreshAccessToken([this, messageId, target, minutes](bool ok) { if (ok) moderateChat(messageId, target, minutes, true); }); return;
+				}
+				const QString action = deleting ? "delete_message" : minutes < 0 ? "unban" : "ban";
+				if (PulseKick::accepted(action, code)) {
+					if (deleting || minutes >= 0) PulseChat::markDeleted(shellChatFeed, "kick", messageId, target);
+					setStatus(deleting ? "Kick message deleted." : minutes > 0 ? "Kick user timed out for 10 minutes." :
+						minutes < 0 ? "Kick ban / timeout removed." : "Kick user banned.");
+				} else {
+					const QString detail = "Kick moderation failed: " + error +
+						(code == 403 ? " Check channel role or reauthorise Kick." : "");
+					setStatus(detail);
+					blog(LOG_WARNING, "[Pulse Weaver] %s", detail.toUtf8().constData());
+				}
+			});
 		});
 	}
 	QPointer<QComboBox> canvasRoute; QPointer<QPushButton> chatSend, shellChatSend;
@@ -1631,15 +1710,77 @@ private:
 		if (status) status->setText(text);
 		if (shellDestinationStatus) shellDestinationStatus->setText(text);
 	}
+	void setTitleStatus(const QString &text)
+	{
+		if (titleResult) titleResult->setText(text);
+		setStatus(text);
+		if (text.startsWith("Kick title update failed"))
+			blog(LOG_WARNING, "[Pulse Weaver] %s", text.toUtf8().constData());
+	}
 	void updateUi()
 	{
 		const bool ready = !accessToken.isEmpty() && !streamKey.isEmpty();
 		if (accountLabel) accountLabel->setText(ready ? "Connected as " + accountName : "No Kick account connected");
+		if (reauthoriseButton) reauthoriseButton->setText(ready ? "REAUTHORISE KICK" : "CONNECT KICK IN BROWSER");
+		if (!ready && permissionLabel) permissionLabel->setText("Connect Kick to verify title and moderation permissions.");
 		if (chatInput) chatInput->setEnabled(ready); if (chatSend) chatSend->setEnabled(ready);
 		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window())) {
 			mainWindow->setProperty("pulseWeaverKickReady", ready);
 			QMetaObject::invokeMethod(mainWindow, "RefreshPulseWeaverChatComposer", Qt::QueuedConnection);
 		}
+	}
+	void inspectGrant(std::function<void(bool)> completed = {}, bool retried = false)
+	{
+		if (accessToken.isEmpty()) {
+			grantVerified = false; moderationScopes.clear(); updateUi();
+			if (completed) completed(false);
+			return;
+		}
+		const QString inspectedToken = accessToken;
+		QNetworkRequest request(QUrl("https://id.kick.com/oauth/token/introspect"));
+		request.setRawHeader("Authorization", "Bearer " + inspectedToken.toUtf8());
+		request.setTransferTimeout(12000);
+		QNetworkReply *reply = network.post(request, QByteArray());
+		connect(reply, &QNetworkReply::finished, this, [this, reply, inspectedToken, retried,
+								completed = std::move(completed)]() mutable {
+			const QByteArray response = reply->readAll();
+			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			const QString error = PulseKick::safeError(code, response, reply->errorString(),
+				{inspectedToken, refreshToken, streamKey});
+			reply->deleteLater();
+			if (inspectedToken != accessToken) { if (completed) completed(false); return; }
+			if (code == 401 && !retried && !refreshToken.isEmpty()) {
+				refreshAccessToken([this, completed = std::move(completed)](bool ok) mutable {
+					if (ok) inspectGrant(std::move(completed), true);
+					else if (completed) completed(false);
+				});
+				return;
+			}
+			const PulseKick::Grant grant = PulseKick::parseGrant(QJsonDocument::fromJson(response).object());
+			grantVerified = code == 200 && PulseKick::validUserGrant(grant, clientId,
+				QDateTime::currentSecsSinceEpoch());
+			moderationScopes.clear();
+			if (grantVerified)
+				for (const QString &scope : grant.scopes) moderationScopes << scope;
+			if (grantVerified) {
+				tokenExpiresAtMs = grant.expiresAtSeconds * 1000;
+				save();
+				QStringList missing;
+				for (const QString &scope : {QString("channel:write"), QString("moderation:ban"),
+								QString("moderation:chat_message:manage")})
+					if (!grant.scopes.contains(scope)) missing << scope;
+				if (permissionLabel) permissionLabel->setText(missing.isEmpty() ?
+					"Kick title and moderation permissions are ready." :
+					"Kick needs reauthorisation for " + missing.join(", ") + ".");
+				if (!missing.isEmpty()) setStatus("Kick needs reauthorisation for " + missing.join(", ") + ".");
+			} else {
+				if (permissionLabel) permissionLabel->setText("Kick permissions could not be verified. Reauthorise Kick.");
+				setStatus(code == 200 ? "Kick returned an inactive, expired, app-only or wrong-app token. Reauthorise Kick." :
+					"Kick permission check failed: " + error);
+			}
+			updateUi();
+			if (completed) completed(grantVerified);
+		});
 	}
 	void stopRelay()
 	{
@@ -1738,7 +1879,7 @@ private:
 	{
 		stopRelay(); stopOutput(); accessToken.clear(); refreshToken.clear(); serverUrl.clear(); streamKey.clear(); accountName.clear();
 		broadcasterUserId = 0; tokenExpiresAtMs = 0;
-		moderationScopes.clear();
+		moderationScopes.clear(); grantVerified = false;
 		QSettings settings(pulseSettingsPath(), QSettings::IniFormat);
 		settings.remove("kick/client_id"); settings.remove("kick/client_secret");
 		for (const QString &key : {"kick/access_token", "kick/refresh_token", "kick/server_url", "kick/stream_key",
@@ -1753,10 +1894,12 @@ private:
 			const QByteArray target = request.split('\n').value(0).split(' ').value(1);
 			const QUrl url("http://localhost" + QString::fromUtf8(target)); const QUrlQuery query(url);
 			const QString code = query.queryItemValue("code"); const QString state = query.queryItemValue("state");
-			const bool valid = !code.isEmpty() && state == stateToken;
+			const bool valid = url.path() == "/auth/callback" && !code.isEmpty() &&
+				!stateToken.isEmpty() && state == stateToken;
 			const QByteArray page = valid ? "Kick approved. You can return to Pulse Weaver." : "Kick sign-in could not be verified.";
 			socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + QByteArray::number(page.size()) + "\r\n\r\n" + page);
 			socket->disconnectFromHost(); callback.close();
+			stateToken.clear();
 			if (valid) exchangeCode(code); else setStatus("Kick callback state did not match; sign-in was rejected.");
 		});
 	}
@@ -1768,11 +1911,17 @@ private:
 		const QJsonObject body{{"grant_type", "authorization_code"}, {"code_verifier", QString::fromLatin1(codeVerifier)}, {"code", code}};
 		QNetworkReply *reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
 		connect(reply, &QNetworkReply::finished, this, [this, reply] {
-			const QJsonObject json = QJsonDocument::fromJson(reply->readAll()).object(); const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(); reply->deleteLater();
-			if (code < 200 || code >= 300) { setStatus("Kick token exchange failed: " + json.value("error_description").toString("HTTP " + QString::number(code))); return; }
-			accessToken = json.value("access_token").toString(); refreshToken = json.value("refresh_token").toString();
-			moderationScopes = json.value("scope").toString().split(' ', Qt::SkipEmptyParts);
-			tokenExpiresAtMs = QDateTime::currentMSecsSinceEpoch() + std::max(60, json.value("expires_in").toInt(3600)) * 1000LL;
+			const QByteArray response = reply->readAll();
+			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			const QString error = PulseKick::safeError(code, response, reply->errorString(),
+				{accessToken, refreshToken, streamKey});
+			reply->deleteLater();
+			const QJsonObject json = QJsonDocument::fromJson(response).object();
+			const auto tokens = PulseKick::replacementTokens(json, {}, QDateTime::currentMSecsSinceEpoch());
+			if (code != 200 || !tokens) { setStatus("Kick token exchange failed: " + error); return; }
+			accessToken = tokens->access; refreshToken = tokens->refresh;
+			tokenExpiresAtMs = tokens->expiresAtMs;
+			grantVerified = false; moderationScopes.clear();
 			save(); fetchChannel();
 		});
 	}
@@ -1803,21 +1952,24 @@ private:
 			const QByteArray responseBody = reply->readAll();
 			const QJsonObject json = QJsonDocument::fromJson(responseBody).object();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			const QString error = PulseKick::safeError(code, responseBody, reply->errorString(),
+				{accessToken, refreshToken, streamKey});
 			reply->deleteLater();
 			refreshInFlight = false;
-			const QString nextAccessToken = json.value("access_token").toString();
-			if (code < 200 || code >= 300 || nextAccessToken.isEmpty()) {
-				accessToken.clear(); tokenExpiresAtMs = 0; updateUi();
-				setStatus("Kick authorization refresh failed: " + json.value("error_description").toString(
-					json.value("message").toString("HTTP " + QString::number(code))) + ". Reconnect Kick in your browser.");
+			const auto tokens = PulseKick::replacementTokens(json, refreshToken, QDateTime::currentMSecsSinceEpoch());
+			if (code != 200 || !tokens) {
+				if (code == 400 || code == 401) {
+					accessToken.clear(); refreshToken.clear(); tokenExpiresAtMs = 0;
+					grantVerified = false; moderationScopes.clear(); save(); updateUi();
+				}
+				setStatus("Kick authorization refresh failed: " + error +
+					". Reauthorise Kick if this persists.");
 				completed(false);
 				return;
 			}
-			accessToken = nextAccessToken;
-			const QString nextRefreshToken = json.value("refresh_token").toString();
-			if (!nextRefreshToken.isEmpty())
-				refreshToken = nextRefreshToken;
-			tokenExpiresAtMs = QDateTime::currentMSecsSinceEpoch() + std::max(60, json.value("expires_in").toInt(3600)) * 1000LL;
+			accessToken = tokens->access; refreshToken = tokens->refresh;
+			tokenExpiresAtMs = tokens->expiresAtMs;
+			grantVerified = false; moderationScopes.clear();
 			save(); updateUi(); completed(true);
 		});
 	}
@@ -1842,8 +1994,11 @@ private:
 			}
 			accountName = channel.value("slug").toString("Kick creator");
 			broadcasterUserId = qint64(channel.value("broadcaster_user_id").toDouble());
+			currentTitle = channel.value("stream_title").toString();
+			if (titleEditor && !titleEditor->isModified()) titleEditor->setText(currentTitle);
 			serverUrl = normaliseIngestUrl(stream.value("url").toString());
 			streamKey = stream.value("key").toString(); save(); updateUi();
+			inspectGrant();
 			connectRelay();
 			subscribeEvents();
 		});
@@ -2773,14 +2928,19 @@ private:
 		connect(saveYoutube, &QPushButton::clicked, this, applyYoutubeTitle);
 		applyYoutubeTitle();
 
-		auto *kickInfo = new QLabel("Kick metadata is changed in Kick Creator Dashboard; its current public API has no title-update endpoint.", panel);
-		kickInfo->setObjectName("Muted");
-		kickInfo->setWordWrap(true);
-		auto *openKick = new QPushButton("OPEN KICK CREATOR DASHBOARD", panel);
-		form->addWidget(new QLabel("Kick", panel), 3, 0);
-		form->addWidget(kickInfo, 3, 1);
-		form->addWidget(openKick, 3, 2);
-		connect(openKick, &QPushButton::clicked, panel, [] { QDesktopServices::openUrl(QUrl("https://kick.com/dashboard/stream")); });
+		auto *kickTitle = new QLineEdit(panel);
+		kickTitle->setPlaceholderText("Kick stream title");
+		auto *updateKick = new QPushButton("UPDATE KICK", panel);
+		auto *kickResult = new QLabel("Only the Kick title will change.", panel);
+		kickResult->setObjectName("Muted");
+		kickResult->setWordWrap(true);
+		form->addWidget(new QLabel("Kick title", panel), 3, 0);
+		form->addWidget(kickTitle, 3, 1);
+		form->addWidget(updateKick, 3, 2);
+		form->addWidget(kickResult, 4, 1, 1, 2);
+		kick->setTitleWidgets(kickTitle, kickResult);
+		connect(updateKick, &QPushButton::clicked, this, [this, kickTitle] { kick->updateTitle(kickTitle->text()); });
+		connect(kickTitle, &QLineEdit::returnPressed, this, [this, kickTitle] { kick->updateTitle(kickTitle->text()); });
 		pageLayout->addWidget(panel, 0, Qt::AlignLeft | Qt::AlignTop);
 		pageLayout->addStretch(1);
 		connectionsTabs->addTab(page, "STREAM DETAILS");
@@ -2804,6 +2964,10 @@ private:
 		form->addWidget(accountName, 0, 0, 1, 2); form->addWidget(connectButton, 0, 2);
 		form->addWidget(new QLabel("Output mode"), 1, 0); form->addWidget(route, 1, 1); form->addWidget(disconnectButton, 1, 2);
 		form->addWidget(state, 2, 0, 1, 3);
+		auto *permissions = new QLabel("Kick permissions will be checked against the connected account.", account);
+		permissions->setObjectName("Muted");
+		permissions->setWordWrap(true);
+		form->addWidget(permissions, 6, 0, 1, 3);
 		auto *chatGroup = new QGroupBox("KICK CHAT", account); auto *chatLayout = new QHBoxLayout(chatGroup);
 		auto *chat = new QLineEdit; chat->setPlaceholderText("Message Kick chat…"); auto *send = new QPushButton("SEND");
 		chatLayout->addWidget(chat, 1); chatLayout->addWidget(send); form->addWidget(chatGroup, 3, 0, 1, 3);
@@ -2825,6 +2989,7 @@ private:
         auto *callbackHint = new QLabel("Register callback: http://localhost:18757/auth/callback", account);
 		callbackHint->setTextInteractionFlags(Qt::TextSelectableByMouse); form->addWidget(callbackHint, 5, 0, 1, 3);
 		kick->setWidgets(client, accountName, state, route, connectButton, disconnectButton, chat, send);
+		kick->setPermissionLabel(permissions);
 		connectionsTabs->addTab(page, "KICK");
 	}
 
