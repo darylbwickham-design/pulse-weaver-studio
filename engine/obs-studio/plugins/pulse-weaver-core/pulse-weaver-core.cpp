@@ -392,6 +392,7 @@ public:
 			connect(logoutButton, &QPushButton::clicked, this, [this] { clearLogin(); });
 		updateUi();
 	}
+	void setStreamDetailsStatus(QLabel *label) { streamDetailsStatus = label; }
 
 	bool connected() const { return socketConnected && !userId.isEmpty(); }
 	QString account() const { return accountName; }
@@ -517,8 +518,12 @@ public:
 
 	void updateChannel(const QString &title, const QString &categoryId)
 	{
+		if (title.trimmed().isEmpty() && categoryId.trimmed().isEmpty()) {
+			setMetadataStatus("Enter a Twitch title or choose a category first.");
+			return;
+		}
 		if (userId.isEmpty() || accessToken.isEmpty()) {
-			setStatus("Connect Twitch before editing stream information.");
+			setMetadataStatus("Connect Twitch before editing stream information.");
 			return;
 		}
 		QUrl url("https://api.twitch.tv/helix/channels");
@@ -539,7 +544,7 @@ public:
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			const QJsonObject error = QJsonDocument::fromJson(reply->readAll()).object();
 			reply->deleteLater();
-			setStatus(code >= 200 && code < 300 ? "Twitch stream information updated." :
+			setMetadataStatus(code >= 200 && code < 300 ? "Twitch stream information updated." :
 								 "Stream information update failed: " + error.value("message").toString("HTTP " + QString::number(code)));
 		});
 	}
@@ -624,6 +629,7 @@ private:
 	QPointer<QLineEdit> clientField;
 	QPointer<QLabel> accountLabel;
 	QPointer<QLabel> connectionStatus;
+	QPointer<QLabel> streamDetailsStatus;
 	QPointer<QPushButton> loginButton;
 	QPointer<QPushButton> logoutButton;
 	QSet<QString> sessionChatters;
@@ -640,6 +646,11 @@ private:
 		if (chatStatus && shellSelected()) chatStatus->setText(message);
 		if (QWidget *window = static_cast<QWidget *>(obs_frontend_get_main_window()))
 			window->setProperty("pulseWeaverTwitchChatStatus", message);
+	}
+	void setMetadataStatus(const QString &message)
+	{
+		if (streamDetailsStatus) streamDetailsStatus->setText(message);
+		setStatus(message);
 	}
 	bool shellTwitchOnly() const
 	{
@@ -2960,12 +2971,25 @@ private:
 		pageLayout->setContentsMargins(18, 16, 18, 16);
 		auto *panel = new QGroupBox("STREAM DETAILS", page);
 		panel->setObjectName("ConnectionCard");
-		panel->setMaximumWidth(720);
+		panel->setMaximumWidth(760);
+		panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
 		auto *form = new QGridLayout(panel);
 		form->setColumnStretch(1, 1);
+		form->setColumnMinimumWidth(1, 260);
+		form->setColumnMinimumWidth(2, 174);
+		form->setHorizontalSpacing(12);
+		form->setVerticalSpacing(9);
+		auto addPlatformHeading = [form, panel](const QString &name, int row) {
+			auto *heading = new QLabel(name, panel);
+			heading->setObjectName("Kicker");
+			form->addWidget(heading, row, 0, 1, 3);
+		};
+		addPlatformHeading("TWITCH", 0);
 		streamTitle = new QLineEdit(panel);
+		streamTitle->setAccessibleName("Twitch stream title");
 		streamTitle->setPlaceholderText("Twitch stream title");
 		streamCategory = new QComboBox(panel);
+		streamCategory->setAccessibleName("Twitch category");
 		streamCategory->setEditable(true);
 		streamCategory->setInsertPolicy(QComboBox::NoInsert);
 		streamCategory->setMaxVisibleItems(12);
@@ -2973,12 +2997,21 @@ private:
 		auto *categorySearch = new QTimer(streamCategory);
 		categorySearch->setSingleShot(true);
 		categorySearch->setInterval(300);
-		auto *updateTwitch = new QPushButton("UPDATE TWITCH", panel);
-		form->addWidget(new QLabel("Twitch title", panel), 0, 0);
-		form->addWidget(streamTitle, 0, 1);
-		form->addWidget(updateTwitch, 0, 2);
-		form->addWidget(new QLabel("Twitch category", panel), 1, 0);
-		form->addWidget(streamCategory, 1, 1, 1, 2);
+		auto *updateTwitchTitle = new QPushButton("UPDATE TITLE", panel);
+		updateTwitchTitle->setAccessibleName("Update Twitch title");
+		auto *updateTwitchCategory = new QPushButton("UPDATE CATEGORY", panel);
+		updateTwitchCategory->setAccessibleName("Update Twitch category");
+		auto *twitchResult = new QLabel("Change the title or choose a category, then update that field.", panel);
+		twitchResult->setObjectName("Muted");
+		twitchResult->setWordWrap(true);
+		form->addWidget(new QLabel("Title", panel), 1, 0);
+		form->addWidget(streamTitle, 1, 1);
+		form->addWidget(updateTwitchTitle, 1, 2);
+		form->addWidget(new QLabel("Category", panel), 2, 0);
+		form->addWidget(streamCategory, 2, 1);
+		form->addWidget(updateTwitchCategory, 2, 2);
+		form->addWidget(twitchResult, 3, 1, 1, 2);
+		twitch->setStreamDetailsStatus(twitchResult);
 		connect(streamCategory->lineEdit(), &QLineEdit::textEdited, this, [this, categorySearch] {
 			streamCategory->setProperty("pulseWeaverCategoryId", QString());
 			categorySearch->start();
@@ -2986,11 +3019,12 @@ private:
 		connect(streamCategory, &QComboBox::activated, this, [this](int index) {
 			streamCategory->setProperty("pulseWeaverCategoryId", streamCategory->itemData(index).toString());
 		});
-		connect(categorySearch, &QTimer::timeout, this, [this] {
+		connect(categorySearch, &QTimer::timeout, this, [this, result = QPointer<QLabel>(twitchResult)] {
 			const QString requested = streamCategory->currentText().trimmed();
-			twitch->searchCategories(requested, [this, requested](const QJsonArray &results, const QString &error) {
+			twitch->searchCategories(requested, [this, result, requested](const QJsonArray &results, const QString &error) {
 				if (!streamCategory || streamCategory->currentText().trimmed() != requested)
 					return;
+				if (!error.isEmpty()) { if (result) result->setText(error); return; }
 				streamCategory->blockSignals(true);
 				streamCategory->clear();
 				for (const QJsonValue &value : results) {
@@ -2999,70 +3033,82 @@ private:
 				}
 				streamCategory->setEditText(requested);
 				streamCategory->blockSignals(false);
-				if (!error.isEmpty()) {
-					twitchStatus->setText(error);
-					return;
-				}
+				if (result) result->setText(results.isEmpty() ? "No Twitch categories found. Try another search." :
+					"Choose a Twitch category from the list.");
 				if (!results.isEmpty())
 					streamCategory->showPopup();
 			});
 		});
-		connect(updateTwitch, &QPushButton::clicked, this, [this] {
+		connect(updateTwitchTitle, &QPushButton::clicked, this, [this] {
+			twitch->updateChannel(streamTitle->text(), {});
+		});
+		connect(streamTitle, &QLineEdit::returnPressed, this, [this] {
+			twitch->updateChannel(streamTitle->text(), {});
+		});
+		connect(updateTwitchCategory, &QPushButton::clicked, this, [this, result = QPointer<QLabel>(twitchResult)] {
 			const QString categoryText = streamCategory->currentText().trimmed();
 			const QString categoryId = streamCategory->property("pulseWeaverCategoryId").toString();
-			if (!categoryText.isEmpty() && categoryId.isEmpty()) {
-				twitchStatus->setText("Choose a Twitch category from the search results.");
+			if (categoryText.isEmpty() || categoryId.isEmpty()) {
+				if (result) result->setText("Choose a Twitch category from the search results.");
 				return;
 			}
-			twitch->updateChannel(streamTitle->text(), categoryId);
+			twitch->updateChannel({}, categoryId);
 		});
 
+		addPlatformHeading("KICK", 4);
+		addPlatformHeading("YOUTUBE", 8);
 		QSettings settings(pulseSettingsPath(), QSettings::IniFormat);
 		auto *youtubeTitle = new QLineEdit(panel);
+		youtubeTitle->setAccessibleName("YouTube broadcast title");
 		youtubeTitle->setPlaceholderText("YouTube broadcast title");
 		youtubeTitle->setText(settings.value("youtube/broadcast_title").toString());
 		auto *saveYoutube = new QPushButton("SAVE FOR NEXT GO LIVE", panel);
-		form->addWidget(new QLabel("YouTube title", panel), 2, 0);
-		form->addWidget(youtubeTitle, 2, 1);
-		form->addWidget(saveYoutube, 2, 2);
-		auto applyYoutubeTitle = [youtubeTitle] {
+		auto *youtubeResult = new QLabel("This title applies to the next YouTube broadcast.", panel);
+		youtubeResult->setObjectName("Muted");
+		youtubeResult->setWordWrap(true);
+		form->addWidget(new QLabel("Title", panel), 9, 0);
+		form->addWidget(youtubeTitle, 9, 1);
+		form->addWidget(saveYoutube, 9, 2);
+		form->addWidget(youtubeResult, 10, 1, 1, 2);
+		auto applyYoutubeTitle = [youtubeTitle, youtubeResult](bool showResult) {
 			const QString title = youtubeTitle->text().trimmed();
 			QSettings saved(pulseSettingsPath(), QSettings::IniFormat);
 			saved.setValue("youtube/broadcast_title", title);
 			if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
 				mainWindow->setProperty("pulseWeaverYouTubeBroadcastTitle", title);
+			if (showResult) youtubeResult->setText("YouTube title saved for the next Go Live.");
 		};
-		connect(saveYoutube, &QPushButton::clicked, this, applyYoutubeTitle);
-		applyYoutubeTitle();
+		connect(saveYoutube, &QPushButton::clicked, this, [applyYoutubeTitle] { applyYoutubeTitle(true); });
+		applyYoutubeTitle(false);
 
 		auto *kickTitle = new QLineEdit(panel);
+		kickTitle->setAccessibleName("Kick stream title");
 		kickTitle->setPlaceholderText("Kick stream title");
-		auto *updateKick = new QPushButton("UPDATE KICK", panel);
-		auto *kickResult = new QLabel("Only the Kick title will change.", panel);
+		auto *updateKick = new QPushButton("UPDATE TITLE", panel);
+		updateKick->setAccessibleName("Update Kick title");
+		auto *kickResult = new QLabel("Change the title or choose a category, then update that field.", panel);
 		kickResult->setObjectName("Muted");
 		kickResult->setWordWrap(true);
-		form->addWidget(new QLabel("Kick title", panel), 3, 0);
-		form->addWidget(kickTitle, 3, 1);
-		form->addWidget(updateKick, 3, 2);
-		form->addWidget(kickResult, 4, 1, 1, 2);
+		form->addWidget(new QLabel("Title", panel), 5, 0);
+		form->addWidget(kickTitle, 5, 1);
+		form->addWidget(updateKick, 5, 2);
+		form->addWidget(kickResult, 7, 1, 1, 2);
 		kick->setTitleWidgets(kickTitle, kickResult);
 		connect(updateKick, &QPushButton::clicked, this, [this, kickTitle] { kick->updateTitle(kickTitle->text()); });
 		connect(kickTitle, &QLineEdit::returnPressed, this, [this, kickTitle] { kick->updateTitle(kickTitle->text()); });
 
 		auto *kickCategory = new QComboBox(panel);
+		kickCategory->setAccessibleName("Kick category");
 		kickCategory->setEditable(true);
 		kickCategory->setInsertPolicy(QComboBox::NoInsert);
 		kickCategory->setMaxVisibleItems(12);
 		kickCategory->lineEdit()->setPlaceholderText("Search Kick categories…");
-		auto *categoryResult = new QLabel("Choose a result, then update the Kick category.", panel);
-		categoryResult->setObjectName("Muted");
-		categoryResult->setWordWrap(true);
 		auto *updateKickCategory = new QPushButton("UPDATE CATEGORY", panel);
-		form->addWidget(new QLabel("Kick category", panel), 5, 0);
-		form->addWidget(kickCategory, 5, 1);
-		form->addWidget(updateKickCategory, 5, 2);
-		form->addWidget(categoryResult, 6, 1, 1, 2);
-		kick->setCategoryWidgets(kickCategory, categoryResult);
+		updateKickCategory->setAccessibleName("Update Kick category");
+		form->addWidget(new QLabel("Category", panel), 6, 0);
+		form->addWidget(kickCategory, 6, 1);
+		form->addWidget(updateKickCategory, 6, 2);
+		kick->setCategoryWidgets(kickCategory, kickResult);
 		auto *kickCategorySearch = new QTimer(kickCategory);
 		kickCategorySearch->setSingleShot(true);
 		kickCategorySearch->setInterval(300);
@@ -3075,7 +3121,7 @@ private:
 			kickCategory->setProperty("pulseWeaverKickCategoryId", kickCategory->itemData(index).toLongLong());
 		});
 		connect(kickCategorySearch, &QTimer::timeout, this, [this, editor = QPointer<QComboBox>(kickCategory),
-			result = QPointer<QLabel>(categoryResult)] {
+			result = QPointer<QLabel>(kickResult)] {
 			if (!editor || !result) return;
 			const QString requested = editor->currentText().trimmed();
 			kick->searchCategories(requested, [editor, result, requested](const QJsonArray &results, const QString &error) {
@@ -3100,8 +3146,8 @@ private:
 			kick->updateCategory(kickCategory->property("pulseWeaverKickCategoryId").toLongLong(),
 				kickCategory->currentText().trimmed());
 		});
-		pageLayout->addWidget(panel, 0, Qt::AlignLeft | Qt::AlignTop);
-		pageLayout->addStretch(1);
+		pageLayout->addWidget(panel, 1, Qt::AlignTop);
+		pageLayout->addStretch(0);
 		connectionsTabs->addTab(page, "STREAM DETAILS");
 	}
 
