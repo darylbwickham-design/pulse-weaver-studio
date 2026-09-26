@@ -43,9 +43,15 @@ int main(int argc, char **argv)
 	const QJsonObject title = PulseKick::titleBody("New title");
 	check(title.size() == 1 && title.value("stream_title").toString() == "New title",
 		"title request changes only title");
-	check(PulseKick::accepted("title", 204) && PulseKick::accepted("delete_message", 204),
+	const QJsonObject category = PulseKick::categoryBody(42);
+	check(category.size() == 1 && category.value("category_id").toVariant().toLongLong() == 42 &&
+		!category.contains("stream_title") && !category.contains("custom_tags"),
+		"category request changes only category by numeric ID");
+	check(PulseKick::accepted("title", 204) && PulseKick::accepted("category", 204) &&
+		PulseKick::accepted("delete_message", 204),
 		"empty 204 success accepted");
-	check(!PulseKick::accepted("title", 200) && !PulseKick::accepted("ban", 403),
+	check(!PulseKick::accepted("title", 200) && !PulseKick::accepted("category", 200) &&
+		!PulseKick::accepted("category", 403) && !PulseKick::accepted("ban", 403),
 		"unexpected and rejected status not treated as success");
 	const QString error = PulseKick::safeError(403,
 		R"({"message":"Forbidden Bearer private-access"})", {}, {"private-access"});

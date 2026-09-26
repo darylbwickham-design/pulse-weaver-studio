@@ -72,9 +72,14 @@ inline QJsonObject titleBody(const QString &title)
 	return {{"stream_title", title}};
 }
 
+inline QJsonObject categoryBody(qint64 categoryId)
+{
+	return {{"category_id", categoryId}};
+}
+
 inline bool accepted(const QString &action, int status)
 {
-	return action == "title" || action == "delete_message" ? status == 204 : status == 200;
+	return action == "title" || action == "category" || action == "delete_message" ? status == 204 : status == 200;
 }
 
 inline QString safeError(int status, const QByteArray &body, const QString &networkError = {},

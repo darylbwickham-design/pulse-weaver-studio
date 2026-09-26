@@ -1348,6 +1348,96 @@ public:
 		titleResult = result;
 		if (titleEditor && !currentTitle.isEmpty()) titleEditor->setText(currentTitle);
 	}
+	void setCategoryWidgets(QComboBox *editor, QLabel *result)
+	{
+		categoryEditor = editor;
+		categoryResult = result;
+		if (categoryEditor && currentCategoryId > 0) {
+			categoryEditor->setEditText(currentCategoryName);
+			categoryEditor->setProperty("pulseWeaverKickCategoryId", currentCategoryId);
+		}
+	}
+	void searchCategories(const QString &search,
+			      std::function<void(const QJsonArray &, const QString &)> completed,
+			      bool retried = false)
+	{
+		const QString term = search.trimmed();
+		if (term.size() < 2) { completed({}, {}); return; }
+		if (accessToken.isEmpty()) { completed({}, "Connect Kick to search categories."); return; }
+		if (!retried && tokenExpired()) {
+			refreshAccessToken([this, term, completed](bool ok) {
+				if (ok) searchCategories(term, completed, true);
+				else completed({}, "Kick authorization expired. Reauthorise Kick.");
+			});
+			return;
+		}
+		/* Kick's v1 category search supports a partial q. Its v2 name filter
+		 * targets category names rather than interactive search text. */
+		QUrl url("https://api.kick.com/public/v1/categories");
+		QUrlQuery query; query.addQueryItem("q", term); url.setQuery(query);
+		QNetworkRequest request(url);
+		request.setTransferTimeout(15000);
+		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
+		QNetworkReply *reply = network.get(request);
+		connect(reply, &QNetworkReply::finished, this, [this, reply, term, completed, retried] {
+			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			const QByteArray response = reply->readAll();
+			const QString error = PulseKick::safeError(code, response, reply->errorString(),
+				{accessToken, refreshToken, streamKey});
+			reply->deleteLater();
+			if (code == 401 && !retried) {
+				refreshAccessToken([this, term, completed](bool ok) {
+					if (ok) searchCategories(term, completed, true);
+					else completed({}, "Kick authorization expired. Reauthorise Kick.");
+				});
+				return;
+			}
+			if (code != 200) { completed({}, "Kick category search failed: " + error); return; }
+			const QJsonValue data = QJsonDocument::fromJson(response).object().value("data");
+			if (!data.isArray()) { completed({}, "Kick returned an invalid category list."); return; }
+			completed(data.toArray(), {});
+		});
+	}
+	void updateCategory(qint64 categoryId, const QString &categoryName, bool retried = false)
+	{
+		if (categoryId <= 0) { setCategoryStatus("Choose a Kick category from the search results."); return; }
+		if (accessToken.isEmpty() || broadcasterUserId <= 0) {
+			setCategoryStatus("Connect Kick and load your channel before changing its category."); return;
+		}
+		if (!retried && tokenExpired()) {
+			refreshAccessToken([this, categoryId, categoryName](bool ok) { if (ok) updateCategory(categoryId, categoryName, true); });
+			return;
+		}
+		inspectGrant([this, categoryId, categoryName, retried](bool verified) {
+			if (!verified) { setCategoryStatus("Kick permissions could not be verified. Reauthorise Kick."); return; }
+			if (!moderationScopes.contains("channel:write")) {
+				setCategoryStatus("Kick did not grant channel:write. Select Reauthorise Kick, then retry."); return;
+			}
+			QNetworkRequest request(QUrl("https://api.kick.com/public/v1/channels"));
+			request.setTransferTimeout(15000);
+			request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
+			request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+			const QByteArray body = QJsonDocument(PulseKick::categoryBody(categoryId)).toJson(QJsonDocument::Compact);
+			QNetworkReply *reply = network.sendCustomRequest(request, "PATCH", body);
+			setCategoryStatus("Updating Kick category…");
+			connect(reply, &QNetworkReply::finished, this, [this, reply, categoryId, categoryName, retried] {
+				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+				const QByteArray response = reply->readAll();
+				const QString error = PulseKick::safeError(code, response, reply->errorString(),
+					{accessToken, refreshToken, streamKey});
+				reply->deleteLater();
+				if (code == 401 && !retried) {
+					refreshAccessToken([this, categoryId, categoryName](bool ok) { if (ok) updateCategory(categoryId, categoryName, true); }); return;
+				}
+				if (PulseKick::accepted("category", code)) {
+					currentCategoryId = categoryId;
+					currentCategoryName = categoryName;
+					setCategoryStatus("Kick accepted the new category.");
+				} else setCategoryStatus("Kick category update failed: " + error +
+					(code == 403 ? " Check channel role or reauthorise Kick." : ""));
+			});
+		});
+	}
 	void setPermissionLabel(QLabel *label)
 	{
 		permissionLabel = label;
@@ -1550,9 +1640,10 @@ public:
 private:
 	QNetworkAccessManager network{this}; QTcpServer callback{this}; EventCallback eventCallback;
 	QTimer relayPollTimer{this};
-	QString clientId, accessToken, refreshToken, stateToken, serverUrl, streamKey, accountName, currentTitle;
+	QString clientId, accessToken, refreshToken, stateToken, serverUrl, streamKey, accountName, currentTitle, currentCategoryName;
 	QString relaySessionToken;
 	qint64 broadcasterUserId = 0;
+	qint64 currentCategoryId = 0;
 	qint64 tokenExpiresAtMs = 0;
 	qint64 relayCursor = 0;
 	bool refreshInFlight = false;
@@ -1563,7 +1654,8 @@ private:
 	obs_encoder_t *ownedVideo = nullptr; obs_encoder_t *ownedAudio = nullptr;
 	QString activeOutputRoute;
 	QPointer<QLineEdit> clientField, chatInput, shellChatInput, titleEditor;
-	QPointer<QLabel> accountLabel, status, shellChatStatus, shellDestinationStatus, titleResult, permissionLabel;
+	QPointer<QComboBox> categoryEditor;
+	QPointer<QLabel> accountLabel, status, shellChatStatus, shellDestinationStatus, titleResult, categoryResult, permissionLabel;
 	QPointer<QListWidget> shellChatFeed;
 	QStringList moderationScopes;
 	QPointer<QPushButton> reauthoriseButton;
@@ -1715,6 +1807,13 @@ private:
 		if (titleResult) titleResult->setText(text);
 		setStatus(text);
 		if (text.startsWith("Kick title update failed"))
+			blog(LOG_WARNING, "[Pulse Weaver] %s", text.toUtf8().constData());
+	}
+	void setCategoryStatus(const QString &text)
+	{
+		if (categoryResult) categoryResult->setText(text);
+		setStatus(text);
+		if (text.startsWith("Kick category update failed"))
 			blog(LOG_WARNING, "[Pulse Weaver] %s", text.toUtf8().constData());
 	}
 	void updateUi()
@@ -1996,6 +2095,14 @@ private:
 			broadcasterUserId = qint64(channel.value("broadcaster_user_id").toDouble());
 			currentTitle = channel.value("stream_title").toString();
 			if (titleEditor && !titleEditor->isModified()) titleEditor->setText(currentTitle);
+			const QJsonObject category = channel.value("category").toObject();
+			currentCategoryId = category.value("id").toVariant().toLongLong();
+			currentCategoryName = category.value("name").toString();
+			if (categoryEditor && categoryEditor->property("pulseWeaverKickCategoryId").toLongLong() <= 0 &&
+			    !currentCategoryName.isEmpty()) {
+				categoryEditor->setEditText(currentCategoryName);
+				categoryEditor->setProperty("pulseWeaverKickCategoryId", currentCategoryId);
+			}
 			serverUrl = normaliseIngestUrl(stream.value("url").toString());
 			streamKey = stream.value("key").toString(); save(); updateUi();
 			inspectGrant();
@@ -2941,6 +3048,58 @@ private:
 		kick->setTitleWidgets(kickTitle, kickResult);
 		connect(updateKick, &QPushButton::clicked, this, [this, kickTitle] { kick->updateTitle(kickTitle->text()); });
 		connect(kickTitle, &QLineEdit::returnPressed, this, [this, kickTitle] { kick->updateTitle(kickTitle->text()); });
+
+		auto *kickCategory = new QComboBox(panel);
+		kickCategory->setEditable(true);
+		kickCategory->setInsertPolicy(QComboBox::NoInsert);
+		kickCategory->setMaxVisibleItems(12);
+		kickCategory->lineEdit()->setPlaceholderText("Search Kick categories…");
+		auto *categoryResult = new QLabel("Choose a result, then update the Kick category.", panel);
+		categoryResult->setObjectName("Muted");
+		categoryResult->setWordWrap(true);
+		auto *updateKickCategory = new QPushButton("UPDATE CATEGORY", panel);
+		form->addWidget(new QLabel("Kick category", panel), 5, 0);
+		form->addWidget(kickCategory, 5, 1);
+		form->addWidget(updateKickCategory, 5, 2);
+		form->addWidget(categoryResult, 6, 1, 1, 2);
+		kick->setCategoryWidgets(kickCategory, categoryResult);
+		auto *kickCategorySearch = new QTimer(kickCategory);
+		kickCategorySearch->setSingleShot(true);
+		kickCategorySearch->setInterval(300);
+		connect(kickCategory->lineEdit(), &QLineEdit::textEdited, this, [kickCategory, kickCategorySearch] {
+			kickCategory->setProperty("pulseWeaverKickCategoryId", qint64(0));
+			kickCategorySearch->start();
+		});
+		connect(kickCategory, &QComboBox::activated, this, [kickCategory, kickCategorySearch](int index) {
+			kickCategorySearch->stop();
+			kickCategory->setProperty("pulseWeaverKickCategoryId", kickCategory->itemData(index).toLongLong());
+		});
+		connect(kickCategorySearch, &QTimer::timeout, this, [this, editor = QPointer<QComboBox>(kickCategory),
+			result = QPointer<QLabel>(categoryResult)] {
+			if (!editor || !result) return;
+			const QString requested = editor->currentText().trimmed();
+			kick->searchCategories(requested, [editor, result, requested](const QJsonArray &results, const QString &error) {
+				if (!editor || !result || editor->currentText().trimmed() != requested) return;
+				if (!error.isEmpty()) { result->setText(error); return; }
+				editor->blockSignals(true);
+				editor->clear();
+				for (const QJsonValue &value : results) {
+					const QJsonObject category = value.toObject();
+					const qint64 id = category.value("id").toVariant().toLongLong();
+					const QString name = category.value("name").toString();
+					if (id > 0 && !name.isEmpty()) editor->addItem(name, id);
+				}
+				editor->setEditText(requested);
+				editor->blockSignals(false);
+				result->setText(editor->count() ? "Choose a Kick category from the list." :
+					"No Kick categories found. Try another search.");
+				if (editor->count()) editor->showPopup();
+			});
+		});
+		connect(updateKickCategory, &QPushButton::clicked, this, [this, kickCategory] {
+			kick->updateCategory(kickCategory->property("pulseWeaverKickCategoryId").toLongLong(),
+				kickCategory->currentText().trimmed());
+		});
 		pageLayout->addWidget(panel, 0, Qt::AlignLeft | Qt::AlignTop);
 		pageLayout->addStretch(1);
 		connectionsTabs->addTab(page, "STREAM DETAILS");
