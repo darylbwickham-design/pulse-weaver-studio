@@ -1633,6 +1633,26 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseIcon(manageStages, "stages");
 	connect(manageStages, &QPushButton::clicked, this, &OBSBasic::ManagePulseWeaverStages);
 	stageBar->addWidget(manageStages);
+	auto *firstShow = new QPushButton("Build my show…", showMain);
+	firstShow->setObjectName("PulseWeaverControl");
+	firstShow->setToolTip("Set up your sources and create Starting, Hangout, Gameplay, BRB/Ending and Celebration stages.");
+	auto needsShowBuilder = [] {
+		const QJsonArray stages = loadPulseWeaverStages();
+		return stages.isEmpty() || (stages.size() == 1 && stages.first().toObject().value("name").toString() == "Current Show");
+	};
+	firstShow->setVisible(needsShowBuilder());
+	stageBar->addWidget(firstShow);
+	connect(firstShow, &QPushButton::clicked, this, [controlMode, showContent] {
+		controlMode->click();
+		QTimer::singleShot(0, showContent, [showContent] {
+			for (QPushButton *button : showContent->findChildren<QPushButton *>()) {
+				if (button->property("motionShowBuilder").toBool()) { button->click(); break; }
+			}
+		});
+	});
+	connect(pulseStageSelector, &QComboBox::currentIndexChanged, firstShow, [firstShow, needsShowBuilder](int) {
+		firstShow->setVisible(needsShowBuilder());
+	});
 	/* Stage transition configuration belongs in Manage Stages, where the
 	 * horizontal and vertical assignments are edited together. Keep the
 	 * existing controls alive for stage-state synchronisation, but do not
@@ -1646,6 +1666,142 @@ void OBSBasic::InitPulseWeaverShell()
 	captureStage->hide();
 	connect(pulseStageSelector, &QComboBox::currentIndexChanged, this, &OBSBasic::ActivatePulseWeaverStage);
 	showMainLayout->addWidget(stageBar);
+
+	// Use the Game Capture source's own OBS property list, including its window
+	// identifiers. A source UUID survives renames and avoids retargeting another
+	// capture if the selected source is removed.
+	auto *gameRow = new QHBoxLayout;
+	gameRow->setSpacing(7);
+	auto *gameLabel = new QLabel("Game window", showMain);
+	gameLabel->setObjectName("PulseWeaverKicker");
+	gameRow->addWidget(gameLabel);
+	auto *gameWindow = new QComboBox(showMain);
+	gameWindow->setObjectName("PulseWeaverGameWindow");
+	gameWindow->setAccessibleName("Game Capture window");
+	gameWindow->setMinimumWidth(230);
+	gameWindow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	gameRow->addWidget(gameWindow, 1);
+	auto *gameSettings = new QToolButton(showMain);
+	gameSettings->setText("⚙");
+	gameSettings->setAccessibleName("Choose Game Capture source and refresh windows");
+	gameSettings->setToolTip("Choose the Game Capture source used by this window picker");
+	gameSettings->setAutoRaise(true);
+	gameSettings->setPopupMode(QToolButton::InstantPopup);
+	gameRow->addWidget(gameSettings);
+	showMainLayout->addLayout(gameRow);
+	auto *gameMenu = new QMenu(gameSettings);
+	gameSettings->setMenu(gameMenu);
+	auto selectedGameSource = []() -> obs_source_t * {
+		QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+		const QString uuid = settings.value("show/game_capture_uuid").toString();
+		return uuid.isEmpty() ? nullptr : obs_get_source_by_uuid(uuid.toUtf8().constData());
+	};
+	auto refreshGameWindows = [gameWindow, gameSettings, selectedGameSource] {
+		QSignalBlocker blocker(gameWindow);
+		gameWindow->clear();
+		obs_source_t *source = selectedGameSource();
+		if (!source) {
+			gameWindow->addItem("Choose a Game Capture source with ⚙");
+			gameWindow->setEnabled(false);
+			gameSettings->setToolTip("Choose an existing Game Capture source");
+			return;
+		}
+		if (QString::fromUtf8(obs_source_get_id(source)) != "game_capture") {
+			gameWindow->addItem("Selected Game Capture is unavailable");
+			gameWindow->setEnabled(false);
+			obs_source_release(source);
+			return;
+		}
+		gameSettings->setToolTip("Game Capture: " + QString::fromUtf8(obs_source_get_name(source)));
+		obs_data_t *settings = obs_source_get_settings(source);
+		if (QString::fromUtf8(obs_data_get_string(settings, "capture_mode")) != "window") {
+			gameWindow->addItem("Enable ‘Capture specific window’ in ⚙");
+			gameWindow->setEnabled(false);
+		} else {
+			obs_properties_t *properties = obs_source_properties(source);
+			gameWindow->addItem("Select a game window", QString());
+			if (properties) {
+				obs_properties_apply_settings(properties, settings);
+				obs_property_t *windows = obs_properties_get(properties, "window");
+				const QString current = QString::fromUtf8(obs_data_get_string(settings, "window"));
+				for (size_t i = 0; windows && i < obs_property_list_item_count(windows); ++i) {
+					const QString name = QString::fromUtf8(obs_property_list_item_name(windows, i));
+					const QString id = QString::fromUtf8(obs_property_list_item_string(windows, i));
+					if (!name.trimmed().isEmpty() && !id.isEmpty()) gameWindow->addItem(name, id);
+				}
+				if (!current.isEmpty() && gameWindow->findData(current) < 0)
+					gameWindow->addItem("Current game is unavailable — choose another", current);
+				const int selected = gameWindow->findData(current);
+				if (selected >= 0) gameWindow->setCurrentIndex(selected);
+				obs_properties_destroy(properties);
+			}
+			if (gameWindow->count() == 1) gameWindow->setItemText(0, "No game windows found — refresh with ⚙");
+			gameWindow->setEnabled(gameWindow->count() > 1);
+		}
+		obs_data_release(settings);
+		obs_source_release(source);
+	};
+	connect(gameWindow, &QComboBox::activated, this, [gameWindow, selectedGameSource](int index) {
+		const QString window = gameWindow->itemData(index).toString();
+		if (window.isEmpty()) return;
+		obs_source_t *source = selectedGameSource();
+		if (!source || QString::fromUtf8(obs_source_get_id(source)) != "game_capture") {
+			obs_source_release(source); return;
+		}
+		obs_data_t *settings = obs_source_get_settings(source);
+		if (QString::fromUtf8(obs_data_get_string(settings, "capture_mode")) == "window") {
+			obs_data_set_string(settings, "window", window.toUtf8().constData());
+			obs_source_update(source, settings);
+			obs_frontend_save();
+		}
+		obs_data_release(settings);
+		obs_source_release(source);
+	});
+	connect(gameMenu, &QMenu::aboutToShow, this, [gameMenu, selectedGameSource, refreshGameWindows] {
+		refreshGameWindows();
+		gameMenu->clear();
+		obs_source_t *selected = selectedGameSource();
+		const QString selectedUuid = selected ? QString::fromUtf8(obs_source_get_uuid(selected)) : QString();
+		obs_source_release(selected);
+		struct CaptureChoice { QString name; QString uuid; };
+		QList<CaptureChoice> sources;
+		obs_enum_sources([](void *opaque, obs_source_t *source) {
+			if (QString::fromUtf8(obs_source_get_id(source)) == "game_capture")
+				static_cast<QList<CaptureChoice> *>(opaque)->append({QString::fromUtf8(obs_source_get_name(source)),
+					QString::fromUtf8(obs_source_get_uuid(source))});
+			return true;
+		}, &sources);
+		if (sources.isEmpty()) gameMenu->addAction("No Game Capture sources yet")->setEnabled(false);
+		for (const auto &choice : sources) {
+			auto *action = gameMenu->addAction(choice.name);
+			action->setCheckable(true);
+			action->setChecked(choice.uuid == selectedUuid);
+			QObject::connect(action, &QAction::triggered, gameMenu, [choice, refreshGameWindows] {
+				QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+				settings.setValue("show/game_capture_uuid", choice.uuid);
+				refreshGameWindows();
+			});
+		}
+		gameMenu->addSeparator();
+		gameMenu->addAction("Refresh game windows", gameMenu, refreshGameWindows);
+		auto *mode = gameMenu->addAction("Use Capture specific window");
+		mode->setEnabled(!selectedUuid.isEmpty());
+		QObject::connect(mode, &QAction::triggered, gameMenu, [selectedGameSource, refreshGameWindows] {
+			obs_source_t *source = selectedGameSource();
+			if (!source) return;
+			obs_data_t *settings = obs_source_get_settings(source);
+			obs_data_set_string(settings, "capture_mode", "window");
+			obs_source_update(source, settings);
+			obs_data_release(settings);
+			obs_source_release(source);
+			obs_frontend_save();
+			refreshGameWindows();
+		});
+	});
+	refreshGameWindows();
+	// The shell is built before OBS has restored scene collection sources.
+	QTimer::singleShot(2500, this, refreshGameWindows);
+	QTimer::singleShot(7000, this, refreshGameWindows);
 
 	auto *destinations = new QHBoxLayout;
 	auto *destinationLabel = new QLabel("Outputs");
@@ -4147,8 +4303,44 @@ void OBSBasic::ManagePulseWeaverStages()
 	close->setObjectName("PulseWeaverControl");
 	tools->addWidget(close);
 	layout->addLayout(tools);
-	connect(add, &QPushButton::clicked, &dialog, [addRow, saveTable] {
-		addRow(QJsonObject{{"name", "New Stage"}});
+	connect(add, &QPushButton::clicked, &dialog, [this, &dialog, table, addRow, saveTable] {
+		bool accepted = false;
+		const QString name = QInputDialog::getText(&dialog, "New stage", "Stage name", QLineEdit::Normal,
+			"New Stage", &accepted).trimmed();
+		if (!accepted || name.isEmpty()) return;
+		const QJsonArray existing = loadPulseWeaverStages();
+		for (const QJsonValue &value : existing)
+			if (value.toObject().value("name").toString().compare(name, Qt::CaseInsensitive) == 0) {
+				QMessageBox::information(&dialog, "Name already used", "Choose a different Stage name."); return;
+			}
+		QJsonObject stage;
+		const int current = table->currentRow();
+		if (current >= 0 && current < existing.size()) stage = existing[current].toObject();
+		else if (!existing.isEmpty()) stage = existing.first().toObject();
+		if (stage.isEmpty()) {
+			obs_source_t *horizontal = obs_frontend_get_current_scene();
+			obs_canvas_t *canvas = PulseWeaverGetVerticalCanvas();
+			obs_source_t *vertical = canvas ? obs_canvas_get_channel(canvas, 0) : nullptr;
+			const QString horizontalName = horizontal ? QString::fromUtf8(obs_source_get_name(horizontal)) : QString();
+			const QString verticalName = vertical ? QString::fromUtf8(obs_source_get_name(vertical)) : QString();
+			QJsonObject assignments;
+			for (const QString &provider : {QString("twitch"), QString("youtube"), QString("kick"), QString("recording")}) {
+				if (!horizontalName.isEmpty()) assignments.insert(provider + "_horizontal",
+					QJsonObject{{"canvas", "horizontal"}, {"scene", horizontalName}, {"excluded", QJsonArray{}}});
+				if (!verticalName.isEmpty()) assignments.insert(provider + "_vertical",
+					QJsonObject{{"canvas", "vertical"}, {"scene", verticalName}, {"excluded", QJsonArray{}}});
+			}
+			stage.insert("assignments", assignments);
+			stage.insert("horizontal", horizontalName);
+			stage.insert("vertical", verticalName);
+			stage.insert("horizontalTransition", "fade");
+			stage.insert("verticalTransition", "fade");
+			obs_source_release(horizontal);
+			obs_source_release(vertical);
+			obs_canvas_release(canvas);
+		}
+		stage.insert("name", name);
+		addRow(stage);
 		saveTable();
 	});
 	connect(duplicate, &QPushButton::clicked, &dialog, [table, addRow, saveTable] {

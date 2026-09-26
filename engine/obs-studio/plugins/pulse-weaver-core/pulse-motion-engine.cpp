@@ -46,9 +46,13 @@
 #include <QTabWidget>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QUrl>
 #include <QUuid>
 #include <QVBoxLayout>
 #include <QWindow>
+#include <QWizard>
+#include <QWizardPage>
+#include <QPainter>
 
 #include <algorithm>
 #include <cmath>
@@ -748,35 +752,51 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	splitter->setHandleWidth(0);
 	root->addWidget(splitter, 1);
 	auto *libraryPage = new QFrame;
-	libraryPage->setMaximumHeight(52);
-	auto *libraryLayout = new QHBoxLayout(libraryPage);
-	libraryLayout->setContentsMargins(4, 3, 4, 3);
-	libraryLayout->setSpacing(8);
+	libraryPage->setMaximumHeight(104);
+	auto *libraryLayout = new QVBoxLayout(libraryPage);
+	libraryLayout->setContentsMargins(4, 2, 4, 2);
+	libraryLayout->setSpacing(2);
+	auto *stageRow = new QHBoxLayout;
+	stageRow->setSpacing(8);
+	libraryLayout->addLayout(stageRow);
 	actionList = new QListWidget;
 	actionList->hide();
-	libraryLayout->addWidget(actionList);
 	stagePicker = new QComboBox(libraryPage);
-	stagePicker->setMinimumWidth(190);
 	stagePicker->setToolTip("Choose the stage to design");
+	stagePicker->hide();
 	lookPicker = new QComboBox(libraryPage);
-	lookPicker->setMinimumWidth(180);
 	lookPicker->setToolTip("Choose a look within this stage");
-	libraryLayout->addWidget(new QLabel("Stage"));
-	libraryLayout->addWidget(stagePicker, 1);
-	libraryLayout->addWidget(new QLabel("Look"));
-	libraryLayout->addWidget(lookPicker, 1);
+	lookPicker->hide();
+	auto makeNavigationStrip = [libraryPage](QPointer<QWidget> &cards) {
+		auto *scroll = new QScrollArea(libraryPage);
+		scroll->setWidgetResizable(true);
+		scroll->setFrameShape(QFrame::NoFrame);
+		scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+		scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+		scroll->setFixedHeight(44);
+		cards = new QWidget(scroll);
+		auto *row = new QHBoxLayout(cards);
+		row->setContentsMargins(2, 0, 2, 0);
+		row->setSpacing(10);
+		scroll->setWidget(cards);
+		return scroll;
+	};
+	stageRow->addWidget(new QLabel("Stage", libraryPage));
+	stageRow->addWidget(makeNavigationStrip(stageCards), 1);
 	auto *commandRow = new QHBoxLayout;
 	commandRow->setSpacing(6);
-	libraryLayout->addLayout(commandRow);
-	auto *showBuilder = new QPushButton("BUILD MY SHOW STAGES");
+	stageRow->addLayout(commandRow);
+	auto *lookRow = new QHBoxLayout;
+	lookRow->setSpacing(8);
+	lookRow->addWidget(new QLabel("Look", libraryPage));
+	lookRow->addWidget(makeNavigationStrip(lookCards), 1);
+	libraryLayout->addLayout(lookRow);
+	auto *showBuilder = new QPushButton("Build my show…");
 	showBuilder->setObjectName("Primary");
 	showBuilder->setProperty("motionShowBuilder", true);
-	showBuilder->setToolTip("Build Starting, Intermission, Hangout, Gameplay and Celebration from this imported setup.");
+	showBuilder->setToolTip("Choose your sources and layouts, then create a complete show.");
 	commandRow->addWidget(showBuilder);
-	connect(showBuilder, &QPushButton::clicked, this, [this] {
-		const QJsonObject result = createShowStages();
-		setStatus(result.value("message").toString(), !result.value("ok").toBool());
-	});
+	connect(showBuilder, &QPushButton::clicked, this, [this] { openShowWizard(); });
 	auto *newPunch = new QPushButton("+ CLOSE-UP");
 	auto *newLayout = new QPushButton("+ LOOK");
 	commandRow->addWidget(newPunch);
@@ -992,7 +1012,14 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	canvasLayout->addLayout(previewSurfaces, 1);
 	auto *gestureHelp = new QLabel("Drag to move    ◇ Resize    Shift + ◇ Stretch    Alt + ◇ Crop", canvasCard);
 	gestureHelp->setObjectName("Muted");
-	canvasLayout->addWidget(gestureHelp);
+	auto *canvasShortcuts = new QHBoxLayout;
+	canvasShortcuts->addWidget(gestureHelp, 1);
+	auto *swapFocusButton = new QPushButton("Swap focus", canvasCard);
+	swapFocusButton->setAccessibleName("Swap the large and supporting sources on both canvases");
+	swapFocusButton->setToolTip("Swap the main and inset sources, keeping each source's own crop. Save the look when it is right.");
+	canvasShortcuts->addWidget(swapFocusButton);
+	canvasLayout->addLayout(canvasShortcuts);
+	connect(swapFocusButton, &QPushButton::clicked, this, [this] { swapFocus(); });
 	auto *layerRail = new QFrame;
 	layerRail->setObjectName("PulseWeaverCard");
 	layerRail->setMinimumWidth(218);
@@ -1360,15 +1387,6 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 
 void PulseMotionEngine::refreshEditor()
 {
-	if (editor) {
-		const bool built = std::any_of(actions.begin(), actions.end(), [](const QJsonValue &value) {
-			return value.toObject().value("stage").toString() == "PW Starting";
-		});
-		for (QPushButton *button : editor->findChildren<QPushButton *>())
-			if (button->property("motionShowBuilder").toBool()) {
-				button->setVisible(!built);
-			}
-	}
 	populateStages();
 	populateScenes();
 	if (actionList) {
@@ -1445,6 +1463,34 @@ void PulseMotionEngine::refreshNavigation()
 		lookPicker->addItem(label, id);
 	}
 	lookPicker->setCurrentIndex(std::max(0, lookPicker->findData(editingId)));
+	auto renderStrip = [this](QWidget *cards, QComboBox *picker, const QString &emptyText) {
+		if (!cards || !picker) return;
+		auto *row = static_cast<QHBoxLayout *>(cards->layout());
+		while (QLayoutItem *child = row->takeAt(0)) {
+			delete child->widget();
+			delete child;
+		}
+		for (int index = 0; index < picker->count(); ++index) {
+			auto *choice = new QPushButton(picker->itemText(index), cards);
+			choice->setFlat(true);
+			choice->setCheckable(true);
+			choice->setChecked(index == picker->currentIndex());
+			choice->setAccessibleName("Choose " + picker->itemText(index));
+			choice->setStyleSheet("QPushButton { background:transparent; border:0; color:#aebdd0; padding:5px 9px; }"
+				"QPushButton:checked { color:#60c8ff; font-weight:700; }"
+				"QPushButton:hover { color:#b8e8ff; }");
+			row->addWidget(choice);
+			connect(choice, &QPushButton::clicked, this, [picker, index] { picker->setCurrentIndex(index); });
+		}
+		if (!picker->count()) {
+			auto *hint = new QLabel(emptyText, cards);
+			hint->setObjectName("Muted");
+			row->addWidget(hint);
+		}
+		row->addStretch();
+	};
+	renderStrip(stageCards, stagePicker, "Build a show to add stages");
+	renderStrip(lookCards, lookPicker, "Choose a stage to see its looks");
 }
 
 QJsonArray PulseMotionEngine::sceneCatalogue() const
@@ -1615,6 +1661,15 @@ void PulseMotionEngine::loadActionIntoEditor(const QJsonObject &action)
 			const QJsonObject config = QJsonDocument::fromJson(selector->itemData(stage).toString().toUtf8()).object();
 			if (config.value("horizontal").toString() == mainContainer)
 				pairedContainer = config.value("vertical").toString();
+		}
+	}
+	if (pairedContainer.isEmpty() && action.value("kind").toString() == "layout") {
+		for (const QJsonValue &value : loadedTargets) {
+			const QString container = value.toObject().value("container").toString();
+			if (!container.isEmpty() && container != mainContainer) {
+				pairedContainer = container;
+				break;
+			}
 		}
 	}
 	editingId = action.value("id").toString();
@@ -2166,6 +2221,69 @@ void PulseMotionEngine::adaptPortrait()
 	setStatus("Portrait adapted. Review the framing, then save. Chatty remains full canvas; Undo restores the previous draft.");
 }
 
+void PulseMotionEngine::swapFocus()
+{
+	if (!draftScene || !kindField || kindField->currentData().toString() != "layout") {
+		setStatus("Choose a stage look first.", true); return;
+	}
+	struct Candidate { QString name; qint64 id; double area; };
+	std::vector<Candidate> candidates;
+	for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
+		OBSSceneItem item = draftItem(it.key());
+		if (!item) continue;
+		const Transform frame = capture(item);
+		const QString name = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item)));
+		if (!frame.visible || frame.locked || motionGraphicSwitch(name)) continue;
+		obs_source_t *source = obs_sceneitem_get_source(item);
+		const double width = frame.boundsType == OBS_BOUNDS_NONE ? obs_source_get_width(source) * std::abs(frame.scale.x) : frame.bounds.x;
+		const double height = frame.boundsType == OBS_BOUNDS_NONE ? obs_source_get_height(source) * std::abs(frame.scale.y) : frame.bounds.y;
+		if (width > 0 && height > 0) candidates.push_back({name, it.key(), width * height});
+	}
+	std::sort(candidates.begin(), candidates.end(), [](const Candidate &a, const Candidate &b) { return a.area > b.area; });
+	if (candidates.size() < 2) { setStatus("This look needs two visible, unlocked content sources to swap.", true); return; }
+	const Candidate main = candidates.front();
+	Candidate supporting = candidates[1];
+	for (size_t i = 1; i < candidates.size(); ++i)
+		if (candidates[i].id == visualSelectedItem) { supporting = candidates[i]; break; }
+	const QString activeCanvas = draftContainer;
+	auto swapInCurrent = [this, &main, &supporting]() {
+		OBSSceneItem first, second;
+		for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
+			OBSSceneItem item = draftItem(it.key());
+			if (!item) continue;
+			const QString name = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item)));
+			if (name == main.name && !first) first = item;
+			if (name == supporting.name && !second) second = item;
+		}
+		if (!first || !second || first == second) return false;
+		rememberDraft();
+		Transform firstFrame = capture(first), secondFrame = capture(second);
+		std::swap(firstFrame.pos, secondFrame.pos);
+		std::swap(firstFrame.bounds, secondFrame.bounds);
+		std::swap(firstFrame.order, secondFrame.order);
+		for (Transform *frame : {&firstFrame, &secondFrame}) {
+			frame->alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+			frame->boundsType = OBS_BOUNDS_SCALE_OUTER;
+			frame->boundsAlignment = OBS_ALIGN_CENTER;
+			frame->boundsCrop = true;
+			frame->visible = true;
+		}
+		apply(first, firstFrame, true);
+		apply(second, secondFrame, true);
+		refreshDraftRows();
+		return true;
+	};
+	if (!swapInCurrent()) { setStatus("These sources cannot be swapped in the selected canvas.", true); return; }
+	const QString otherCanvas = activeCanvas == mainContainer ? pairedContainer : mainContainer;
+	if (!otherCanvas.isEmpty()) {
+		activateDraft(otherCanvas);
+		swapInCurrent();
+		activateDraft(activeCanvas);
+	}
+	refreshDraftRows(); syncVisualCanvas();
+	setStatus("Swapped “" + main.name + "” and “" + supporting.name + "”. Review both canvases, then save this look.");
+}
+
 void PulseMotionEngine::pinOverlayAcrossLooks()
 {
 	OBSSceneItem selected = draftItem(visualSelectedItem);
@@ -2543,6 +2661,664 @@ void PulseMotionEngine::createStarterStage()
 	loadActionIntoEditor(actionByIdentity(firstId));
 	emitEvent("motion_catalogue_changed");
 	setStatus("Created Game, Chatting, Printer and BRB looks. Preview here, or run them from Lumia. Existing scenes are unchanged.");
+}
+
+void PulseMotionEngine::openShowWizard()
+{
+	struct Choice { QString name; QString uuid; QString type; };
+	QList<Choice> available;
+	obs_enum_sources([](void *opaque, obs_source_t *source) {
+		if (obs_scene_from_source(source) || obs_group_from_source(source) ||
+			!(obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO)) return true;
+		static_cast<QList<Choice> *>(opaque)->append({QString::fromUtf8(obs_source_get_name(source)),
+			QString::fromUtf8(obs_source_get_uuid(source)), QString::fromUtf8(obs_source_get_id(source))});
+		return true;
+	}, &available);
+	std::sort(available.begin(), available.end(), [](const Choice &a, const Choice &b) {
+		return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+	});
+
+	QWizard wizard(editor);
+	wizard.setWindowTitle("Build my show · Pulse Weaver");
+	wizard.setWizardStyle(QWizard::ModernStyle);
+	wizard.setOption(QWizard::NoBackButtonOnStartPage);
+	wizard.resize(850, 680);
+	auto makePage = [&wizard](const QString &title, const QString &subtitle) {
+		auto *page = new QWizardPage(&wizard);
+		page->setTitle(title);
+		page->setSubTitle(subtitle);
+		page->setLayout(new QVBoxLayout);
+		wizard.addPage(page);
+		return page;
+	};
+	auto *purpose = makePage("What belongs in your show?", "Choose the stages you want. You can add more looks later in Control.");
+	auto *showName = new QLineEdit("My Show", purpose);
+	showName->setPlaceholderText("Name this show");
+	purpose->layout()->addWidget(new QLabel("Show name", purpose));
+	purpose->layout()->addWidget(showName);
+	QMap<QString, QCheckBox *> enabledStages;
+	for (const auto &entry : std::vector<std::pair<QString, QString>>{{"Starting", "Starting"},
+		{"Hangout", "Hangout / conversation"}, {"Gameplay", "Gameplay / activity"},
+		{"Intermission", "BRB / Ending"}, {"Celebration", "Raid / shoutout"}}) {
+		auto *check = new QCheckBox(entry.second, purpose);
+		check->setChecked(true);
+		purpose->layout()->addWidget(check);
+		enabledStages.insert(entry.first, check);
+	}
+	static_cast<QVBoxLayout *>(purpose->layout())->addStretch();
+
+	QMap<QString, QComboBox *> roles;
+	QMap<QString, QJsonObject> plannedSources;
+	auto addRole = [this, &available, &roles, &plannedSources, showName](QWizardPage *page, QFormLayout *form,
+		const QString &key, const QString &label, const QStringList &hints = {}) {
+		const bool graphic = key == "starting" || key == "brb" || key == "ending" || key == "celebration";
+		auto *combo = new QComboBox(page);
+		combo->setAccessibleName(label);
+		combo->addItem("I don't use this", QString());
+		int preferred = 0;
+		for (const Choice &choice : available) {
+			combo->addItem(choice.name, choice.uuid);
+			if (!preferred)
+				for (const QString &hint : hints)
+					if (choice.name.contains(hint, Qt::CaseInsensitive) || choice.type == hint) {
+						preferred = combo->count() - 1; break;
+					}
+		}
+		combo->setCurrentIndex(preferred);
+		if (graphic && !preferred) {
+			const QString name = showName->text().trimmed() + " · " + label;
+			plannedSources.insert(key, {{"role", key}, {"name", name}, {"kind", "builtin_graphic"}, {"auto", true}});
+			combo->addItem("Create: " + name, "new:" + key);
+			combo->setCurrentIndex(combo->count() - 1);
+		}
+		auto *roleLabel = new QLabel(label, page);
+		roleLabel->setStyleSheet("color: #b9c8e8;");
+		roleLabel->setBuddy(combo);
+		auto *row = new QWidget(page);
+		auto *rowLayout = new QHBoxLayout(row);
+		rowLayout->setContentsMargins(0, 0, 0, 0);
+		rowLayout->addWidget(combo, 1);
+		auto *create = new QPushButton("Create new…", row);
+		rowLayout->addWidget(create);
+		form->addRow(roleLabel, row);
+		roles.insert(key, combo);
+		QObject::connect(create, &QPushButton::clicked, page, [this, combo, key, label, page, showName, graphic, &plannedSources, &available] {
+			QDialog dialog(page);
+			dialog.setWindowTitle("Create " + label.toLower());
+			auto *layout = new QVBoxLayout(&dialog);
+			auto *form = new QFormLayout;
+			layout->addLayout(form);
+			auto *name = new QLineEdit(showName->text().trimmed() + " · " + label, &dialog);
+			form->addRow("Source name", name);
+			auto *kind = new QComboBox(&dialog);
+			if (key == "camera" || key == "secondary" || key == "alertCamera") {
+				kind->addItem("Video capture device", "dshow_input");
+				kind->addItem("Window capture", "window_capture");
+			} else if (key == "game") kind->addItem("Game Capture", "game_capture");
+			else if (key == "desktop") kind->addItem("Display capture", "monitor_capture");
+			else if (graphic) {
+				kind->addItem("Pulse Weaver title graphic", "builtin_graphic");
+				kind->addItem("Browser overlay URL", "browser_source");
+			} else kind->addItem("Browser overlay URL", "browser_source");
+			form->addRow("Source type", kind);
+			auto *target = new QComboBox(&dialog);
+			form->addRow("Device or window", target);
+			auto *url = new QLineEdit(&dialog);
+			url->setPlaceholderText("https://…");
+			form->addRow("Overlay URL", url);
+			auto refresh = [kind, target, url, form] {
+				const QString sourceKind = kind->currentData().toString();
+				const bool browser = sourceKind == "browser_source";
+				url->setVisible(browser);
+				form->labelForField(url)->setVisible(browser);
+				const bool needsTarget = sourceKind == "dshow_input" || sourceKind == "monitor_capture" ||
+					sourceKind == "window_capture" || sourceKind == "game_capture";
+				target->setVisible(needsTarget);
+				form->labelForField(target)->setVisible(needsTarget);
+				target->clear();
+				if (!needsTarget) return;
+				if (sourceKind == "game_capture") target->addItem("Any fullscreen game (choose a window later in Show)", QString());
+				obs_properties_t *properties = obs_get_source_properties(sourceKind.toUtf8().constData());
+				if (!properties) return;
+				const char *property = sourceKind == "dshow_input" ? "video_device_id" :
+					sourceKind == "monitor_capture" ? "monitor_id" : "window";
+				obs_property_t *list = obs_properties_get(properties, property);
+				const bool legacyMonitor = sourceKind == "monitor_capture" && !list;
+				if (legacyMonitor) list = obs_properties_get(properties, "monitor");
+				if (list) for (size_t i = 0; i < obs_property_list_item_count(list); ++i) {
+					if (obs_property_list_item_disabled(list, i)) continue;
+					const QString value = legacyMonitor ? QString::number(obs_property_list_item_int(list, i)) :
+						QString::fromUtf8(obs_property_list_item_string(list, i));
+					if (!value.isEmpty()) target->addItem(QString::fromUtf8(obs_property_list_item_name(list, i)), value);
+				}
+				obs_properties_destroy(properties);
+			};
+			QObject::connect(kind, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, [refresh](int) { refresh(); });
+			refresh();
+			auto *help = new QLabel("The source will be created when you finish the wizard. You can fine-tune it later in Camera / Sources.", &dialog);
+			help->setWordWrap(true);
+			layout->addWidget(help);
+			auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+			layout->addWidget(buttons);
+			QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+			QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+				const QString sourceName = name->text().trimmed();
+				if (sourceName.isEmpty()) { QMessageBox::warning(&dialog, "Name needed", "Enter a source name."); return; }
+				OBSSourceAutoRelease existing = obs_get_source_by_name(sourceName.toUtf8().constData());
+				if (existing || std::any_of(available.begin(), available.end(), [&](const Choice &item) { return item.name == sourceName; }) ||
+					std::any_of(plannedSources.begin(), plannedSources.end(), [&](const QJsonObject &item) { return item.value("name").toString() == sourceName && item.value("role").toString() != key; })) {
+					QMessageBox::warning(&dialog, "Name in use", "Choose a unique source name."); return;
+				}
+				const QString sourceKind = kind->currentData().toString();
+				const QUrl overlayUrl(url->text().trimmed());
+				if (sourceKind == "browser_source" && (!overlayUrl.isValid() ||
+					(overlayUrl.scheme() != "https" && overlayUrl.scheme() != "http"))) {
+					QMessageBox::warning(&dialog, "URL needed", "Enter a complete https:// or http:// overlay URL."); return;
+				}
+				if (sourceKind != "browser_source" && sourceKind != "builtin_graphic" && sourceKind != "game_capture" && target->currentData().toString().isEmpty()) {
+					QMessageBox::warning(&dialog, "Device needed", "Choose a device or window, or connect one and reopen this step."); return;
+				}
+				plannedSources.insert(key, {{"role", key}, {"name", sourceName}, {"kind", sourceKind},
+					{"target", target->currentData().toString()}, {"url", url->text().trimmed()}});
+				const int old = combo->findData("new:" + key);
+				if (old >= 0) combo->removeItem(old);
+				combo->addItem("Create: " + sourceName, "new:" + key);
+				combo->setCurrentIndex(combo->count() - 1);
+				dialog.accept();
+			});
+			dialog.exec();
+		});
+	};
+	auto *content = makePage("Assign your sources", "Use an existing source or create a new one for each role. Sources are reused across looks.");
+	auto *contentForm = new QFormLayout;
+	content->layout()->addItem(contentForm);
+	addRole(content, contentForm, "camera", "Main camera", {"facecam", "webcam", "camera"});
+	addRole(content, contentForm, "secondary", "Secondary focus", {"printer", "desk"});
+	addRole(content, contentForm, "alertCamera", "Alert / pixel-board camera", {"pixel", "alert cam"});
+	addRole(content, contentForm, "game", "Gameplay", {"game_capture"});
+	addRole(content, contentForm, "desktop", "Desktop / screen", {"monitor_capture", "display_capture", "main screen"});
+	static_cast<QVBoxLayout *>(content->layout())->addStretch();
+
+	auto *overlays = makePage("Add graphics and overlays", "Chat and alert sources controlled by another app keep their full-canvas framing.");
+	auto *overlayForm = new QFormLayout;
+	overlays->layout()->addItem(overlayForm);
+	addRole(overlays, overlayForm, "landscapeChat", "Landscape chat", {"Chatty", "chat"});
+	addRole(overlays, overlayForm, "portraitChat", "Portrait chat", {"vert chatty", "portrait chat"});
+	addRole(overlays, overlayForm, "alerts", "Alerts", {"alert"});
+	addRole(overlays, overlayForm, "captions", "Captions", {"caption"});
+	addRole(overlays, overlayForm, "starting", "Starting overlay", {"starting", "startiing"});
+	addRole(overlays, overlayForm, "brb", "BRB overlay", {"brb"});
+	addRole(overlays, overlayForm, "ending", "Ending overlay", {"ended", "ending"});
+	addRole(overlays, overlayForm, "celebration", "Celebration overlay", {"shout", "raid"});
+	connect(showName, &QLineEdit::textChanged, &wizard, [&plannedSources, &roles](const QString &value) {
+		for (auto it = plannedSources.begin(); it != plannedSources.end(); ++it) {
+			QJsonObject spec = it.value();
+			if (!spec.value("auto").toBool()) continue;
+			const QString role = it.key();
+			const QString name = value.trimmed() + " · " + roles.value(role)->accessibleName();
+			spec.insert("name", name);
+			it.value() = spec;
+			const int row = roles.value(role)->findData("new:" + role);
+			if (row >= 0) roles.value(role)->setItemText(row, "Create: " + name);
+		}
+	});
+	static_cast<QVBoxLayout *>(overlays->layout())->addStretch();
+
+	auto *composition = makePage("Choose a starting layout", "You can refine each source on both canvases after the show is created.");
+	auto *styles = new QListWidget(composition);
+	styles->setViewMode(QListView::IconMode);
+	styles->setFlow(QListView::LeftToRight);
+	styles->setResizeMode(QListView::Adjust);
+	styles->setSpacing(12);
+	styles->setIconSize(QSize(206, 112));
+	styles->setMaximumHeight(185);
+	for (const auto &style : std::vector<std::pair<QString, QString>>{{"corner", "Main + corner"},
+		{"split", "Side by side"}, {"full", "Fullscreen focus"}}) {
+		QPixmap diagram(206, 112);
+		diagram.fill(QColor(10, 14, 27));
+		QPainter painter(&diagram);
+		painter.setPen(QPen(QColor(55, 210, 240), 2));
+		if (style.first == "split") {
+			painter.fillRect(QRect(8, 10, 92, 92), QColor(24, 80, 105));
+			painter.fillRect(QRect(106, 10, 92, 92), QColor(78, 44, 105));
+			painter.drawRect(QRect(8, 10, 92, 92)); painter.drawRect(QRect(106, 10, 92, 92));
+		} else {
+			painter.fillRect(QRect(8, 10, 190, 92), QColor(24, 80, 105));
+			painter.drawRect(QRect(8, 10, 190, 92));
+			if (style.first == "corner") {
+				painter.setPen(QPen(QColor(194, 112, 255), 2));
+				painter.fillRect(QRect(139, 13, 56, 34), QColor(78, 44, 105));
+				painter.drawRect(QRect(139, 13, 56, 34));
+			}
+		}
+		painter.end();
+		auto *card = new QListWidgetItem(QIcon(diagram), style.second, styles);
+		card->setData(Qt::UserRole, style.first);
+		card->setSizeHint(QSize(222, 145));
+	}
+	styles->setCurrentRow(0);
+	composition->layout()->addWidget(styles);
+	composition->layout()->addWidget(new QLabel("Portrait places the camera across the top and fills the lower area with the main content.", composition));
+	auto *transition = new QComboBox(composition);
+	transition->addItem("Fade", "fade");
+	transition->addItem("Cut", "cut");
+	obs_frontend_source_list transitionSources{};
+	obs_frontend_get_transitions(&transitionSources);
+	for (size_t index = 0; index < transitionSources.sources.num; ++index) {
+		obs_source_t *source = transitionSources.sources.array[index];
+		if (source && QString::fromUtf8(obs_source_get_id(source)) == "obs_stinger_transition")
+			transition->addItem("Stinger · " + QString::fromUtf8(obs_source_get_name(source)),
+				"stinger:" + QString::fromUtf8(obs_source_get_name(source)));
+	}
+	obs_frontend_source_list_free(&transitionSources);
+	composition->layout()->addWidget(new QLabel("Transition between stages", composition));
+	composition->layout()->addWidget(transition);
+	static_cast<QVBoxLayout *>(composition->layout())->addStretch();
+
+	auto *review = makePage("Review your show", "Creating the show adds new scenes and looks. Existing scenes stay available.");
+	auto *reviewText = new QLabel(review);
+	reviewText->setWordWrap(true);
+	review->layout()->addWidget(reviewText);
+	static_cast<QVBoxLayout *>(review->layout())->addStretch();
+	connect(&wizard, &QWizard::currentIdChanged, &wizard, [&, review](int id) {
+		if (id != wizard.pageIds().last()) return;
+		QStringList stageNames;
+		for (const QString &stage : {QString("Starting"), QString("Hangout"), QString("Gameplay"), QString("Intermission"), QString("Celebration")})
+			if (enabledStages.value(stage)->isChecked()) stageNames.append(stage);
+		QStringList assigned;
+		for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+			if (!it.value()->currentData().toString().isEmpty()) assigned.append(it.value()->accessibleName() + ": " + it.value()->currentText());
+		QStringList missing;
+		auto has = [&roles](const QString &role) { return !roles.value(role)->currentData().toString().isEmpty(); };
+		if (stageNames.contains("Starting") && !has("starting") && !has("secondary") && !has("game") && !has("desktop"))
+			missing.append("Starting needs an overlay or background source.");
+		if (stageNames.contains("Hangout") && !has("camera") && !has("secondary") && !has("desktop"))
+			missing.append("Hangout needs a camera or activity source.");
+		if (stageNames.contains("Gameplay") && !has("game") && !has("desktop"))
+			missing.append("Gameplay needs a game or screen capture.");
+		if (stageNames.contains("Intermission") && !has("brb") && !has("ending") && !has("secondary") && !has("desktop"))
+			missing.append("Intermission needs a BRB, Ending or background source.");
+		if (stageNames.contains("Celebration") && !has("celebration") && !has("camera") && !has("secondary"))
+			missing.append("Celebration needs an overlay, camera or activity source.");
+		if (stageNames.isEmpty()) missing.append("Choose at least one stage.");
+		if (showName->text().trimmed().isEmpty()) missing.append("Name your show.");
+		reviewText->setText("Show: " + showName->text().trimmed() + "\n\nStages: " + stageNames.join(", ") +
+			"\n\nAssigned sources:\n" + assigned.join("\n") +
+			"\n\nLayout: " + (styles->currentItem() ? styles->currentItem()->text() : QString()) +
+			"\nTransition: " + transition->currentText() +
+			"\n\nBoth landscape and portrait looks will be saved for Control and Lumia." +
+			(missing.isEmpty() ? QString() : "\n\nBefore creating:\n" + missing.join("\n")));
+		QTimer::singleShot(0, &wizard, [&wizard, valid = missing.isEmpty()] {
+			if (auto *finish = wizard.button(QWizard::FinishButton)) finish->setEnabled(valid);
+		});
+	});
+	if (wizard.exec() != QDialog::Accepted) return;
+	QJsonObject roleIds;
+	for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+		roleIds.insert(it.key(), it.value()->currentData().toString());
+	QJsonArray chosenStages;
+	for (const QString &stage : {QString("Starting"), QString("Hangout"), QString("Gameplay"), QString("Intermission"), QString("Celebration")})
+		if (enabledStages.value(stage)->isChecked()) chosenStages.append(stage);
+	QJsonObject sourceSpecs;
+	for (auto it = plannedSources.cbegin(); it != plannedSources.cend(); ++it)
+		if (roleIds.value(it.key()).toString() == "new:" + it.key()) sourceSpecs.insert(it.key(), it.value());
+	QJsonObject choices{{"name", showName->text().trimmed()}, {"roles", roleIds}, {"newSources", sourceSpecs}, {"stages", chosenStages},
+		{"style", styles->currentItem() ? styles->currentItem()->data(Qt::UserRole).toString() : QString("corner")},
+		{"transition", transition->currentData().toString()}};
+	const QJsonObject result = createGuidedShow(choices);
+	setStatus(result.value("message").toString(), !result.value("ok").toBool());
+	if (!result.value("ok").toBool())
+		QMessageBox::warning(editor, "Show not created", result.value("message").toString());
+}
+
+QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
+{
+	if (!originalStoreValid) return {{"ok", false}, {"message", "The protected motion store is unreadable."}};
+	const QString prefix = cleanName(choices.value("name").toString(), "My Show");
+	QJsonObject selected = choices.value("roles").toObject();
+	const QJsonObject newSourceSpecs = choices.value("newSources").toObject();
+	QMap<QString, QString> portraitSourceIds;
+	QMap<QString, QString> sourceNames;
+	for (auto it = selected.begin(); it != selected.end(); ++it) {
+		const QString uuid = it.value().toString();
+		if (uuid.isEmpty()) continue;
+		if (uuid == "new:" + it.key()) {
+			const QJsonObject spec = newSourceSpecs.value(it.key()).toObject();
+			const QString sourceName = spec.value("name").toString().trimmed();
+			if (sourceName.isEmpty() || spec.value("role").toString() != it.key())
+				return {{"ok", false}, {"message", "Finish setting up the new source for " + it.key() + "."}};
+			OBSSourceAutoRelease existing = obs_get_source_by_name(sourceName.toUtf8().constData());
+			if (existing || sourceNames.values().contains(sourceName))
+				return {{"ok", false}, {"message", "The source name “" + sourceName + "” is already in use."}};
+			sourceNames.insert(it.key(), sourceName);
+			continue;
+		}
+		OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.toUtf8().constData());
+		if (!source || !(obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) ||
+			obs_scene_from_source(source) || obs_group_from_source(source))
+			return {{"ok", false}, {"message", "A selected source is missing: " + it.key() + ". Choose it again."}};
+		sourceNames.insert(it.key(), QString::fromUtf8(obs_source_get_name(source)));
+	}
+	const QJsonArray requested = choices.value("stages").toArray();
+	if (requested.isEmpty()) return {{"ok", false}, {"message", "Choose at least one stage."}};
+	const QString style = choices.value("style").toString("corner");
+	if (style != "corner" && style != "split" && style != "full")
+		return {{"ok", false}, {"message", "Choose one of the shown layouts."}};
+	const QString transition = choices.value("transition").toString("fade");
+	OBSCanvasAutoRelease verticalCanvas = obs_get_canvas_by_name("Pulse Weaver Vertical");
+	if (!verticalCanvas)
+		return {{"ok", false}, {"message", "The portrait canvas is still starting. Open Show, wait for its portrait preview, then try again."}};
+	obs_video_info horizontalInfo{}, verticalInfo{};
+	if (!obs_get_video_info(&horizontalInfo) || !obs_canvas_get_video_info(verticalCanvas, &verticalInfo) ||
+		!horizontalInfo.base_width || !horizontalInfo.base_height || !verticalInfo.base_width || !verticalInfo.base_height)
+		return {{"ok", false}, {"message", "Both video canvases must be ready before creating a show."}};
+
+	struct LookPlan { QString name; QString main; QString supporting; QString graphic; };
+	struct StagePlan { QString suffix; std::vector<LookPlan> looks; };
+	std::vector<StagePlan> plans;
+	auto choose = [&sourceNames](const QStringList &roles) {
+		for (const QString &role : roles) if (sourceNames.contains(role)) return role;
+		return QString();
+	};
+	for (const QJsonValue &value : requested) {
+		const QString stage = value.toString();
+		StagePlan plan{stage, {}};
+		if (stage == "Starting") {
+			const QString background = choose({"secondary", "desktop", "game"});
+			const QString graphic = choose({"starting"});
+			const QString main = background.isEmpty() ? graphic : background;
+			if (!main.isEmpty()) plan.looks.push_back({"Starting", main, choose({"alertCamera"}), main == graphic ? QString() : graphic});
+		} else if (stage == "Hangout") {
+			const QString main = choose({"camera", "secondary", "desktop"});
+			const QString other = main == "camera" ? choose({"secondary", "desktop"}) : choose({"camera", "desktop"});
+			if (!main.isEmpty()) plan.looks.push_back({"Main focus", main, other});
+			if (!other.isEmpty() && other != main) plan.looks.push_back({"Swap focus", other, main});
+			if (sourceNames.contains("desktop") && main != "desktop" && other != "desktop")
+				plan.looks.push_back({"Screen focus", "desktop", main});
+		} else if (stage == "Gameplay") {
+			const QString main = choose({"game", "desktop"});
+			const QString other = choose({"camera", "secondary"});
+			if (!main.isEmpty()) {
+				plan.looks.push_back({"Gameplay", main, other});
+				plan.looks.push_back({"Content focus", main, {}});
+				if (!other.isEmpty()) plan.looks.push_back({"Swap focus", other, main});
+			}
+		} else if (stage == "Intermission") {
+			const QString background = choose({"secondary", "desktop", "game"});
+			const QString brb = choose({"brb"});
+			const QString brbMain = background.isEmpty() ? brb : background;
+			if (!brbMain.isEmpty()) plan.looks.push_back({"BRB", brbMain, {}, brbMain == brb ? QString() : brb});
+			if (sourceNames.contains("ending")) {
+				const QString endingMain = background.isEmpty() ? QString("ending") : background;
+				plan.looks.push_back({"Ending", endingMain, {}, endingMain == "ending" ? QString() : QString("ending")});
+			}
+		} else if (stage == "Celebration") {
+			const QString background = choose({"camera", "secondary", "game", "desktop"});
+			const QString graphic = choose({"celebration"});
+			const QString main = background.isEmpty() ? graphic : background;
+			if (!main.isEmpty()) plan.looks.push_back({"Raid welcome", main,
+				main == "camera" ? QString() : choose({"camera"}), main == graphic ? QString() : graphic});
+		} else return {{"ok", false}, {"message", "Unknown stage choice: " + stage}};
+		if (plan.looks.empty())
+			return {{"ok", false}, {"message", "Assign a source for " + stage + " or uncheck that stage."}};
+		plans.push_back(std::move(plan));
+	}
+
+	const QString stagePath = QDir::cleanPath(QDir(QFileInfo(storagePath).absolutePath()).absoluteFilePath("../../pulseweaver-stages.json"));
+	QFile stagesFile(stagePath);
+	QJsonArray stages;
+	if (stagesFile.exists()) {
+		if (!stagesFile.open(QIODevice::ReadOnly)) return {{"ok", false}, {"message", "Could not read the Stage catalogue."}};
+		const QJsonDocument document = QJsonDocument::fromJson(stagesFile.readAll());
+		stagesFile.close();
+		if (!document.isArray()) return {{"ok", false}, {"message", "The Stage catalogue is invalid. Repair it before building a show."}};
+		stages = document.array();
+	}
+	for (const StagePlan &plan : plans) {
+		const QString name = prefix + " · " + plan.suffix;
+		for (const QJsonValue &value : stages)
+			if (value.toObject().value("name").toString() == name)
+				return {{"ok", false}, {"message", "A Stage named “" + name + "” exists. Choose another show name."}};
+		OBSSourceAutoRelease horizontal = obs_get_source_by_name(name.toUtf8().constData());
+		OBSSceneAutoRelease portrait = obs_canvas_get_scene_by_name(verticalCanvas, (name + " · Portrait").toUtf8().constData());
+		if (horizontal || portrait)
+			return {{"ok", false}, {"message", "A scene named “" + name + "” exists. Choose another show name."}};
+	}
+
+	const QJsonArray oldActions = actions;
+	std::vector<obs_source_t *> created;
+	std::vector<obs_source_t *> createdSources;
+	QStringList createdFiles;
+	QJsonArray newActions;
+	auto rollbackScenes = [&created, &createdSources, &createdFiles] {
+		for (auto it = created.rbegin(); it != created.rend(); ++it)
+			if (*it) obs_source_remove(*it);
+		for (auto it = createdSources.rbegin(); it != createdSources.rend(); ++it) {
+			obs_source_remove(*it);
+			obs_source_release(*it);
+		}
+		for (const QString &path : createdFiles) QFile::remove(path);
+	};
+	auto fail = [&rollbackScenes](const QString &message) -> QJsonObject {
+		rollbackScenes();
+		return {{"ok", false}, {"message", message}};
+	};
+	const QString collection = motionCollection();
+	for (auto it = newSourceSpecs.begin(); it != newSourceSpecs.end(); ++it) {
+		if (selected.value(it.key()).toString() != "new:" + it.key()) continue;
+		const QJsonObject spec = it.value().toObject();
+		const QString name = spec.value("name").toString();
+		const QString kind = spec.value("kind").toString();
+		const QString target = spec.value("target").toString();
+		const QString url = spec.value("url").toString();
+		if (kind != "dshow_input" && kind != "monitor_capture" && kind != "window_capture" &&
+			kind != "game_capture" && kind != "browser_source" && kind != "builtin_graphic")
+			return fail("Unsupported source type for “" + name + "”.");
+		OBSDataAutoRelease settings = obs_data_create();
+		QString actualKind = kind;
+		if (kind == "dshow_input") obs_data_set_string(settings, "video_device_id", target.toUtf8().constData());
+		else if (kind == "monitor_capture") {
+			obs_properties_t *properties = obs_get_source_properties("monitor_capture");
+			const bool modern = properties && obs_properties_get(properties, "monitor_id");
+			if (properties) obs_properties_destroy(properties);
+			if (modern) obs_data_set_string(settings, "monitor_id", target.toUtf8().constData());
+			else obs_data_set_int(settings, "monitor", target.toInt());
+		}
+		else if (kind == "window_capture") obs_data_set_string(settings, "window", target.toUtf8().constData());
+		else if (kind == "game_capture") {
+			obs_data_set_string(settings, "capture_mode", target.isEmpty() ? "any_fullscreen" : "window");
+			if (!target.isEmpty()) obs_data_set_string(settings, "window", target.toUtf8().constData());
+		} else if (kind == "browser_source") {
+			if (QUrl(url).scheme() != "https" && QUrl(url).scheme() != "http")
+				return fail("Use a complete https:// or http:// URL for “" + name + "”.");
+			obs_data_set_string(settings, "url", url.toUtf8().constData());
+			obs_data_set_int(settings, "width", horizontalInfo.base_width);
+			obs_data_set_int(settings, "height", horizontalInfo.base_height);
+		} else {
+			actualKind = "browser_source";
+			const QString title = it.key() == "starting" ? "STARTING" : it.key() == "brb" ? "BE RIGHT BACK" :
+				it.key() == "ending" ? "STREAM ENDED" : "WELCOME";
+			const QString filePath = QDir(QFileInfo(storagePath).absolutePath()).absoluteFilePath(
+				"show-graphics/" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".html");
+			if (!QDir().mkpath(QFileInfo(filePath).absolutePath())) return fail("Could not create the show graphics folder.");
+			const QByteArray html = QString("<!doctype html><html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+				"<style>html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden}body{display:grid;place-items:center;font-family:Arial,sans-serif}"
+				".title{padding:.12em .42em;border-radius:.24em;color:white;text-align:center;font-size:clamp(48px,7vw,140px);font-weight:900;letter-spacing:.035em;"
+				"text-shadow:0 3px 18px #160525,0 0 38px #922cea;background:linear-gradient(100deg,#150e2cba,#190b33a0);box-shadow:0 0 48px #7e24dc66}"
+				"@media(max-aspect-ratio:1/1){.title{box-sizing:border-box;max-width:88vw;font-size:clamp(84px,14vw,170px);line-height:1.05}"
+				"body.ending{align-items:start;padding-top:10vh;box-sizing:border-box}}</style>"
+				"<body class='%2'><div class='title'>%1</div></body></html>").arg(title, it.key()).toUtf8();
+			QSaveFile graphic(filePath);
+			if (!graphic.open(QIODevice::WriteOnly) || graphic.write(html) != html.size() || !graphic.commit()) {
+				graphic.cancelWriting(); return fail("Could not save the graphic for “" + name + "”.");
+			}
+			createdFiles.append(filePath);
+			obs_data_set_bool(settings, "is_local_file", true);
+			obs_data_set_string(settings, "local_file", QDir::toNativeSeparators(filePath).toUtf8().constData());
+			obs_data_set_int(settings, "width", horizontalInfo.base_width);
+			obs_data_set_int(settings, "height", horizontalInfo.base_height);
+		}
+		obs_source_t *source = obs_source_create(actualKind.toUtf8().constData(), name.toUtf8().constData(), settings, nullptr);
+		if (!source) return fail("Could not create “" + name + "”. Check that its source type is installed.");
+		createdSources.push_back(source);
+		selected.insert(it.key(), QString::fromUtf8(obs_source_get_uuid(source)));
+		if (kind == "builtin_graphic") {
+			const QString portraitName = name + " · Portrait";
+			OBSSourceAutoRelease existing = obs_get_source_by_name(portraitName.toUtf8().constData());
+			if (existing) return fail("The portrait graphic name “" + portraitName + "” is already in use.");
+			OBSDataAutoRelease portraitSettings = obs_data_create();
+			obs_data_set_bool(portraitSettings, "is_local_file", true);
+			obs_data_set_string(portraitSettings, "local_file", obs_data_get_string(settings, "local_file"));
+			obs_data_set_int(portraitSettings, "width", verticalInfo.base_width);
+			obs_data_set_int(portraitSettings, "height", verticalInfo.base_height);
+			obs_source_t *portraitSource = obs_source_create("browser_source", portraitName.toUtf8().constData(), portraitSettings, nullptr);
+			if (!portraitSource) return fail("Could not create the portrait graphic for “" + name + "”.");
+			createdSources.push_back(portraitSource);
+			portraitSourceIds.insert(it.key(), QString::fromUtf8(obs_source_get_uuid(portraitSource)));
+		}
+	}
+	const QJsonObject previousAssignments = stages.isEmpty() ? QJsonObject{} : stages.first().toObject().value("assignments").toObject();
+	for (const StagePlan &plan : plans) {
+		const QString name = prefix + " · " + plan.suffix;
+		const QString portraitName = name + " · Portrait";
+		OBSSceneAutoRelease horizontal = obs_scene_create(name.toUtf8().constData());
+		if (!horizontal) return fail("Could not create the landscape scene for “" + name + "”.");
+		created.push_back(obs_scene_get_source(horizontal));
+		OBSSceneAutoRelease portrait = obs_canvas_scene_create(verticalCanvas, portraitName.toUtf8().constData());
+		if (!portrait) return fail("Could not create the portrait scene for “" + name + "”.");
+		created.push_back(obs_scene_get_source(portrait));
+		OBSDataAutoRelease portraitSettings = obs_source_get_private_settings(obs_scene_get_source(portrait));
+		obs_data_set_string(portraitSettings, "pulseweaver.horizontal_uuid", obs_source_get_uuid(obs_scene_get_source(horizontal)));
+		obs_data_set_bool(portraitSettings, "pulseweaver.follow_horizontal", false);
+		obs_data_set_bool(portraitSettings, "pulseweaver.native_vertical", true);
+		QStringList itemRoles;
+		for (const LookPlan &look : plan.looks)
+			for (const QString &role : {look.main, look.supporting, look.graphic})
+				if (!role.isEmpty() && !itemRoles.contains(role)) itemRoles.append(role);
+		for (const QString &role : {QString("landscapeChat"), QString("portraitChat"), QString("alerts"), QString("captions")})
+			if (sourceNames.contains(role) && !itemRoles.contains(role)) itemRoles.append(role);
+		struct RoleItems { QString role; OBSSceneItem horizontal; OBSSceneItem portrait; };
+		std::vector<RoleItems> items;
+		for (const QString &role : itemRoles) {
+			const QString uuid = selected.value(role).toString();
+			OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.toUtf8().constData());
+			if (!source) return fail("Source “" + role + "” disappeared while creating the show.");
+			OBSSourceAutoRelease portraitSource = portraitSourceIds.contains(role) ?
+				obs_get_source_by_uuid(portraitSourceIds.value(role).toUtf8().constData()) : obs_get_source_by_uuid(uuid.toUtf8().constData());
+			if (!portraitSource) return fail("Portrait source “" + role + "” disappeared while creating the show.");
+			RoleItems pair{role, {}, {}};
+			if (role != "portraitChat") pair.horizontal = OBSSceneItem(motionAddSource(horizontal, source));
+			if (role != "landscapeChat") pair.portrait = OBSSceneItem(motionAddSource(portrait, portraitSource));
+			if ((role != "portraitChat" && !pair.horizontal) || (role != "landscapeChat" && !pair.portrait))
+				return fail("Could not add “" + sourceNames.value(role) + "” to the new scenes.");
+			items.push_back(std::move(pair));
+		}
+		auto appendCanvasTargets = [this, &items, &sourceNames, style](QJsonArray &targets,
+			const LookPlan &look, const QString &container, bool portraitCanvas, float width, float height) {
+			auto isOverlay = [portraitCanvas, &look](const QString &role) {
+				return (!look.graphic.isEmpty() && role == look.graphic) || role == "alerts" || role == "captions" ||
+					role == (portraitCanvas ? "portraitChat" : "landscapeChat");
+			};
+			const bool showSupporting = !look.supporting.isEmpty() && style != "full";
+			int overlayOrder = int(items.size());
+			int hiddenOrder = 2;
+			for (const RoleItems &entry : items) {
+				OBSSceneItem item = portraitCanvas ? entry.portrait : entry.horizontal;
+				if (!item) continue;
+				Transform transform = capture(item);
+				const bool overlay = isOverlay(entry.role);
+				transform.order = overlay ? overlayOrder++ :
+					showSupporting && entry.role == look.supporting ? 1 :
+					entry.role == look.main ? 0 : hiddenOrder++;
+				transform.rotation = 0;
+				transform.crop = {};
+				transform.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+				transform.pos = {0, 0};
+				transform.bounds = {width, height};
+				transform.boundsAlignment = OBS_ALIGN_CENTER;
+				transform.boundsCrop = true;
+				transform.boundsType = OBS_BOUNDS_SCALE_OUTER;
+				transform.visible = entry.role == look.main || (entry.role == look.supporting && style != "full") || overlay;
+				if (overlay && entry.role != look.graphic) {
+					transform.scale = {1, 1};
+					transform.bounds = {0, 0};
+					transform.boundsType = OBS_BOUNDS_NONE;
+					transform.boundsCrop = false;
+					transform.locked = true;
+				} else if (entry.role == look.supporting && style != "full") {
+					if (portraitCanvas) {
+						transform.pos = {0, 0}; transform.bounds = {width, height / 3};
+					} else if (style == "split") {
+						transform.pos = {width * .5f, 0}; transform.bounds = {width * .5f, height};
+					} else {
+						transform.pos = {width * .72f, height * .04f};
+						transform.bounds = {width * .25f, height * .28f};
+					}
+				} else if (entry.role == look.main && !look.supporting.isEmpty() && style != "full") {
+					if (portraitCanvas) {
+						transform.pos = {0, height / 3}; transform.bounds = {width, height * 2 / 3};
+					} else if (style == "split") {
+						transform.bounds = {width * .5f, height};
+					}
+				}
+				targets.append(QJsonObject{{"container", container}, {"itemId", QString::number(obs_sceneitem_get_id(item))},
+					{"source", QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item)))}, {"transform", serialize(transform)}});
+			}
+		};
+		const int firstLook = newActions.size();
+		for (const LookPlan &look : plan.looks) {
+			QJsonArray targets;
+			appendCanvasTargets(targets, look, name, false, float(horizontalInfo.base_width), float(horizontalInfo.base_height));
+			appendCanvasTargets(targets, look, portraitName, true, float(verticalInfo.base_width), float(verticalInfo.base_height));
+			newActions.append(QJsonObject{{"version", 1}, {"id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+				{"name", name + " · " + look.name}, {"kind", "layout"}, {"collection", collection},
+				{"container", name}, {"policy", "switch"}, {"stage", name}, {"activateScene", true},
+				{"durationMs", 750}, {"restore", false}, {"items", targets},
+				{"summary", "Move " + name + " to " + look.name + "."}});
+		}
+		const QJsonArray initial = newActions.at(firstLook).toObject().value("items").toArray();
+		for (const QJsonValue &value : initial) {
+			const QJsonObject target = value.toObject();
+			obs_scene_t *scene = target.value("container").toString() == name ? horizontal.Get() : portrait.Get();
+			if (OBSSceneItem item = obs_scene_find_sceneitem_by_id(scene, target.value("itemId").toString().toLongLong()))
+				apply(item, deserialize(target.value("transform").toObject()), true);
+		}
+		QJsonObject assignments;
+		for (const QString &provider : {QString("twitch"), QString("youtube"), QString("kick"), QString("recording")}) {
+			for (const QString &route : {QString("horizontal"), QString("vertical")}) {
+				const QString key = provider + "_" + route;
+				const QJsonArray excluded = previousAssignments.value(key).toObject().value("excluded").toArray();
+				assignments.insert(key, QJsonObject{{"canvas", route}, {"scene", route == "horizontal" ? name : portraitName},
+					{"excluded", excluded}});
+			}
+		}
+		stages.append(QJsonObject{{"name", name}, {"horizontal", name}, {"vertical", portraitName},
+			{"horizontalTransition", transition}, {"horizontalDurationMs", 500},
+			{"verticalTransition", transition}, {"verticalDurationMs", 500}, {"assignments", assignments},
+			{"sourceRoles", selected}, {"layoutStyle", style}, {"createdBy", "show-builder"}});
+	}
+
+	for (const QJsonValue &value : newActions) actions.append(value);
+	if (!save()) { actions = oldActions; return fail("Could not save the new looks. No stages were added."); }
+	QDir().mkpath(QFileInfo(stagePath).absolutePath());
+	QSaveFile out(stagePath);
+	const QByteArray data = QJsonDocument(stages).toJson(QJsonDocument::Indented);
+	if (!out.open(QIODevice::WriteOnly) || out.write(data) != data.size() || !out.commit()) {
+		out.cancelWriting();
+		actions = oldActions;
+		save();
+		return fail("Could not save the new Stage catalogue. The new scenes and looks were rolled back.");
+	}
+	obs_frontend_save();
+	for (obs_source_t *source : createdSources) obs_source_release(source);
+	createdSources.clear();
+	editingId = newActions.first().toObject().value("id").toString();
+	refreshEditor();
+	loadActionIntoEditor(actionByIdentity(editingId));
+	emitEvent("motion_catalogue_changed");
+	return {{"ok", true}, {"message", "Created " + QString::number(plans.size()) + " stages and " +
+		QString::number(newActions.size()) + " looks. Select a stage in Show or edit its framing here."},
+		{"stages", int(plans.size())}, {"looks", newActions.size()}};
 }
 
 QJsonObject PulseMotionEngine::createShowStages()

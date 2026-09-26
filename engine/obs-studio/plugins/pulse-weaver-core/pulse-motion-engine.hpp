@@ -44,6 +44,7 @@ public:
 	QJsonObject restoreLast();
 	QJsonObject restoreOriginals();
 	QJsonObject createShowStages();
+	QJsonObject createGuidedShow(const QJsonObject &choices);
 	QJsonObject importDocument(const QJsonObject &document, const QString &sourceLabel = {});
 	void frontendEvent(obs_frontend_event event);
 	void refreshEditor();
@@ -155,6 +156,7 @@ private:
 	void includeDraftItem(qint64 originalId);
 	void addDraftSource(QString selected = {});
 	void adaptPortrait();
+	void swapFocus();
 	void pinOverlayAcrossLooks();
 	QHash<qint64, qint64> draftIds;
 	QHash<qint64, qint64> previewIds;
@@ -185,6 +187,7 @@ private:
 	void previewDraft(int progress);
 	void createLook(const QString &name, bool duplicate);
 	void createStarterStage();
+	void openShowWizard();
 	void refreshNavigation();
 	void refreshSourceChips();
 

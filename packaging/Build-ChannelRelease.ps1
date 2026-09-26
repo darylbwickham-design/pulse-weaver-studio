@@ -40,7 +40,9 @@ $identity | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $payload 'bin/6
 New-Item -ItemType File -Path (Join-Path $payload 'portable_mode.txt') | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $payload 'docs') | Out-Null
 foreach ($doc in @('PRIVACY.md','TERMS.md')) { Copy-Item -LiteralPath (Join-Path $projectRoot $doc) -Destination (Join-Path $payload 'docs') }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/ALPHA-UPGRADES.md') -Destination (Join-Path $payload 'docs')
+foreach ($doc in @('ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md')) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$doc") -Destination (Join-Path $payload 'docs')
+}
 $archive = Join-Path $output 'payload.zip'
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive -CompressionLevel Optimal
 $suffix = if ($Channel -eq 'alpha') {'ALPHA'} else {'BETA'}
