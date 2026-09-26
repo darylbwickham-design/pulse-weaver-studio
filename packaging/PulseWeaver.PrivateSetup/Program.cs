@@ -27,7 +27,7 @@ internal static class Program
     internal const string InstallerSubtitle = "STREAMING STUDIO  ·  EXPERIMENTAL ALPHA";
 #else
     const string UpdateChannel = "windows-private";
-    internal const string InstallerSubtitle = "STREAMING STUDIO  ·  BETA";
+    internal const string InstallerSubtitle = "STREAMING STUDIO";
 #endif
 #endif
     internal static readonly string Version = Assembly.GetExecutingAssembly().GetName().Version!.ToString(3);

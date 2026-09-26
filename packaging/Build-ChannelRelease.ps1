@@ -43,13 +43,13 @@ foreach ($doc in @('PRIVACY.md','TERMS.md')) { Copy-Item -LiteralPath (Join-Path
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/ALPHA-UPGRADES.md') -Destination (Join-Path $payload 'docs')
 $archive = Join-Path $output 'payload.zip'
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive -CompressionLevel Optimal
-$suffix = if ($Channel -eq 'alpha') {'ALPHA'} else {'BETA'}
+$suffix = if ($Channel -eq 'alpha') {'ALPHA'} else {'RELEASE'}
 $publish = Join-Path $output 'setup'
 & dotnet publish (Join-Path $PSScriptRoot 'PulseWeaver.PrivateSetup/PulseWeaver.PrivateSetup.csproj') -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true "-p:ReleaseVersion=$Version" "-p:InstallerSuffix=$suffix" "-p:AlphaChannel=$($Channel -eq 'alpha')" `
     "-p:AlphaRevision=$AlphaRevision" "-p:PayloadArchive=$archive" -o $publish
 if ($LASTEXITCODE -ne 0) { throw 'Installer publish failed.' }
-$name = if ($Channel -eq 'alpha') { "PulseWeaver-Setup-$Version-alpha.$AlphaRevision.exe" } else { "PulseWeaver-Setup-$Version-BETA.exe" }
+$name = if ($Channel -eq 'alpha') { "PulseWeaver-Setup-$Version-alpha.$AlphaRevision.exe" } else { "PulseWeaver-Setup-$Version.exe" }
 $installer = Join-Path $output $name
 Copy-Item -LiteralPath (Join-Path $publish "PulseWeaver-Setup-$Version-$suffix.exe") -Destination $installer
 $pluginStage = Join-Path $output 'lumia'

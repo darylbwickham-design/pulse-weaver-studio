@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ReleaseVersion Condition="'$(ReleaseVersion)' == ''">1.12.15</ReleaseVersion>
-    <InstallerSuffix Condition="'$(InstallerSuffix)' == ''">BETA</InstallerSuffix>
+    <InstallerSuffix Condition="'$(InstallerSuffix)' == ''">RELEASE</InstallerSuffix>
     <PayloadArchive Condition="'$(PayloadArchive)' == ''">..\..\dist\PulseWeaverStudio-v$(ReleaseVersion)-beta.zip</PayloadArchive>
     <AssemblyName>PulseWeaver-Setup-$(ReleaseVersion)-$(InstallerSuffix)</AssemblyName>
     <Product Condition="'$(PreviewChannel)' != 'true'">Pulse Weaver Streaming Studio Setup</Product>
