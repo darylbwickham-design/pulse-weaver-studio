@@ -775,7 +775,7 @@ public:
 	void addWidget(QWidget *widget, int = 0)
 	{
 		controls.push_back(widget);
-		if (controls.size() == 10)
+		if (controls.size() == 11)
 			arrange(true);
 	}
 
@@ -789,14 +789,14 @@ protected:
 private:
 	void arrange(bool force)
 	{
-		if (controls.size() != 10)
+		if (controls.size() != 11)
 			return;
 		const bool compact = width() < 1180;
 		if (!force && arranged && compact == compactLayout)
 			return;
 		while (QLayoutItem *item = grid->takeAt(0))
 			delete item;
-		for (int column = 0; column < 10; ++column)
+		for (int column = 0; column < 11; ++column)
 			grid->setColumnStretch(column, 0);
 		if (compact) {
 			/* Keep the wide-screen row unchanged. At 4:3, put the two
@@ -806,6 +806,7 @@ private:
 			grid->addWidget(controls[1], 0, 1, 1, 5);
 			grid->addWidget(controls[8], 0, 6);
 			grid->addWidget(controls[9], 0, 7);
+			grid->addWidget(controls[10], 0, 8);
 			grid->addWidget(controls[2], 1, 0);
 			grid->addWidget(controls[3], 1, 1);
 			grid->addWidget(controls[4], 1, 2);

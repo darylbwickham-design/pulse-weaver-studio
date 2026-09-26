@@ -1,6 +1,6 @@
 # Build a show in Pulse Weaver
 
-This guide applies to the experimental Show Control builder in 1.13.1 alpha 4.
+This guide applies to the experimental Show Control builder in 1.13.1 alpha 5.
 
 1. Open **Show Control** and click **Build my show…** beside the Stage selector on a fresh install. If you already have stages, click **Control** in the Show heading, then **Build my show…**. You can start with an empty scene collection.
 2. Name the show and tick the stages you want: Starting, Hangout, Gameplay, BRB/Ending, and Raid/Shoutout. Click **Next**.
