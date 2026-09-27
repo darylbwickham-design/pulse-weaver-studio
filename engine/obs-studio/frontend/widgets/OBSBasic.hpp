@@ -19,6 +19,7 @@
 #include <QJsonObject>
 #include "../../shared/qt/PulseYouTubeChatSessions.hpp"
 #include "../../shared/qt/PulseEditorCanvas.hpp"
+#include "../../shared/qt/PulseTwitchStart.hpp"
 
 #include "ui_OBSBasic.h"
 #include "OBSMainWindow.hpp"
@@ -357,6 +358,8 @@ private:
 	QPointer<QPushButton> pulseYouTubeDisconnectButton;
 	QPointer<QComboBox> pulseYouTubeCanvas;
 	QPointer<QComboBox> pulseTwitchDestination;
+	PulseTwitch::StartState pulseStreamStart;
+	bool PreparePulseWeaverTwitchRoute(const QString &mode);
 	QPointer<QComboBox> pulseYouTubeDestination;
 	QPointer<QComboBox> pulseKickDestination;
 	QPointer<QPushButton> pulseKickOutputControl;

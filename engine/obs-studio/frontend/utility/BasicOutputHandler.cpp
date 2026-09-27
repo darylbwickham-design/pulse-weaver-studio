@@ -458,6 +458,24 @@ std::shared_future<void> BasicOutputHandler::SetupMultitrackVideo(obs_service_t 
 								  std::function<void(std::optional<bool>)> continuation)
 {
 	auto start_streaming_guard = std::make_shared<StartMultitrackVideoStreamingGuard>();
+	// Recording/replay/virtual camera can keep this handler alive between streams.
+	// Re-evaluate the current route instead of reusing its constructor-time setting.
+	OBSDataAutoRelease currentSettings = obs_service_get_settings(service);
+	const bool enhanced = config_get_bool(main->Config(), "Stream1", "EnableMultitrackVideo") &&
+		(obs_data_has_user_value(currentSettings, "multitrack_video_configuration_url") ||
+		 strcmp(obs_service_get_id(service), "rtmp_custom") == 0);
+	if (multitrackVideo || enhanced) {
+		streamDelayStarting.Disconnect();
+		streamStopping.Disconnect();
+		startStreaming.Disconnect();
+		stopStreaming.Disconnect();
+		multitrackVideoActive = false;
+		multitrackVideo.reset();
+		// Reconnect standard-output callbacks if negotiation falls back to RTMP.
+		outputType.clear();
+		if (enhanced)
+			multitrackVideo = make_unique<MultitrackVideoOutput>();
+	}
 	if (!multitrackVideo) {
 		continuation(std::nullopt);
 		return start_streaming_guard->GetFuture();
