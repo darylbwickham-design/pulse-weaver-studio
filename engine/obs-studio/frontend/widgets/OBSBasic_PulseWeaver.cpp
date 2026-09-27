@@ -1829,21 +1829,32 @@ void OBSBasic::InitPulseWeaverShell()
 		route->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 		route->addItem(label.toUpper() + "  ·  OFF", "off");
 		route->addItem(label.toUpper() + "  ·  16:9", "horizontal");
-		if (key != "kick")
+		if (key == "youtube")
 			route->addItem(label.toUpper() + "  ·  9:16", "vertical");
 		if (dualCapable)
 			route->addItem(label.toUpper() + "  ·  DUAL", "dual");
 		QString savedMode = destinationSettings.value("destinations/" + key + "_mode").toString();
 		if (savedMode.isEmpty())
 			savedMode = destinationSettings.value("destinations/" + key, defaultValue).toBool() ? "horizontal" : "off";
+		if (key == "twitch")
+			savedMode = QString::fromStdString(PulseTwitch::normalizeMode(savedMode.toStdString()));
 		const int savedIndex = route->findData(savedMode);
 		route->setCurrentIndex(savedIndex >= 0 ? savedIndex : 0);
 		route->setProperty("pulseWeaverPreviousMode", route->currentData());
-		route->setToolTip(key == "kick" ? "Kick currently supports Pulse Weaver's 16:9 output only" :
+		route->setToolTip(key == "twitch" ? "Off, landscape only, or landscape + portrait. Stop Twitch before changing format." :
+			key == "kick" ? "Kick currently supports Pulse Weaver's 16:9 output only" :
 			"Choose whether " + label + " receives the 16:9 canvas, 9:16 canvas, both, or stays off");
 		connect(route, &QComboBox::currentIndexChanged, this, [this, route, key, label](int) {
 			const QString previousMode = route->property("pulseWeaverPreviousMode").toString();
 			const QString mode = route->currentData().toString();
+			if (key == "twitch" && mode != "off" &&
+			    (pulseStreamStart.pending() || StreamingActive())) {
+				const QSignalBlocker blocker(route);
+				route->setCurrentIndex(route->findData(previousMode));
+				if (pulseDestinationStatus)
+					pulseDestinationStatus->setText("Stop Twitch before changing between 16:9 and Dual.");
+				return;
+			}
 			route->setProperty("pulseWeaverPreviousMode", mode);
 			QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
 			settings.setValue("destinations/" + key + "_mode", mode);
@@ -2139,7 +2150,9 @@ void OBSBasic::InitPulseWeaverShell()
 			setProperty("pulseWeaverControlResult", "Pulse Weaver is stopping all live outputs.");
 			StopPulseWeaverSecondaryOutputs();
 			if (pulseKickOutputControl) { pulseKickOutputControl->setProperty("command", "stop"); pulseKickOutputControl->click(); }
-			if (obs_frontend_streaming_active())
+			if (pulseStreamStart.pending())
+				StopStreaming();
+			else if (obs_frontend_streaming_active())
 				StreamActionTriggered();
 		} else {
 			if (!twitch && !youtube && !kick) {
@@ -2237,27 +2250,9 @@ void OBSBasic::InitPulseWeaverShell()
 			for (const char *provider : {"twitch", "kick", "youtube"})
 				setProperty((QByteArray("pulseWeaverLumiaStop_") + provider).constData(), false);
 			if (twitch) {
-				const bool dual = twitchMode == "dual";
-				/* Pulse Weaver's GO LIVE flow is already explicitly confirmed. Keep
-				 * Twitch Dual enabled while accepting its advisory GPU warning, so
-				 * an upstream recommendation does not interrupt the operator twice.
-				 * Actual preparation and encoder failures still report normally. */
-				setProperty("pulseWeaverAutoAcceptEnhancedBroadcastingWarning", dual);
-				config_set_bool(Config(), "Stream1", "EnableMultitrackVideo", dual);
-				if (dual) {
-					EnsurePulseWeaverVerticalCanvas();
-					const QString canvasName = property("pulseWeaverTwitchVerticalCanvasName").toString();
-					obs_canvas_t *extra = canvasName.isEmpty() ? PulseWeaverGetVerticalCanvas() :
-						obs_get_canvas_by_name(canvasName.toUtf8().constData());
-					if (extra) {
-						config_set_string(Config(), "Stream1", "MultitrackExtraCanvas", obs_canvas_get_uuid(extra));
-						obs_canvas_release(extra);
-					}
-				}
-				activeConfiguration.SaveSafe("tmp");
-				ResetOutputs();
+				if (!PreparePulseWeaverTwitchRoute(twitchMode)) return;
 				StreamActionTriggered();
-				if (!property("pulseWeaverStreamPreparing").toBool() && !StreamingActive()) {
+				if (!pulseStreamStart.pending() && !StreamingActive()) {
 					setProperty("pulseWeaverGoLiveSession", false);
 					const QString message = "Twitch did not start. No other destinations were started; review the startup message and try again.";
 					setProperty("pulseWeaverControlResult", message);
@@ -2269,12 +2264,18 @@ void OBSBasic::InitPulseWeaverShell()
 			setProperty("pulseWeaverControlResult", QString("Go Live confirmed by %1 for Stage ‘%2’. Starting %3 destination%4.")
 				.arg(lumiaConfirmed ? "Lumia" : "Pulse Weaver", stage).arg(destinationCount)
 				.arg(destinationCount == 1 ? "" : "s"));
-			QTimer::singleShot(twitch ? 1200 : 50, this, [this, youtube, kick] {
+			const auto attempt = pulseStreamStart.attempt();
+			auto startOtherOutputs = [this, youtube, kick, twitch, attempt] {
+				if (twitch && pulseStreamStart.attempt() != attempt) return;
 				if (!property("pulseWeaverGoLiveSession").toBool()) return;
 				if (youtube && !property("pulseWeaverLumiaStop_youtube").toBool())
 					StartPulseWeaverSecondaryOutputs();
 				if (kick && !property("pulseWeaverLumiaStop_kick").toBool() && pulseKickOutputControl) { pulseKickOutputControl->setProperty("command", "start"); pulseKickOutputControl->click(); }
-			});
+			};
+			if (twitch && !obs_frontend_streaming_active())
+				connect(this, &OBSBasic::StreamingStarted, this, startOtherOutputs, Qt::SingleShotConnection);
+			else
+				QTimer::singleShot(50, this, startOtherOutputs);
 		}
 	});
 	controls->addWidget(pulseStreamButton);
@@ -4710,6 +4711,33 @@ void OBSBasic::EnsurePulseWeaverVerticalCanvas()
 	UpdatePulseWeaverShell();
 }
 
+bool OBSBasic::PreparePulseWeaverTwitchRoute(const QString &mode)
+{
+	if (mode != "horizontal" && mode != "dual") return false;
+	QString portrait;
+	if (mode == "dual") {
+		EnsurePulseWeaverVerticalCanvas();
+		const QString name = property("pulseWeaverTwitchVerticalCanvasName").toString();
+		obs_canvas_t *canvas = name.isEmpty() ? PulseWeaverGetVerticalCanvas() :
+			obs_get_canvas_by_name(name.toUtf8().constData());
+		if (canvas) portrait = QString::fromUtf8(obs_canvas_get_uuid(canvas));
+		obs_canvas_release(canvas);
+		if (portrait.isEmpty()) {
+			if (pulseDestinationStatus) pulseDestinationStatus->setText("Choose a portrait scene for Twitch Dual before going live.");
+			return false;
+		}
+	}
+	const auto plan = PulseTwitch::route(mode.toStdString(),
+		config_get_bool(Config(), "Stream1", "EnableMultitrackVideo"), portrait.toStdString());
+	setProperty("pulseWeaverAutoAcceptEnhancedBroadcastingWarning", mode == "dual");
+	config_set_bool(Config(), "Stream1", "EnableMultitrackVideo", plan.enhanced);
+	// Always clear the old portrait UUID for 16:9, even with Enhanced Broadcasting on.
+	config_set_string(Config(), "Stream1", "MultitrackExtraCanvas", plan.extraCanvas.c_str());
+	activeConfiguration.SaveSafe("tmp");
+	ResetOutputs();
+	return true;
+}
+
 void OBSBasic::ConfigurePulseWeaverTwitchDualFormat()
 {
 	// Routing must preserve the operator's Enhanced Broadcasting bandwidth and
@@ -4850,7 +4878,7 @@ QJsonObject OBSBasic::PulseWeaverLumiaDestination(const QString &provider, bool 
 		}
 		return result(true, active ? "Stop requested for " + provider + "." : provider + " is stopped.");
 	}
-	if (active || (provider == "twitch" && property("pulseWeaverStreamPreparing").toBool()))
+	if (active || (provider == "twitch" && pulseStreamStart.pending()))
 		return result(true, provider + " is already active or connecting.");
 	if (mode == "off" || mode.isEmpty())
 		return result(false, "Choose an output mode for " + provider + " inside Pulse Weaver first.");
@@ -4880,7 +4908,7 @@ QJsonObject OBSBasic::PulseWeaverLumiaDestination(const QString &provider, bool 
 	const bool accepted = output && obs_output_active(output);
 	obs_output_release(output);
 	// Twitch's Enhanced Broadcasting preparation is asynchronous.
-	const bool pending = provider == "twitch" && property("pulseWeaverStreamPreparing").toBool();
+	const bool pending = provider == "twitch" && pulseStreamStart.pending();
 	if (accepted || pending) setProperty("pulseWeaverGoLiveSession", true);
 	return result(accepted || pending, accepted || pending ? "Start requested for " + provider + "." :
 		(pulseDestinationStatus ? pulseDestinationStatus->text() : "The output could not start."));
@@ -4896,11 +4924,11 @@ void OBSBasic::ApplyPulseWeaverLiveDestinationChange(const QString &provider, co
 
 	if (provider == "twitch") {
 		if (!enabled) {
-			if (obs_frontend_streaming_active())
-				StreamActionTriggered();
+			if (pulseStreamStart.pending() || StreamingActive())
+				StopStreaming();
 			return;
 		}
-		if (obs_frontend_streaming_active())
+		if (pulseStreamStart.pending() || StreamingActive())
 			return;
 		obs_service_t *service = GetService();
 		obs_data_t *settings = service ? obs_service_get_settings(service) : nullptr;
@@ -4913,21 +4941,7 @@ void OBSBasic::ApplyPulseWeaverLiveDestinationChange(const QString &provider, co
 				pulseDestinationStatus->setText("Twitch could not be added live because its destination is not ready.");
 			return;
 		}
-		const bool dual = mode == "dual";
-		setProperty("pulseWeaverAutoAcceptEnhancedBroadcastingWarning", dual);
-		config_set_bool(Config(), "Stream1", "EnableMultitrackVideo", dual);
-		if (dual) {
-			EnsurePulseWeaverVerticalCanvas();
-			const QString canvasName = property("pulseWeaverTwitchVerticalCanvasName").toString();
-			obs_canvas_t *extra = canvasName.isEmpty() ? PulseWeaverGetVerticalCanvas() :
-				obs_get_canvas_by_name(canvasName.toUtf8().constData());
-			if (extra) {
-				config_set_string(Config(), "Stream1", "MultitrackExtraCanvas", obs_canvas_get_uuid(extra));
-				obs_canvas_release(extra);
-			}
-		}
-		activeConfiguration.SaveSafe("tmp");
-		ResetOutputs();
+		if (!PreparePulseWeaverTwitchRoute(mode)) return;
 		StreamActionTriggered();
 		return;
 	}

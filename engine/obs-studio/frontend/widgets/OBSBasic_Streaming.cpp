@@ -31,10 +31,23 @@
 #define STREAMING_START "==== Streaming Start ==============================================="
 #define STREAMING_STOP "==== Streaming Stop ================================================"
 
+static bool PulseOtherOutputsActive()
+{
+	for (const char *name : {"pulse_weaver_kick_output", "pulse_weaver_youtube_output_primary", "pulse_weaver_youtube_output_vertical"}) {
+		OBSOutputAutoRelease output = obs_get_output_by_name(name);
+		if (output && obs_output_active(output)) return true;
+	}
+	return false;
+}
+
 void OBSBasic::DisplayStreamStartError()
 {
+	pulseStreamStart.failed();
+	if (!PulseOtherOutputsActive())
+		setProperty("pulseWeaverGoLiveSession", false);
 	QString message = !outputHandler->lastError.empty() ? QTStr(outputHandler->lastError.c_str())
 							    : QTStr("Output.StartFailedGeneric");
+	if (pulseDestinationStatus) pulseDestinationStatus->setText(message);
 	PulseLumia::publish("destination_state", {{"platform", "twitch"}, {"output", "twitch"}, {"state", "failed"}, {"message", message}});
 
 	emit StreamingStopped();
@@ -49,7 +62,9 @@ void OBSBasic::DisplayStreamStartError()
 
 void OBSBasic::StartStreaming()
 {
-	if (property("pulseWeaverStreamPreparing").toBool()) return;
+	if (pulseStreamStart.pending()) return;
+	if (setupStreamingGuard.valid() && setupStreamingGuard.wait_for(std::chrono::seconds{0}) != std::future_status::ready)
+		return;
 	if (outputHandler->StreamingActive()) {
 		return;
 	}
@@ -76,9 +91,8 @@ void OBSBasic::StartStreaming()
 		}
 	}
 
-	const int attempt = property("pulseWeaverStreamAttempt").toInt() + 1;
-	setProperty("pulseWeaverStreamAttempt", attempt);
-	setProperty("pulseWeaverStreamPreparing", true);
+	const auto attempt = pulseStreamStart.begin();
+	if (pulseDestinationStatus) pulseDestinationStatus->setText("Connecting stream…");
 	PulseLumia::publish("destination_state", {{"platform", "twitch"}, {"output", "twitch"}, {"state", "starting"}});
 	emit StreamingPreparing();
 
@@ -88,13 +102,10 @@ void OBSBasic::StartStreaming()
 	}
 
 	auto finish_stream_setup = [&, attempt](bool setupStreamingResult) {
-		setProperty("pulseWeaverStreamPreparing", false);
-		if (property("pulseWeaverStreamAttempt").toInt() != attempt) {
-			emit StreamingStopped();
-			if (sysTrayStream) { sysTrayStream->setEnabled(true); sysTrayStream->setText(QTStr("Basic.Main.StartStreaming")); }
+		if (pulseStreamStart.attempt() != attempt) {
 			return;
 		}
-		if (!setupStreamingResult) {
+		if (!pulseStreamStart.prepared(attempt, setupStreamingResult)) {
 			DisplayStreamStartError();
 			return;
 		}
@@ -105,6 +116,24 @@ void OBSBasic::StartStreaming()
 
 		const bool nativeBroadcast = UsesYouTubeBroadcastFlow();
 		emit StreamingStarting(!nativeBroadcast || autoStartBroadcast);
+		OBSDataAutoRelease serviceSettings = obs_service_get_settings(service);
+		if (strcmp(obs_data_get_string(serviceSettings, "service"), "Twitch") == 0 && pulseTwitchDestination) {
+			const auto mode = pulseTwitchDestination->currentData().toString().toStdString();
+			OBSOutputAutoRelease output = outputHandler->StreamingOutput();
+			bool landscape = false, portrait = false;
+			for (size_t i = 0; i < MAX_OUTPUT_VIDEO_ENCODERS; ++i) {
+				auto *encoder = obs_output_get_video_encoder2(output, i);
+				if (!encoder) continue;
+				const auto width = obs_encoder_get_width(encoder), height = obs_encoder_get_height(encoder);
+				landscape |= width > height && height > 0;
+				portrait |= height > width && width > 0;
+			}
+			if (!PulseTwitch::matches(mode, landscape, portrait)) {
+				outputHandler->lastError = "Twitch did not prepare the selected output format. No stream was started. Choose 16:9 or check the portrait scene and Enhanced Broadcasting limits for Dual.";
+				DisplayStreamStartError();
+				return;
+			}
+		}
 
 		if (sysTrayStream) {
 			sysTrayStream->setText("Basic.Main.Connecting");
@@ -143,13 +172,16 @@ void OBSBasic::StartStreaming()
 
 void OBSBasic::StopStreaming()
 {
-	setProperty("pulseWeaverStreamAttempt", property("pulseWeaverStreamAttempt").toInt() + 1);
-	if (property("pulseWeaverStreamPreparing").toBool())
+	const bool wasPending = pulseStreamStart.pending();
+	const bool wasConnecting = pulseStreamStart.connecting();
+	pulseStreamStart.stop();
+	if (wasPending) emit StreamingStopped();
+	if (wasPending)
 		PulseLumia::publish("destination_state", {{"platform", "twitch"}, {"output", "twitch"}, {"state", "stopped"}});
 	SaveProject();
 
-	if (outputHandler->StreamingActive()) {
-		outputHandler->StopStreaming(streamingStopping);
+	if (wasConnecting || outputHandler->StreamingActive()) {
+		outputHandler->StopStreaming(wasConnecting || streamingStopping);
 	}
 
 	// special case: force reset broadcast state if
@@ -258,6 +290,8 @@ void OBSBasic::StreamDelayStopping(int sec)
 
 void OBSBasic::StreamingStart()
 {
+	pulseStreamStart.started();
+	if (pulseDestinationStatus) pulseDestinationStatus->setText("Stream connected.");
 	emit StreamingStarted();
 	OBSOutputAutoRelease output = obs_frontend_get_streaming_output();
 	ui->statusbar->StreamStarted(output);
@@ -308,6 +342,7 @@ void OBSBasic::StreamStopping()
 
 void OBSBasic::StreamingStop(int code, QString last_error)
 {
+	pulseStreamStart.stop();
 	const char *errorDescription = "";
 	DStr errorMessage;
 	bool use_last_error = false;
@@ -363,6 +398,12 @@ void OBSBasic::StreamingStop(int code, QString last_error)
 	}
 
 	ui->statusbar->StreamStopped();
+	if (!should_reconnect) {
+		if (pulseDestinationStatus)
+			pulseDestinationStatus->setText(code == OBS_OUTPUT_SUCCESS ? "Stream stopped." : "Stream failed or disconnected. See the connection error details.");
+		if (!PulseOtherOutputsActive())
+			setProperty("pulseWeaverGoLiveSession", false);
+	}
 
 	emit StreamingStopped();
 
