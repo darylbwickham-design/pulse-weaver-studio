@@ -57,7 +57,7 @@ void OBSBasic::StartStreaming()
 		return;
 	}
 
-	if (auth && auth->broadcastFlow()) {
+	if (UsesYouTubeBroadcastFlow()) {
 		if (!broadcastActive && !broadcastReady) {
 			QMessageBox no_broadcast(this);
 			no_broadcast.setText(QTStr("Output.NoBroadcast.Text"));
@@ -103,7 +103,8 @@ void OBSBasic::StartStreaming()
 
 		SaveProject();
 
-		emit StreamingStarting(autoStartBroadcast);
+		const bool nativeBroadcast = UsesYouTubeBroadcastFlow();
+		emit StreamingStarting(!nativeBroadcast || autoStartBroadcast);
 
 		if (sysTrayStream) {
 			sysTrayStream->setText("Basic.Main.Connecting");
@@ -114,7 +115,7 @@ void OBSBasic::StartStreaming()
 			return;
 		}
 
-		if (autoStartBroadcast) {
+		if (nativeBroadcast && autoStartBroadcast) {
 			emit BroadcastStreamStarted(autoStopBroadcast);
 			broadcastActive = true;
 		}
@@ -132,7 +133,7 @@ void OBSBasic::StartStreaming()
 		}
 
 #ifdef YOUTUBE_ENABLED
-		if (!autoStartBroadcast)
+		if (nativeBroadcast && !autoStartBroadcast)
 			OBSBasic::ShowYouTubeAutoStartWarning();
 #endif
 	};
@@ -267,7 +268,7 @@ void OBSBasic::StreamingStart()
 	}
 
 #ifdef YOUTUBE_ENABLED
-	if (!autoStartBroadcast) {
+	if (UsesYouTubeBroadcastFlow() && !autoStartBroadcast) {
 		// get a current stream key
 		obs_service_t *service_obj = GetService();
 		OBSDataAutoRelease settings = obs_service_get_settings(service_obj);
@@ -285,7 +286,7 @@ void OBSBasic::StreamingStart()
 	OnActivate();
 
 #ifdef YOUTUBE_ENABLED
-	if (YouTubeAppDock::IsYTServiceSelected()) {
+	if (UsesYouTubeBroadcastFlow() && youtubeAppDock) {
 		youtubeAppDock->IngestionStarted();
 	}
 #endif
@@ -376,7 +377,7 @@ void OBSBasic::StreamingStop(int code, QString last_error)
 	OnDeactivate();
 
 #ifdef YOUTUBE_ENABLED
-	if (YouTubeAppDock::IsYTServiceSelected()) {
+	if (UsesYouTubeBroadcastFlow() && youtubeAppDock) {
 		youtubeAppDock->IngestionStopped();
 	}
 #endif
@@ -397,7 +398,7 @@ void OBSBasic::StreamingStop(int code, QString last_error)
 
 	// Reset broadcast button state/text
 	if (!broadcastActive) {
-		SetBroadcastFlowEnabled(auth && auth->broadcastFlow());
+		SetBroadcastFlowEnabled(UsesYouTubeBroadcastFlow());
 	}
 	if (should_reconnect) {
 		QMetaObject::invokeMethod(this, "StartStreaming", Qt::QueuedConnection);
@@ -410,7 +411,7 @@ void OBSBasic::StreamActionTriggered()
 		bool confirm = config_get_bool(App()->GetUserConfig(), "BasicWindow", "WarnBeforeStoppingStream");
 
 #ifdef YOUTUBE_ENABLED
-		if (isVisible() && auth && IsYouTubeService(auth->service()) && autoStopBroadcast) {
+		if (isVisible() && UsesYouTubeBroadcastFlow() && autoStopBroadcast) {
 			QMessageBox::StandardButton button = OBSMessageBox::question(
 				this, QTStr("ConfirmStop.Title"), QTStr("YouTube.Actions.AutoStopStreamingWarning"),
 				QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
@@ -460,7 +461,7 @@ void OBSBasic::StreamActionTriggered()
 			OBSDataAutoRelease settings = obs_service_get_settings(service);
 			bwtest = obs_data_get_bool(settings, "bwtest");
 			// Disable confirmation if this is going to open broadcast setup
-			if (auth && auth->broadcastFlow() && !broadcastReady && !broadcastActive) {
+			if (UsesYouTubeBroadcastFlow() && !broadcastReady && !broadcastActive) {
 				confirm = false;
 			}
 		}

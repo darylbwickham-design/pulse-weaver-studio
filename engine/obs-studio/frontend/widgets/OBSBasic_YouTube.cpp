@@ -18,6 +18,7 @@
 ******************************************************************************/
 
 #include "OBSBasic.hpp"
+#include "../../shared/qt/PulseBroadcastFlow.hpp"
 
 #ifdef YOUTUBE_ENABLED
 #include <dialogs/OBSYoutubeActions.hpp>
@@ -31,10 +32,21 @@ using namespace std;
 
 extern bool cef_js_avail;
 
+bool OBSBasic::UsesYouTubeBroadcastFlow() const
+{
+	if (!service || !auth)
+		return false;
+	OBSDataAutoRelease settings = obs_service_get_settings(service);
+	return PulseBroadcastFlow::usesYouTube(obs_data_get_string(settings, "service"), auth->service(),
+					    auth->broadcastFlow());
+}
+
 #ifdef YOUTUBE_ENABLED
 void OBSBasic::YouTubeActionDialogOk(const std::string &broadcastId, const std::string &streamId,
 				     const std::string &key, bool autostart, bool autostop, bool startNow)
 {
+	if (!UsesYouTubeBroadcastFlow())
+		return;
 	obs_service_t *service_obj = GetService();
 	OBSDataAutoRelease settings = obs_service_get_settings(service_obj);
 
@@ -126,6 +138,8 @@ void OBSBasic::ShowYouTubeAutoStartWarning()
 
 void OBSBasic::BroadcastButtonClicked()
 {
+	if (!UsesYouTubeBroadcastFlow())
+		return;
 	if (!broadcastReady || (!broadcastActive && !outputHandler->StreamingActive())) {
 		SetupBroadcast();
 		return;
@@ -195,15 +209,17 @@ void OBSBasic::BroadcastButtonClicked()
 
 void OBSBasic::SetBroadcastFlowEnabled(bool enabled)
 {
-	emit BroadcastFlowEnabled(enabled);
+	emit BroadcastFlowEnabled(enabled && UsesYouTubeBroadcastFlow());
 }
 
 void OBSBasic::SetupBroadcast()
 {
 #ifdef YOUTUBE_ENABLED
 	Auth *const auth = GetAuth();
-	if (IsYouTubeService(auth->service())) {
+	if (UsesYouTubeBroadcastFlow()) {
 		OBSYoutubeActions dialog(this, auth, broadcastReady);
+		if (!dialog.Valid())
+			return;
 		connect(&dialog, &OBSYoutubeActions::ok, this, &OBSBasic::YouTubeActionDialogOk);
 		dialog.exec();
 	}

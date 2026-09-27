@@ -5,6 +5,7 @@
 #include <utility/YoutubeApiWrappers.hpp>
 
 #include <QThread>
+#include <atomic>
 
 class WorkerThread : public QThread {
 	Q_OBJECT
@@ -15,7 +16,7 @@ public:
 
 protected:
 	YoutubeApiWrappers *apiYouTube;
-	bool pending = true;
+	std::atomic_bool pending{true};
 
 public slots:
 	void run() override;
