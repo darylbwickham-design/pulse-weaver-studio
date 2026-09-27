@@ -1,6 +1,7 @@
 #include "../../shared/qt/PulseAppCredentials.hpp"
 #include "../../shared/qt/PulseYouTubeRegistration.hpp"
 #include "../../shared/qt/PulseChatProtocol.hpp"
+#include "../../shared/qt/PulseBroadcastFlow.hpp"
 #include <QJsonDocument>
 #include "YoutubeApiWrappers.hpp"
 
@@ -43,9 +44,7 @@ constexpr auto defaultBroadcastsPerQuery = 50; // acceptable values are 0 to 50,
 
 bool IsYouTubeService(const std::string &service)
 {
-	auto it = find_if(youtubeServices.begin(), youtubeServices.end(),
-			  [&service](const Auth::Def &yt) { return service == yt.service; });
-	return it != youtubeServices.end();
+	return PulseBroadcastFlow::isYouTube(service);
 }
 bool IsUserSignedIntoYT()
 {

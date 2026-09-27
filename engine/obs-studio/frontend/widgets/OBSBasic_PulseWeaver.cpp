@@ -2255,6 +2255,13 @@ void OBSBasic::InitPulseWeaverShell()
 				activeConfiguration.SaveSafe("tmp");
 				ResetOutputs();
 				StreamActionTriggered();
+				if (!property("pulseWeaverStreamPreparing").toBool() && !StreamingActive()) {
+					setProperty("pulseWeaverGoLiveSession", false);
+					const QString message = "Twitch did not start. No other destinations were started; review the startup message and try again.";
+					setProperty("pulseWeaverControlResult", message);
+					if (pulseDestinationStatus) pulseDestinationStatus->setText(message);
+					return;
+				}
 			}
 			setProperty("pulseWeaverControlAccepted", true);
 			setProperty("pulseWeaverControlResult", QString("Go Live confirmed by %1 for Stage ‘%2’. Starting %3 destination%4.")
@@ -4636,7 +4643,7 @@ QJsonObject OBSBasic::PulseWeaverLumiaDestination(const QString &provider, bool 
 	const bool accepted = output && obs_output_active(output);
 	obs_output_release(output);
 	// Twitch's Enhanced Broadcasting preparation is asynchronous.
-	const bool pending = provider == "twitch";
+	const bool pending = provider == "twitch" && property("pulseWeaverStreamPreparing").toBool();
 	if (accepted || pending) setProperty("pulseWeaverGoLiveSession", true);
 	return result(accepted || pending, accepted || pending ? "Start requested for " + provider + "." :
 		(pulseDestinationStatus ? pulseDestinationStatus->text() : "The output could not start."));
