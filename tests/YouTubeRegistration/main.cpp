@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     }
     if (argc == 2) {
         const auto registration = bundled(QString::fromLocal8Bit(argv[1]));
-        check(!registration.clientId.isEmpty() && !registration.clientSecret.isEmpty(), "Packaged desktop registration");
+        check(!registration.clientId.isEmpty(), "Packaged desktop registration");
         check(resolve({}, registration).clientId == registration.clientId, "Fresh installation uses packaged client");
         std::puts("PASS: packaged desktop registration is usable without local credentials (values not logged)");
         return 0;
@@ -60,6 +60,11 @@ int main(int argc, char **argv)
     check(resolve({local.clientId, {}}, defaults).clientSecret.isEmpty(), "Never mix different registrations");
     check(resolve({defaults.clientId, {}}, defaults).clientSecret == defaults.clientSecret, "Repair same client missing secret");
     check(resolve(local, {}).clientSecret == local.clientSecret, "Existing configuration works without bundle");
+    write(R"({"installed":{"client_id":"fixture.apps.googleusercontent.com"}})");
+    const auto publicClient = bundled(fileName);
+    check(publicClient.clientId == "fixture.apps.googleusercontent.com" && publicClient.clientSecret.isEmpty(),
+          "Public desktop client ID works without a bundled secret");
+    check(resolve(local, publicClient).clientSecret == local.clientSecret, "Existing registration is preserved with public default");
     check(bundled(temporary.filePath("missing.json")).clientId.isEmpty(), "Missing bundle fails safely");
     for (const auto &invalid : {QByteArray("not JSON"), QByteArray("{}"),
         QByteArray(R"({"web":{"client_id":"fixture.apps.googleusercontent.com","client_secret":"secret"}})"),

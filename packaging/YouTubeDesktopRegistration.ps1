@@ -16,3 +16,16 @@ function Get-YouTubeDesktopRegistration {
         client_id=$client.client_id.Trim(); client_secret=$client.client_secret.Trim()
     }} | ConvertTo-Json -Compress)
 }
+
+function Get-YouTubePublicDesktopRegistration {
+    param([Parameter(Mandatory)][string]$Path)
+    $document = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ($null -ne $document.web -or $null -eq $document.installed -or
+        @($document.PSObject.Properties).Count -ne 1 -or
+        @($document.installed.PSObject.Properties).Count -ne 1 -or
+        $document.installed.client_id -isnot [string] -or
+        $document.installed.client_id -notmatch '^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$') {
+        throw 'Expected a public Desktop app client ID only; no secret or token may be packaged.'
+    }
+    return ([ordered]@{installed=[ordered]@{client_id=$document.installed.client_id.Trim()}} | ConvertTo-Json -Compress)
+}

@@ -23,6 +23,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QLabel>
@@ -767,7 +768,11 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	actionList = new QListWidget;
 	actionList->hide();
 	stagePicker = new QComboBox(libraryPage);
-	stagePicker->setToolTip("Choose the stage to design");
+	stagePicker->setToolTip("Search stages when the strip is full");
+	stagePicker->setAccessibleName("Find a stage to design");
+	stagePicker->setEditable(true);
+	stagePicker->setInsertPolicy(QComboBox::NoInsert);
+	stagePicker->setMaximumWidth(190);
 	stagePicker->hide();
 	lookPicker = new QComboBox(libraryPage);
 	lookPicker->setToolTip("Choose a look within this stage");
@@ -788,6 +793,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	};
 	stageRow->addWidget(new QLabel("Stage", libraryPage));
 	stageRow->addWidget(makeNavigationStrip(stageCards), 1);
+	stageRow->addWidget(stagePicker);
 	auto *commandRow = new QHBoxLayout;
 	commandRow->setSpacing(6);
 	stageRow->addLayout(commandRow);
@@ -1060,14 +1066,45 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	selectedSourceLabel->setObjectName("PulseWeaverCardTitle");
 	selectedSourceLabel->setWordWrap(true);
 	toolRows->addWidget(selectedSourceLabel);
+	auto *placeLabel = new QLabel("Place selected source", lookTools);
+	placeLabel->setStyleSheet("color:#92b8d0;font-size:11px;font-weight:700;");
+	toolRows->addWidget(placeLabel);
+	auto *quickPlaces = new QGridLayout;
+	quickPlaces->setSpacing(5);
+	for (const auto &[label, operation] : std::vector<std::pair<QString, QString>>{
+		{"Fill", "cover"}, {"Corner", "corner"}, {"Left", "left"}, {"Right", "right"}}) {
+		auto *button = new QToolButton(lookTools);
+		button->setText(label);
+		button->setAccessibleName("Place source: " + label);
+		button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+		button->setMinimumHeight(67);
+		button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+		QPixmap diagram(70, 38);
+		diagram.fill(QColor(10, 17, 28));
+		QPainter painter(&diagram);
+		painter.setPen(QPen(QColor(80, 168, 207), 2));
+		painter.drawRoundedRect(QRect(3, 3, 64, 32), 4, 4);
+		QRect focus = operation == "corner" ? QRect(45, 6, 19, 12) :
+			operation == "left" ? QRect(6, 6, 29, 26) :
+			operation == "right" ? QRect(35, 6, 29, 26) : QRect(6, 6, 58, 26);
+		painter.fillRect(focus, QColor(64, 185, 225));
+		painter.end();
+		button->setIcon(QIcon(diagram));
+		button->setIconSize(QSize(70, 38));
+		button->setStyleSheet("QToolButton{background:#111d2e;border:1px solid #365069;border-radius:7px;color:#dceefa;padding:3px;}"
+			"QToolButton:hover{background:#1b364b;border-color:#66cff1;}");
+		const int index = quickPlaces->count();
+		quickPlaces->addWidget(button, index / 2, index % 2);
+		connect(button, &QToolButton::clicked, this, [this, operation] { editDraft(operation); });
+	}
+	toolRows->addLayout(quickPlaces);
 	auto *placementRow = new QHBoxLayout;
 	auto *arrange = new QToolButton;
-	arrange->setText("Position ▾");
+	arrange->setText("More placement ▾");
 	arrange->setPopupMode(QToolButton::InstantPopup);
 	auto *arrangeMenu = new QMenu(arrange);
 	for (const auto &[label, operation] : std::vector<std::pair<QString, QString>>{
-		{"Fit on canvas", "fill"}, {"Fill canvas (crop to fit)", "cover"},
-		{"Left half", "left"}, {"Right half", "right"}, {"Top-right inset", "corner"},
+		{"Fit on canvas", "fill"},
 		{"Full-canvas overlay · lock framing", "overlay"}}) {
 		connect(arrangeMenu->addAction(label), &QAction::triggered, this, [this, operation] { editDraft(operation); });
 	}
@@ -1454,6 +1491,7 @@ void PulseMotionEngine::refreshNavigation()
 	for (const QString &group : groups)
 		stagePicker->addItem(group.startsWith("PW ") ? group.mid(3) : group, group);
 	stagePicker->setCurrentIndex(std::max(0, stagePicker->findData(selectedStageGroup)));
+	stagePicker->setVisible(stagePicker->count() > 5);
 	const QSignalBlocker lookBlocker(lookPicker);
 	lookPicker->clear();
 	for (const QJsonValue &value : actions) {
@@ -2770,6 +2808,7 @@ void PulseMotionEngine::openShowWizard()
 
 	QMap<QString, QComboBox *> roles;
 	QMap<QString, QJsonObject> plannedSources;
+	QMap<QString, QComboBox *> framingChoices;
 	auto addRole = [this, &available, &roles, &plannedSources, showName](QWizardPage *page, QFormLayout *form,
 		const QString &key, const QString &label, const QStringList &hints = {}) {
 		const bool graphic = key == "starting" || key == "brb" || key == "ending" || key == "celebration";
@@ -2777,13 +2816,21 @@ void PulseMotionEngine::openShowWizard()
 		combo->setAccessibleName(label);
 		combo->addItem("I don't use this", QString());
 		int preferred = 0;
+		int preferredScore = 0;
 		for (const Choice &choice : available) {
+			if (key == "game" && choice.type != "game_capture") continue;
+			if (key == "desktop" && choice.type != "monitor_capture" && choice.type != "display_capture" &&
+				choice.type != "window_capture") continue;
 			combo->addItem(choice.name, choice.uuid);
-			if (!preferred)
-				for (const QString &hint : hints)
-					if (choice.name.contains(hint, Qt::CaseInsensitive) || choice.type == hint) {
-						preferred = combo->count() - 1; break;
-					}
+			int score = 0;
+			for (int hint = 0; hint < hints.size(); ++hint)
+				if (choice.name.contains(hints.at(hint), Qt::CaseInsensitive) || choice.type == hints.at(hint))
+					score = std::max(score, 100 - hint * 16);
+			if (key == "camera" && (choice.name.contains("alert", Qt::CaseInsensitive) ||
+				choice.name.contains("pixel", Qt::CaseInsensitive))) score = 0;
+			if (key == "landscapeChat" && (choice.name.contains("vert", Qt::CaseInsensitive) ||
+				choice.name.contains("portrait", Qt::CaseInsensitive))) score = 0;
+			if (score > preferredScore) { preferredScore = score; preferred = combo->count() - 1; }
 		}
 		combo->setCurrentIndex(preferred);
 		if (graphic && !preferred) {
@@ -2803,7 +2850,7 @@ void PulseMotionEngine::openShowWizard()
 		rowLayout->addWidget(create);
 		form->addRow(roleLabel, row);
 		roles.insert(key, combo);
-		QObject::connect(create, &QPushButton::clicked, page, [this, combo, key, label, page, showName, graphic, &plannedSources, &available] {
+		QObject::connect(create, &QPushButton::clicked, page, [this, combo, key, label, page, showName, graphic, &plannedSources, &available, &roles] {
 			QDialog dialog(page);
 			dialog.setWindowTitle("Create " + label.toLower());
 			auto *layout = new QVBoxLayout(&dialog);
@@ -2885,6 +2932,13 @@ void PulseMotionEngine::openShowWizard()
 				if (old >= 0) combo->removeItem(old);
 				combo->addItem("Create: " + sourceName, "new:" + key);
 				combo->setCurrentIndex(combo->count() - 1);
+				if (key == "camera" || key == "secondary" || key == "alertCamera")
+					for (const QString &other : {QString("camera"), QString("secondary"), QString("alertCamera")}) {
+						if (other == key || !roles.contains(other)) continue;
+						QComboBox *choice = roles.value(other);
+						if (choice->findData("new:" + key) < 0)
+							choice->addItem("Reuse new: " + sourceName, "new:" + key);
+					}
 				dialog.accept();
 			});
 			dialog.exec();
@@ -2898,6 +2952,41 @@ void PulseMotionEngine::openShowWizard()
 	addRole(content, contentForm, "alertCamera", "Alert / pixel-board camera", {"pixel", "alert cam"});
 	addRole(content, contentForm, "game", "Gameplay", {"game_capture"});
 	addRole(content, contentForm, "desktop", "Desktop / screen", {"monitor_capture", "display_capture", "main screen"});
+	for (const QString &role : {QString("camera"), QString("secondary"), QString("alertCamera")}) {
+		auto *framing = new QComboBox(content);
+		framing->setAccessibleName(roles.value(role)->accessibleName() + " existing framing");
+		framing->setToolTip("Reuse a crop and rotation from an existing scene item, then position it in the new layout.");
+		contentForm->addRow(roles.value(role)->accessibleName() + " framing", framing);
+		framingChoices.insert(role, framing);
+		auto refresh = [this, role, framing, &roles] {
+			framing->clear();
+			framing->addItem("Use full camera frame", QJsonObject{});
+			const QString uuid = roles.value(role)->currentData().toString();
+			if (uuid.isEmpty() || uuid.startsWith("new:")) return;
+			struct Inventory { QString uuid; QString scene; QComboBox *choices; } inventory{uuid, {}, framing};
+			obs_enum_scenes([](void *opaque, obs_source_t *owner) {
+				auto &inventory = *static_cast<Inventory *>(opaque);
+				inventory.scene = QString::fromUtf8(obs_source_get_name(owner));
+				obs_scene_t *scene = obs_scene_from_source(owner);
+				if (!scene) return true;
+				obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
+					auto &inventory = *static_cast<Inventory *>(opaque);
+					obs_source_t *source = obs_sceneitem_get_source(item);
+					if (source && inventory.uuid == QString::fromUtf8(obs_source_get_uuid(source))) {
+						const Transform frame = PulseMotionEngine::capture(item);
+						const bool cropped = frame.crop.left || frame.crop.right || frame.crop.top || frame.crop.bottom;
+						inventory.choices->addItem("Use “" + inventory.scene + "”" + (cropped ? " · cropped" : ""), PulseMotionEngine::serialize(frame));
+						if (cropped && inventory.choices->currentIndex() == 0)
+							inventory.choices->setCurrentIndex(inventory.choices->count() - 1);
+					}
+					return true;
+				}, &inventory);
+				return true;
+			}, &inventory);
+		};
+		connect(roles.value(role), &QComboBox::currentIndexChanged, framing, [refresh](int) { refresh(); });
+		refresh();
+	}
 	static_cast<QVBoxLayout *>(content->layout())->addStretch();
 
 	auto *overlays = makePage("Add graphics and overlays", "Chat and alert sources controlled by another app keep their full-canvas framing.");
@@ -2924,6 +3013,27 @@ void PulseMotionEngine::openShowWizard()
 		}
 	});
 	static_cast<QVBoxLayout *>(overlays->layout())->addStretch();
+
+	auto *sound = makePage("Route optional music", "Choose a dedicated music source if it should stay on Twitch but be excluded from YouTube and Kick.");
+	auto *soundForm = new QFormLayout;
+	sound->layout()->addItem(soundForm);
+	auto *musicSource = new QComboBox(sound);
+	musicSource->setAccessibleName("Music source excluded from YouTube and Kick");
+	musicSource->addItem("No dedicated music source", QString());
+	obs_enum_sources([](void *opaque, obs_source_t *source) {
+		if (obs_source_get_output_flags(source) & OBS_SOURCE_AUDIO)
+			static_cast<QComboBox *>(opaque)->addItem(QString::fromUtf8(obs_source_get_name(source)),
+				QString::fromUtf8(obs_source_get_uuid(source)));
+		return true;
+	}, musicSource);
+	soundForm->addRow("Music audio source", musicSource);
+	auto *excludeMusic = new QCheckBox("Keep this source off YouTube and Kick", sound);
+	excludeMusic->setChecked(true);
+	soundForm->addRow(excludeMusic);
+	auto *musicHelp = new QLabel("Twitch routing and its VOD track stay as configured. Use a dedicated audio source: excluding a source also excludes its video if that source is used for the picture.", sound);
+	musicHelp->setWordWrap(true);
+	sound->layout()->addWidget(musicHelp);
+	static_cast<QVBoxLayout *>(sound->layout())->addStretch();
 
 	auto *composition = makePage("Choose a starting layout", "You can refine each source on both canvases after the show is created.");
 	auto *styles = new QListWidget(composition);
@@ -3028,8 +3138,13 @@ void PulseMotionEngine::openShowWizard()
 		if (!chosenStages.contains("Celebration")) roleIds.insert("celebration", QString());
 		QJsonObject sourceSpecs;
 		for (auto it = plannedSources.cbegin(); it != plannedSources.cend(); ++it)
-			if (roleIds.value(it.key()).toString() == "new:" + it.key()) sourceSpecs.insert(it.key(), it.value());
+			if (std::any_of(roleIds.begin(), roleIds.end(), [&](const QJsonValue &value) { return value.toString() == "new:" + it.key(); }))
+				sourceSpecs.insert(it.key(), it.value());
+		QJsonObject framing;
+		for (auto it = framingChoices.cbegin(); it != framingChoices.cend(); ++it)
+			if (!it.value()->currentData().toJsonObject().isEmpty()) framing.insert(it.key(), it.value()->currentData().toJsonObject());
 		QJsonObject choices{{"name", showName->text().trimmed()}, {"roles", roleIds}, {"newSources", sourceSpecs}, {"stages", chosenStages},
+			{"framing", framing}, {"musicSource", excludeMusic->isChecked() ? musicSource->currentData().toString() : QString()},
 			{"style", styles->currentItem() ? styles->currentItem()->data(Qt::UserRole).toString() : QString("corner")},
 			{"transition", transition->currentData().toString()}};
 		const QJsonObject result = createGuidedShow(choices);
@@ -3051,13 +3166,17 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 	for (auto it = selected.begin(); it != selected.end(); ++it) {
 		const QString uuid = it.value().toString();
 		if (uuid.isEmpty()) continue;
-		if (uuid == "new:" + it.key()) {
-			const QJsonObject spec = newSourceSpecs.value(it.key()).toObject();
+		if (uuid.startsWith("new:")) {
+			const QString sourceRole = uuid.mid(4);
+			const QJsonObject spec = newSourceSpecs.value(sourceRole).toObject();
 			const QString sourceName = spec.value("name").toString().trimmed();
-			if (sourceName.isEmpty() || spec.value("role").toString() != it.key())
+			if (sourceName.isEmpty() || spec.value("role").toString() != sourceRole)
 				return {{"ok", false}, {"message", "Finish setting up the new source for " + it.key() + "."}};
 			OBSSourceAutoRelease existing = obs_get_source_by_name(sourceName.toUtf8().constData());
-			if (existing || sourceNames.values().contains(sourceName))
+			bool duplicate = false;
+			for (auto previous = sourceNames.cbegin(); previous != sourceNames.cend(); ++previous)
+				if (previous.value() == sourceName && selected.value(previous.key()).toString() != uuid) duplicate = true;
+			if (existing || duplicate)
 				return {{"ok", false}, {"message", "The source name “" + sourceName + "” is already in use."}};
 			sourceNames.insert(it.key(), sourceName);
 			continue;
@@ -3070,6 +3189,17 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 	}
 	const QJsonArray requested = choices.value("stages").toArray();
 	if (requested.isEmpty()) return {{"ok", false}, {"message", "Choose at least one stage."}};
+	const QJsonObject roleFraming = choices.value("framing").toObject();
+	QString musicName;
+	const QString musicUuid = choices.value("musicSource").toString();
+	if (!musicUuid.isEmpty()) {
+		OBSSourceAutoRelease music = obs_get_source_by_uuid(musicUuid.toUtf8().constData());
+		if (!music || !(obs_source_get_output_flags(music) & OBS_SOURCE_AUDIO))
+			return {{"ok", false}, {"message", "The selected music source is no longer available. Choose it again."}};
+		if (selected.value("game").toString() == musicUuid)
+			return {{"ok", false}, {"message", "Use a dedicated music source. Excluding the Gameplay source would remove its picture from YouTube and Kick too."}};
+		musicName = QString::fromUtf8(obs_source_get_name(music));
+	}
 	const QString style = choices.value("style").toString("corner");
 	if (style != "corner" && style != "split" && style != "full")
 		return {{"ok", false}, {"message", "Choose one of the shown layouts."}};
@@ -3089,6 +3219,9 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 		for (const QString &role : roles) if (sourceNames.contains(role)) return role;
 		return QString();
 	};
+	auto distinct = [&selected](const QString &first, const QString &second) {
+		return first.isEmpty() || second.isEmpty() || selected.value(first) != selected.value(second);
+	};
 	for (const QJsonValue &value : requested) {
 		const QString stage = value.toString();
 		StagePlan plan{stage, {}};
@@ -3099,15 +3232,17 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 			if (!main.isEmpty()) plan.looks.push_back({"Starting", main, choose({"alertCamera"}), main == graphic ? QString() : graphic});
 		} else if (stage == "Hangout") {
 			const QString main = choose({"camera", "secondary", "desktop"});
-			const QString other = main == "camera" ? choose({"secondary", "desktop"}) :
+			QString other = main == "camera" ? choose({"secondary", "desktop"}) :
 				main == "secondary" ? choose({"camera", "desktop"}) : choose({"camera", "secondary"});
+			if (!distinct(main, other)) other.clear();
 			if (!main.isEmpty()) plan.looks.push_back({"Main focus", main, other});
 			if (!other.isEmpty() && other != main) plan.looks.push_back({"Swap focus", other, main});
 			if (sourceNames.contains("desktop") && main != "desktop" && other != "desktop")
 				plan.looks.push_back({"Screen focus", "desktop", main});
 		} else if (stage == "Gameplay") {
 			const QString main = choose({"game", "desktop"});
-			const QString other = choose({"camera", "secondary"});
+			QString other = choose({"camera", "secondary"});
+			if (!distinct(main, other)) other.clear();
 			if (!main.isEmpty()) {
 				plan.looks.push_back({"Gameplay", main, other});
 				if (!other.isEmpty() && style != "full") plan.looks.push_back({"Content focus", main, {}});
@@ -3174,8 +3309,9 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 		return {{"ok", false}, {"message", message}};
 	};
 	const QString collection = motionCollection();
+	QMap<QString, QString> createdRoleIds;
 	for (auto it = newSourceSpecs.begin(); it != newSourceSpecs.end(); ++it) {
-		if (selected.value(it.key()).toString() != "new:" + it.key()) continue;
+		if (!std::any_of(selected.begin(), selected.end(), [&](const QJsonValue &value) { return value.toString() == "new:" + it.key(); })) continue;
 		const QJsonObject spec = it.value().toObject();
 		const QString name = spec.value("name").toString();
 		const QString kind = spec.value("kind").toString();
@@ -3231,7 +3367,7 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 		obs_source_t *source = obs_source_create(actualKind.toUtf8().constData(), name.toUtf8().constData(), settings, nullptr);
 		if (!source) return fail("Could not create “" + name + "”. Check that its source type is installed.");
 		createdSources.push_back(source);
-		selected.insert(it.key(), QString::fromUtf8(obs_source_get_uuid(source)));
+		createdRoleIds.insert(it.key(), QString::fromUtf8(obs_source_get_uuid(source)));
 		if (kind == "builtin_graphic") {
 			const QString portraitName = name + " · Portrait";
 			OBSSourceAutoRelease existing = obs_get_source_by_name(portraitName.toUtf8().constData());
@@ -3246,6 +3382,10 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 			createdSources.push_back(portraitSource);
 			portraitSourceIds.insert(it.key(), QString::fromUtf8(obs_source_get_uuid(portraitSource)));
 		}
+	}
+	for (const QString &role : selected.keys()) {
+		const QString id = selected.value(role).toString();
+		if (id.startsWith("new:")) selected.insert(role, createdRoleIds.value(id.mid(4)));
 	}
 	const QJsonObject previousAssignments = stages.isEmpty() ? QJsonObject{} : stages.first().toObject().value("assignments").toObject();
 	for (const StagePlan &plan : plans) {
@@ -3288,7 +3428,7 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 				return fail("Could not add “" + sourceNames.value(role) + "” to the new scenes.");
 			items.push_back(std::move(pair));
 		}
-		auto appendCanvasTargets = [this, &items, &sourceNames, style](QJsonArray &targets,
+		auto appendCanvasTargets = [this, &items, &sourceNames, &roleFraming, style](QJsonArray &targets,
 			const LookPlan &look, const QString &container, bool portraitCanvas, float width, float height) {
 			auto isOverlay = [portraitCanvas, &look](const QString &role) {
 				return (!look.graphic.isEmpty() && role == look.graphic) || role == "alerts" || role == "captions" ||
@@ -3307,13 +3447,20 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 					entry.role == look.main ? 0 : hiddenOrder++;
 				transform.rotation = 0;
 				transform.crop = {};
+				if (roleFraming.contains(entry.role)) {
+					const Transform framed = deserialize(roleFraming.value(entry.role).toObject());
+					transform.crop = framed.crop;
+					transform.rotation = framed.rotation;
+					transform.scale = {framed.scale.x < 0 ? -1.0f : 1.0f,
+						framed.scale.y < 0 ? -1.0f : 1.0f};
+				}
 				transform.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
 				transform.pos = {0, 0};
 				transform.bounds = {width, height};
 				transform.boundsAlignment = OBS_ALIGN_CENTER;
 				transform.boundsCrop = true;
 				transform.boundsType = OBS_BOUNDS_SCALE_OUTER;
-			transform.visible = entry.role == look.main || (entry.role == look.supporting && showSupporting) || overlay;
+				transform.visible = entry.role == look.main || (entry.role == look.supporting && showSupporting) || overlay;
 				if (overlay && entry.role != look.graphic) {
 					transform.scale = {1, 1};
 					transform.bounds = {0, 0};
@@ -3336,12 +3483,12 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 						transform.bounds = {width * .5f, height};
 					}
 				}
-			obs_source_t *itemSource = obs_sceneitem_get_source(item);
-			targets.append(QJsonObject{{"container", container}, {"itemId", QString::number(obs_sceneitem_get_id(item))},
-				{"source", QString::fromUtf8(obs_source_get_name(itemSource))},
-				{"sourceUuid", QString::fromUtf8(obs_source_get_uuid(itemSource))}, {"graphic", overlay},
-				{"sourceWidth", int(obs_source_get_width(itemSource))}, {"sourceHeight", int(obs_source_get_height(itemSource))},
-				{"transform", serialize(transform)}});
+				obs_source_t *itemSource = obs_sceneitem_get_source(item);
+				targets.append(QJsonObject{{"container", container}, {"itemId", QString::number(obs_sceneitem_get_id(item))},
+					{"source", QString::fromUtf8(obs_source_get_name(itemSource))},
+					{"sourceUuid", QString::fromUtf8(obs_source_get_uuid(itemSource))}, {"graphic", overlay},
+					{"sourceWidth", int(obs_source_get_width(itemSource))}, {"sourceHeight", int(obs_source_get_height(itemSource))},
+					{"transform", serialize(transform)}});
 			}
 		};
 		const int firstLook = newActions.size();
@@ -3366,7 +3513,9 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 		for (const QString &provider : {QString("twitch"), QString("youtube"), QString("kick"), QString("recording")}) {
 			for (const QString &route : {QString("horizontal"), QString("vertical")}) {
 				const QString key = provider + "_" + route;
-				const QJsonArray excluded = previousAssignments.value(key).toObject().value("excluded").toArray();
+				QJsonArray excluded = previousAssignments.value(key).toObject().value("excluded").toArray();
+				if (!musicName.isEmpty() && (provider == "youtube" || provider == "kick") && !excluded.contains(musicName))
+					excluded.append(musicName);
 				assignments.insert(key, QJsonObject{{"canvas", route}, {"scene", route == "horizontal" ? name : portraitName},
 					{"excluded", excluded}});
 			}

@@ -13,7 +13,11 @@ $runtime = (Resolve-Path -LiteralPath $RuntimeRoot).Path
 $tag = if ($Channel -eq 'alpha') { "v$Version-alpha.$AlphaRevision" } elseif ($Channel -eq 'unstable') { "v$Version-unstable.$AlphaRevision" } else { "v$Version" }
 $output = Join-Path $projectRoot "artifacts/channel-$tag"
 if (Test-Path -LiteralPath $output) { throw "Output already exists: $output" }
-$registration = Get-YouTubeDesktopRegistration -Path $YouTubeDesktopClientJson
+$registration = if ($Channel -eq 'unstable') {
+    Get-YouTubePublicDesktopRegistration -Path $YouTubeDesktopClientJson
+} else {
+    Get-YouTubeDesktopRegistration -Path $YouTubeDesktopClientJson
+}
 foreach ($file in @('bin/64bit/PulseWeaverCore.exe','obs-plugins/64bit/pulse-weaver-core.dll')) {
     if (-not (Test-Path -LiteralPath (Join-Path $runtime $file))) { throw "Missing runtime component: $file" }
 }

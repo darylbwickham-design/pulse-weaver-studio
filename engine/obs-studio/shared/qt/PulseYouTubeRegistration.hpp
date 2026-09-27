@@ -21,11 +21,12 @@ inline Registration bundled(const QString &fileName)
     const auto root = document.object();
     if (root.size() != 1 || !root.value("installed").isObject()) return {};
     const auto client = root.value("installed").toObject();
-    if (client.size() != 2 || !client.value("client_id").isString() ||
-        !client.value("client_secret").isString()) return {};
+    if ((client.size() != 1 && client.size() != 2) || !client.value("client_id").isString() ||
+        (client.size() == 2 && !client.value("client_secret").isString())) return {};
     Registration result{client.value("client_id").toString().trimmed(),
                         client.value("client_secret").toString().trimmed()};
-    if (!result.clientId.endsWith(".apps.googleusercontent.com") || result.clientSecret.isEmpty()) return {};
+    if (!result.clientId.endsWith(".apps.googleusercontent.com") ||
+        (client.size() == 2 && result.clientSecret.isEmpty())) return {};
     return result;
 }
 

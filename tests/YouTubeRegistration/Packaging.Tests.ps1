@@ -18,7 +18,15 @@ try {
         try { $null = Get-YouTubeDesktopRegistration -Path $file } catch { $rejected = $true }
         if (-not $rejected) { throw 'Invalid registration accepted.' }
     }
-    Write-Output 'PASS: packaging includes only desktop app registration; rejects web/missing/malformed credentials.'
+    [IO.File]::WriteAllText($file, '{"installed":{"client_id":"fixture.apps.googleusercontent.com"}}')
+    $public = Get-YouTubePublicDesktopRegistration -Path $file
+    if (($public | ConvertFrom-Json).installed.client_id -ne 'fixture.apps.googleusercontent.com' -or
+        $public -match 'client_secret|refresh_token|access_token') { throw 'Public registration was not ID-only.' }
+    [IO.File]::WriteAllText($file, '{"installed":{"client_id":"fixture.apps.googleusercontent.com","client_secret":"must-not-package"}}')
+    $rejected = $false
+    try { $null = Get-YouTubePublicDesktopRegistration -Path $file } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Public packaging accepted a secret.' }
+    Write-Output 'PASS: desktop registration allowlist and public ID-only unstable packaging reject private or malformed payloads.'
 } finally {
     # Explicit disposable directory created above; never a profile or workspace.
     if ((Split-Path $directory -Leaf) -like 'PulseWeaver-registration-test-*' -and

@@ -177,9 +177,13 @@ internal static class Program
             using (var registration = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "data", "pulse-weaver", "youtube-desktop-client.json")))) {
                 var document = registration.RootElement;
                 var client = document.GetProperty("installed");
-                if (document.EnumerateObject().Count() != 1 || client.EnumerateObject().Count() != 2 ||
+                var fields = client.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
+                bool validFields = UpdateChannel == "windows-unstable" ?
+                    fields.SetEquals(new[] { "client_id" }) :
+                    fields.SetEquals(new[] { "client_id", "client_secret" });
+                if (document.EnumerateObject().Count() != 1 || !validFields ||
                     !(client.GetProperty("client_id").GetString()?.EndsWith(".apps.googleusercontent.com", StringComparison.Ordinal) ?? false) ||
-                    string.IsNullOrWhiteSpace(client.GetProperty("client_secret").GetString())) return 11;
+                    (UpdateChannel != "windows-unstable" && string.IsNullOrWhiteSpace(client.GetProperty("client_secret").GetString()))) return 11;
             }
             if (File.ReadAllText(savedScene) != sceneJson || File.ReadAllText(savedConfig) != "keep") return 9;
             WriteUpdateIdentity(root);

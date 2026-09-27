@@ -46,6 +46,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QFormLayout>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -1105,8 +1106,9 @@ void OBSBasic::InitPulseWeaverShell()
 	headerLayout->addWidget(plugins);
 	auto *settings = new QPushButton("Settings", header);
 	settings->setObjectName("PulseWeaverUtility");
+	settings->setProperty("pulseWorkspaceIndex", 4);
 	pulseIcon(settings, "settings");
-	connect(settings, &QPushButton::clicked, this, &OBSBasic::on_action_Settings_triggered);
+	connect(settings, &QPushButton::clicked, this, [this] { SetPulseWeaverWorkspace(4); });
 	headerLayout->addWidget(settings);
 	connect(home, &QPushButton::clicked, this, [this] { SetPulseWeaverWorkspace(0); });
 	ui->verticalLayout->insertWidget(0, header);
@@ -2451,6 +2453,241 @@ void OBSBasic::InitPulseWeaverShell()
 	actionMount->setLayout(new QVBoxLayout);
 	actionLayout->addWidget(actionMount, 1);
 	pulsePages->addWidget(pulseActionHost);
+
+	/* Unstable showcase: one production-oriented entry point for setup and
+	 * settings. Existing account, stage and OBS save paths remain authoritative;
+	 * the hub links them rather than keeping a second copy of their state. */
+	auto *setupPage = new QWidget(pulsePages);
+	setupPage->setObjectName("PulseWeaverSetupPage");
+	auto *setupLayout = new QVBoxLayout(setupPage);
+	setupLayout->setContentsMargins(16, 14, 16, 12);
+	setupLayout->setSpacing(14);
+	setupLayout->addWidget(pulseBanner("Studio setup", "Build your show, connect destinations and tune your studio in one place", "settings"));
+	auto *setupBody = new QHBoxLayout;
+	setupBody->setSpacing(16);
+	setupLayout->addLayout(setupBody, 1);
+	auto *setupNav = new QFrame(setupPage);
+	setupNav->setObjectName("PulseWeaverSetupNavigation");
+	setupNav->setFixedWidth(228);
+	setupNav->setStyleSheet("QFrame#PulseWeaverSetupNavigation{background:#0d1422;border:1px solid #34405d;border-radius:14px;}"
+		"QPushButton{border:0;border-left:3px solid transparent;background:transparent;color:#b8c7dc;text-align:left;padding:13px 12px;font-size:13px;}"
+		"QPushButton:hover{background:#18263a;color:white;}QPushButton:checked{background:#153348;border-left:3px solid #51cdf5;color:#fff;font-weight:700;}");
+	auto *setupNavLayout = new QVBoxLayout(setupNav);
+	setupNavLayout->setContentsMargins(7, 12, 7, 12);
+	setupNavLayout->setSpacing(3);
+	setupBody->addWidget(setupNav);
+	auto *setupSections = new QStackedWidget(setupPage);
+	setupSections->setObjectName("PulseWeaverSetupSections");
+	setupBody->addWidget(setupSections, 1);
+	auto *setupNavGroup = new QButtonGroup(setupPage);
+	setupNavGroup->setExclusive(true);
+	auto section = [setupPage, setupSections, setupNavLayout, setupNavGroup](const QString &name,
+									 const QString &description) -> QVBoxLayout * {
+		auto *nav = new QPushButton(name, setupPage);
+		nav->setCheckable(true);
+		nav->setAccessibleName(name + " settings");
+		setupNavGroup->addButton(nav);
+		setupNavLayout->addWidget(nav);
+		auto *scroll = new QScrollArea(setupSections);
+		scroll->setWidgetResizable(true);
+		scroll->setFrameShape(QFrame::NoFrame);
+		auto *page = new QWidget(scroll);
+		auto *layout = new QVBoxLayout(page);
+		layout->setContentsMargins(18, 4, 18, 20);
+		layout->setSpacing(13);
+		auto *heading = new QLabel(name, page);
+		heading->setStyleSheet("font-size:23px;font-weight:700;color:#f1f6ff;");
+		layout->addWidget(heading);
+		auto *intro = new QLabel(description, page);
+		intro->setWordWrap(true);
+		intro->setStyleSheet("color:#b5c9df;font-size:13px;");
+		layout->addWidget(intro);
+		layout->addStretch(1);
+		scroll->setWidget(page);
+		const int index = setupSections->addWidget(scroll);
+		QObject::connect(nav, &QPushButton::clicked, setupSections, [setupSections, index] { setupSections->setCurrentIndex(index); });
+		if (index == 0) nav->setChecked(true);
+		return layout;
+	};
+	auto card = [](QVBoxLayout *page, const QString &title, const QString &description) -> QVBoxLayout * {
+		auto *frame = new QFrame;
+		frame->setObjectName("PulseWeaverSetupCard");
+		frame->setStyleSheet("QFrame#PulseWeaverSetupCard{background:#111b2c;border:1px solid #354762;border-radius:14px;}"
+			"QLabel{border:0;background:transparent;}");
+		auto *layout = new QVBoxLayout(frame);
+		layout->setContentsMargins(19, 16, 19, 17);
+		layout->setSpacing(10);
+		auto *heading = new QLabel(title, frame);
+		heading->setStyleSheet("font-size:16px;font-weight:700;color:#eff6ff;");
+		layout->addWidget(heading);
+		auto *copy = new QLabel(description, frame);
+		copy->setWordWrap(true);
+		copy->setStyleSheet("color:#b6c6d9;font-size:12px;");
+		layout->addWidget(copy);
+		page->insertWidget(page->count() - 1, frame);
+		return layout;
+	};
+	auto action = [](QVBoxLayout *host, const QString &label, const QString &hint, std::function<void()> callback) {
+		auto *button = new QPushButton(label);
+		button->setAccessibleName(label);
+		button->setToolTip(hint);
+		button->setCursor(Qt::PointingHandCursor);
+		button->setStyleSheet("QPushButton{background:#203b53;border:1px solid #4c789c;border-radius:9px;color:white;padding:10px 14px;text-align:left;font-weight:600;}"
+			"QPushButton:hover{background:#285675;border-color:#6fd9ff;}");
+		host->addWidget(button);
+		QObject::connect(button, &QPushButton::clicked, button, [callback] { callback(); });
+		return button;
+	};
+
+	auto *overview = section("Start here", "Set up your whole show in a short path. Each step opens the right workspace and preserves what you already configured.");
+	auto *summaryCard = card(overview, "Your production", "A quick read of your current stage catalogue and capture selection.");
+	auto *setupSummary = new QLabel(summaryCard->parentWidget());
+	setupSummary->setWordWrap(true);
+	setupSummary->setStyleSheet("color:#8de3fc;font-size:13px;");
+	summaryCard->addWidget(setupSummary);
+	auto *buildCard = card(overview, "1  Design a show", "Choose existing sources or create cameras, game capture, chat and graphics. Pulse Weaver builds landscape and portrait stages with saved looks.");
+	action(buildCard, "Build my show", "Open the guided show creator", [this] {
+		SetPulseWeaverWorkspace(0);
+		QTimer::singleShot(0, this, [this] {
+			for (auto *button : findChildren<QPushButton *>())
+				if (button->property("motionShowBuilder").toBool()) { button->click(); return; }
+		});
+	});
+	auto *connectCard = card(overview, "2  Connect and route", "Connect Twitch, YouTube and Kick once. Choose where each canvas is sent, then review source exclusions before going live.");
+	action(connectCard, "Connections and stream details", "Open account and stream details", [this] { SetPulseWeaverWorkspace(3); });
+	auto *rehearseCard = card(overview, "3  Rehearse on both canvases", "Preview and refine each look without changing programme output. Lumia can trigger the same saved looks.");
+	action(rehearseCard, "Open Control", "Open visual stage design", [this] {
+		SetPulseWeaverWorkspace(0);
+		if (auto *control = findChild<QPushButton *>("PulseWeaverControlMode")) control->click();
+	});
+
+	auto *showSection = section("Show and stages", "Build the scenes once, then run many looks through one stage. Stage transitions and within-stage motions have separate timing.");
+	auto *showCard = card(showSection, "Stage library", "Create and edit looks in Control. Manage stages controls provider routing and transition choice, including an existing stinger.");
+	action(showCard, "Design stage looks", "Open the visual Control editor", [this] {
+		SetPulseWeaverWorkspace(0);
+		if (auto *control = findChild<QPushButton *>("PulseWeaverControlMode")) control->click();
+	});
+	action(showCard, "Manage stages and routing", "Edit stage scenes, destinations, transitions and source exclusions", [this] { ManagePulseWeaverStages(); });
+
+	auto *outputSection = section("Destinations", "Keep account authorization and output choices together. Kick currently uses the landscape programme only.");
+	auto *accountCard = card(outputSection, "Connected services", "Authorize Twitch, YouTube and Kick, then choose the destinations from Show. Account credentials stay in this profile.");
+	action(accountCard, "Open connections", "Connect accounts and edit stream details", [this] { SetPulseWeaverWorkspace(3); });
+	action(accountCard, "Choose live destinations", "Open Show's output controls", [this] { SetPulseWeaverWorkspace(0); });
+	auto *bitrateCard = card(outputSection, "Video bandwidth", "Set the next-start bitrate for Kick landscape and YouTube's two canvases. Twitch Enhanced Broadcasting negotiates its own tracks.");
+	auto *bitrateForm = new QFormLayout;
+	bitrateCard->addLayout(bitrateForm);
+	QMap<int, QSpinBox *> bitrateFields;
+	for (const auto &[route, label] : std::vector<std::pair<int, QString>>{{0, "Kick · 16:9"}, {2, "YouTube · 16:9"}, {3, "YouTube · 9:16"}}) {
+		auto *field = new QSpinBox;
+		field->setRange(500, 51000);
+		field->setSingleStep(250);
+		field->setSuffix(" kbps");
+		field->setValue(PulseOutputBitrates::Read(Config(), route));
+		field->setAccessibleName(label + " bitrate");
+		bitrateForm->addRow(label, field);
+		bitrateFields.insert(route, field);
+	}
+	auto *bitrateStatus = new QLabel("Applies the next time an output starts.");
+	bitrateStatus->setStyleSheet("color:#9eb8d0;");
+	bitrateCard->addWidget(bitrateStatus);
+	action(bitrateCard, "Save bandwidth plan", "Save destination bitrates in the active profile", [this, bitrateFields, bitrateStatus] {
+		for (auto it = bitrateFields.cbegin(); it != bitrateFields.cend(); ++it)
+			config_set_int(Config(), PulseOutputBitrates::Section, PulseOutputBitrates::Keys[it.key()], it.value()->value());
+		config_save_safe(Config(), "tmp", nullptr);
+		bitrateStatus->setText("Saved for the next output start.");
+	});
+
+	auto *soundSection = section("Sound and recording", "Review the mixer, recording location and provider source exclusions before a broadcast.");
+	auto *soundCard = card(soundSection, "Sound check", "Use Show for live levels. Manage stages to exclude a source from YouTube or Kick while leaving Twitch's own VOD track setup intact.");
+	action(soundCard, "Open Show mixer", "Check levels and monitoring", [this] { SetPulseWeaverWorkspace(0); });
+	action(soundCard, "Route stage sources", "Configure provider exclusions", [this] { ManagePulseWeaverStages(); });
+	auto *recordCard = card(soundSection, "Recording", "Choose where your recordings are saved. A new location takes effect when the next recording starts.");
+	auto *recordPathRow = new QHBoxLayout;
+	recordCard->addLayout(recordPathRow);
+	auto *recordPath = new QLineEdit;
+	const char *outputMode = Config() ? config_get_string(Config(), "Output", "Mode") : nullptr;
+	const bool advancedOutput = outputMode && strcmp(outputMode, "Advanced") == 0;
+	const QString recordSection = advancedOutput ? "AdvOut" : "SimpleOutput";
+	const QString recordKey = advancedOutput ? "RecFilePath" : "FilePath";
+	recordPath->setText(QString::fromUtf8(config_get_string(Config(), recordSection.toUtf8().constData(), recordKey.toUtf8().constData())));
+	recordPath->setAccessibleName("Recording folder");
+	recordPathRow->addWidget(recordPath, 1);
+	auto *browseRecordPath = new QPushButton("Browse…");
+	recordPathRow->addWidget(browseRecordPath);
+	connect(browseRecordPath, &QPushButton::clicked, this, [this, recordPath] {
+		const QString chosen = QFileDialog::getExistingDirectory(this, "Recording folder", recordPath->text(), QFileDialog::ShowDirsOnly);
+		if (!chosen.isEmpty()) recordPath->setText(chosen);
+	});
+	auto *recordStatus = new QLabel("The selected folder must be writable.");
+	recordStatus->setWordWrap(true);
+	recordStatus->setStyleSheet("color:#9eb8d0;");
+	recordCard->addWidget(recordStatus);
+	action(recordCard, "Save recording folder", "Use this folder for the next recording", [this, recordPath, recordStatus, recordSection, recordKey] {
+		const QString path = recordPath->text().trimmed();
+		if (path.isEmpty() || !QDir(path).exists()) { recordStatus->setText("Choose an existing folder first."); return; }
+		config_set_string(Config(), recordSection.toUtf8().constData(), recordKey.toUtf8().constData(), path.toUtf8().constData());
+		config_save_safe(Config(), "tmp", nullptr);
+		recordStatus->setText("Saved for the next recording.");
+	});
+	auto *vodCard = card(soundSection, "Twitch VOD and audio devices", "Your Twitch VOD track and device assignments remain in the OBS engine audio settings. Check them before a live show, especially when excluding music from other destinations.");
+	action(vodCard, "Open track and device settings", "Open OBS audio output settings", [this] { on_action_Settings_triggered(); });
+
+	auto *sourceSection = section("Sources and canvas", "Keep device capture, resolution and framing near the live stage editor.");
+	auto *sourceCard = card(sourceSection, "Capture devices", "Add or change a camera, game capture or screen source in Camera. Show has a quick game-window picker.");
+	action(sourceCard, "Edit cameras and sources", "Open Camera source editing", [this] { SetPulseWeaverWorkspace(2); });
+	action(sourceCard, "Choose a game window", "Open Show's Game Capture selector", [this] { SetPulseWeaverWorkspace(0); });
+	action(sourceCard, "Video resolution and frame rate", "Open the OBS engine video settings", [this] { on_action_Settings_triggered(); });
+
+	auto *systemSection = section("Automation and app", "Keep Lumia connection, appearance, updates and recovery discoverable from the same settings workspace.");
+	auto *apiCard = card(systemSection, "Local automation API", "Lumia connects to this port on this PC. Changing it requires restarting Pulse Weaver and matching the port in Lumia.");
+	char apiPathBuffer[512] = {};
+	const QString apiPath = GetAppConfigPath(apiPathBuffer, sizeof(apiPathBuffer), "obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini") > 0 ?
+		QString::fromUtf8(apiPathBuffer) : QString();
+	QSettings apiSettings(apiPath, QSettings::IniFormat);
+	auto *portField = new QSpinBox;
+	portField->setRange(1024, 65535);
+	portField->setValue(apiSettings.value("api/port", 18755).toInt());
+	portField->setAccessibleName("Pulse Weaver local API port");
+	apiCard->addWidget(portField);
+	auto *portStatus = new QLabel("The current port and token are retained during updates.");
+	portStatus->setWordWrap(true);
+	portStatus->setStyleSheet("color:#9eb8d0;");
+	apiCard->addWidget(portStatus);
+	action(apiCard, "Save API port", "Save the port for the next app start; the token is unchanged", [apiPath, portField, portStatus] {
+		if (apiPath.isEmpty()) { portStatus->setText("Settings path is unavailable. Nothing was saved."); return; }
+		QSettings settings(apiPath, QSettings::IniFormat);
+		settings.setValue("api/port", portField->value());
+		settings.sync();
+		portStatus->setText(settings.status() == QSettings::NoError ?
+			"Saved. Restart Pulse Weaver and set the same port in Lumia." : "Could not save this port.");
+	});
+	auto *appearanceCard = card(systemSection, "Appearance", "Choose a Pulse Weaver theme. This changes the interface immediately and is remembered with your settings.");
+	auto *themeRow = new QHBoxLayout;
+	appearanceCard->addLayout(themeRow);
+	for (const auto &[label, id] : std::vector<std::pair<QString, QString>>{{"Backstage", "com.pulseweaver.Studio"},
+		{"Marquee", "com.pulseweaver.Marquee"}, {"Electric", "com.pulseweaver.Electric"}}) {
+		auto *choice = new QPushButton(label);
+		choice->setMinimumHeight(42);
+		themeRow->addWidget(choice);
+		connect(choice, &QPushButton::clicked, this, [id] {
+			if (App()->SetTheme(id)) {
+				config_set_string(App()->GetUserConfig(), "Appearance", "Theme", id.toUtf8().constData());
+				config_save_safe(App()->GetUserConfig(), "tmp", nullptr);
+			}
+		});
+	}
+	auto *recoveryCard = card(systemSection, "Updates and recovery", "Try alpha or unstable builds through Studio → Updates. Every packaged installer creates a verified backup before replacement.");
+	action(recoveryCard, "Open updates and recovery", "Use the Studio menu to check channels or restore a backup", [studioMenuButton] { studioMenuButton->showMenu(); });
+	action(recoveryCard, "Advanced OBS options", "Open the remaining OBS engine settings", [this] { on_action_Settings_triggered(); });
+	setupNavLayout->addStretch(1);
+	connect(settings, &QPushButton::clicked, setupSummary, [this, setupSummary] {
+		QSettings selectedGame(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+		const int stages = loadPulseWeaverStages().size();
+		setupSummary->setText(QString::number(stages) + " stages ready  ·  " +
+			(selectedGame.value("show/game_capture_uuid").toString().isEmpty() ?
+				"Choose a Game Capture in Show" : "Game Capture selected"));
+	});
+	pulsePages->addWidget(setupPage);
 
 	connect(pulseHorizontalDisplay, &OBSQTDisplay::DisplayCreated, this, [this](OBSQTDisplay *display) {
 		obs_display_add_draw_callback(display->GetDisplay(), OBSBasic::RenderPulseHorizontal, this);
