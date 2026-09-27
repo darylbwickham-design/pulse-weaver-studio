@@ -103,6 +103,7 @@ void OBSBasic::StartStreaming()
 
 	auto finish_stream_setup = [&, attempt](bool setupStreamingResult) {
 		if (pulseStreamStart.attempt() != attempt) {
+			outputHandler->multitrackVideoActive = false;
 			return;
 		}
 		if (!pulseStreamStart.prepared(attempt, setupStreamingResult)) {
@@ -129,6 +130,7 @@ void OBSBasic::StartStreaming()
 				portrait |= height > width && width > 0;
 			}
 			if (!PulseTwitch::matches(mode, landscape, portrait)) {
+				outputHandler->multitrackVideoActive = false;
 				outputHandler->lastError = "Twitch did not prepare the selected output format. No stream was started. Choose 16:9 or check the portrait scene and Enhanced Broadcasting limits for Dual.";
 				DisplayStreamStartError();
 				return;
@@ -175,7 +177,14 @@ void OBSBasic::StopStreaming()
 	const bool wasPending = pulseStreamStart.pending();
 	const bool wasConnecting = pulseStreamStart.connecting();
 	pulseStreamStart.stop();
-	if (wasPending) emit StreamingStopped();
+	if (wasPending) {
+		emit StreamingStopped();
+		if (pulseDestinationStatus) pulseDestinationStatus->setText("Stream connection cancelled.");
+		if (sysTrayStream) {
+			sysTrayStream->setEnabled(true);
+			sysTrayStream->setText(QTStr("Basic.Main.StartStreaming"));
+		}
+	}
 	if (wasPending)
 		PulseLumia::publish("destination_state", {{"platform", "twitch"}, {"output", "twitch"}, {"state", "stopped"}});
 	SaveProject();
