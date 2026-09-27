@@ -31,9 +31,12 @@ internal static class Recovery
         if (!Version.TryParse(current.Split('-')[0], out var from) ||
             !Version.TryParse(target.Split('-')[0], out var to)) return false;
         if (from != to) return from > to;
-        static int Revision(string value) => value.Contains("-alpha.") &&
-            int.TryParse(value.Split("-alpha.")[1], out var revision) ? revision : int.MaxValue;
-        return Revision(current) > Revision(target);
+        static (int Rank,int Revision) Order(string value) {
+            if (value.Contains("-alpha.") && int.TryParse(value.Split("-alpha.")[1], out var alpha)) return (0,alpha);
+            if (value.Contains("-unstable.") && int.TryParse(value.Split("-unstable.")[1], out var unstable)) return (1,unstable);
+            return (2,0);
+        }
+        return Order(current).CompareTo(Order(target)) > 0;
     }
     internal static void SafeTree(string root)
     {

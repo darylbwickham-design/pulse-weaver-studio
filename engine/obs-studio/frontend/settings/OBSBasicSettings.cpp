@@ -347,7 +347,7 @@ void OBSBasicSettings::BuildPulseBandwidthPanel()
 	grid->addWidget(new QLabel("Video bitrate", panel), 0, 0);
 	grid->addWidget(new QLabel("Landscape · 16:9", panel), 0, 1);
 	grid->addWidget(new QLabel("Portrait · 9:16", panel), 0, 2);
-	grid->addWidget(new QLabel("Kick", panel), 1, 0);
+	grid->addWidget(new QLabel("Kick · 16:9 only", panel), 1, 0);
 	grid->addWidget(new QLabel("YouTube", panel), 2, 0);
 	for (int i = 0; i < 4; ++i) {
 		auto *spin = new QSpinBox(panel);
@@ -358,7 +358,7 @@ void OBSBasicSettings::BuildPulseBandwidthPanel()
 		spin->setSingleStep(250);
 		spin->setSuffix(" kbps");
 		spin->setToolTip("Saved per profile. Applied the next time this output starts. Platform limits still apply.");
-		grid->addWidget(spin, 1 + i / 2, 1 + i % 2);
+		if (i != 1) grid->addWidget(spin, 1 + i / 2, 1 + i % 2);
 		HookWidget(spin, &QSpinBox::valueChanged, &OBSBasicSettings::OutputsChanged);
 		connect(spin, &QSpinBox::valueChanged, this, &OBSBasicSettings::UpdatePulseBandwidthEstimate);
 	}
@@ -433,7 +433,7 @@ void OBSBasicSettings::UpdatePulseBandwidthEstimate()
 	if (!pulseBandwidthEstimate)
 		return;
 	// A planning estimate, not live telemetry. Kick runs one orientation at a time.
-	const double secondary = (std::max(pulseDestinationBitrates[0]->value(), pulseDestinationBitrates[1]->value()) +
+	const double secondary = (pulseDestinationBitrates[0]->value() +
 		pulseDestinationBitrates[2]->value() + pulseDestinationBitrates[3]->value() + 3 * 160) / 1000.0;
 	const bool boundedTwitch = ui->enableMultitrackVideo->isChecked() &&
 		!ui->multitrackVideoMaximumAggregateBitrateAuto->isChecked();

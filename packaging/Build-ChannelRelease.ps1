@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('release','alpha')][string]$Channel,
+    [Parameter(Mandatory)][ValidateSet('release','alpha','unstable')][string]$Channel,
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
     [ValidateRange(1,999999)][int]$AlphaRevision = 1,
     [Parameter(Mandatory)][string]$RuntimeRoot,
@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'YouTubeDesktopRegistration.ps1')
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $runtime = (Resolve-Path -LiteralPath $RuntimeRoot).Path
-$tag = if ($Channel -eq 'alpha') { "v$Version-alpha.$AlphaRevision" } else { "v$Version" }
+$tag = if ($Channel -eq 'alpha') { "v$Version-alpha.$AlphaRevision" } elseif ($Channel -eq 'unstable') { "v$Version-unstable.$AlphaRevision" } else { "v$Version" }
 $output = Join-Path $projectRoot "artifacts/channel-$tag"
 if (Test-Path -LiteralPath $output) { throw "Output already exists: $output" }
 $registration = Get-YouTubeDesktopRegistration -Path $YouTubeDesktopClientJson
@@ -35,7 +35,7 @@ if ($privateFiles) { throw 'Private state was found in the runtime payload.' }
 $regDir = Join-Path $payload 'data/pulse-weaver'
 New-Item -ItemType Directory -Path $regDir -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $regDir 'youtube-desktop-client.json'),$registration)
-$identity = @{schema=1;channel=$(if($Channel -eq 'alpha'){'windows-alpha'}else{'windows-private'});tag=$tag}
+$identity = @{schema=1;channel=$(if($Channel -eq 'alpha'){'windows-alpha'}elseif($Channel -eq 'unstable'){'windows-unstable'}else{'windows-private'});tag=$tag}
 $identity | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $payload 'bin/64bit/pulseweaver-update.json') -Encoding utf8
 New-Item -ItemType File -Path (Join-Path $payload 'portable_mode.txt') | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $payload 'docs') | Out-Null
@@ -45,13 +45,13 @@ foreach ($doc in @('ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md')) {
 }
 $archive = Join-Path $output 'payload.zip'
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive -CompressionLevel Optimal
-$suffix = if ($Channel -eq 'alpha') {'ALPHA'} else {'BETA'}
+$suffix = if ($Channel -eq 'alpha') {'ALPHA'} elseif ($Channel -eq 'unstable') {'UNSTABLE'} else {'RELEASE'}
 $publish = Join-Path $output 'setup'
 & dotnet publish (Join-Path $PSScriptRoot 'PulseWeaver.PrivateSetup/PulseWeaver.PrivateSetup.csproj') -c Release -r win-x64 --self-contained true `
-    -p:PublishSingleFile=true "-p:ReleaseVersion=$Version" "-p:InstallerSuffix=$suffix" "-p:AlphaChannel=$($Channel -eq 'alpha')" `
+    -p:PublishSingleFile=true "-p:ReleaseVersion=$Version" "-p:InstallerSuffix=$suffix" "-p:AlphaChannel=$($Channel -eq 'alpha')" "-p:UnstableChannel=$($Channel -eq 'unstable')" `
     "-p:AlphaRevision=$AlphaRevision" "-p:PayloadArchive=$archive" -o $publish
 if ($LASTEXITCODE -ne 0) { throw 'Installer publish failed.' }
-$name = if ($Channel -eq 'alpha') { "PulseWeaver-Setup-$Version-alpha.$AlphaRevision.exe" } else { "PulseWeaver-Setup-$Version-BETA.exe" }
+$name = if ($Channel -eq 'alpha') { "PulseWeaver-Setup-$Version-alpha.$AlphaRevision.exe" } elseif ($Channel -eq 'unstable') { "PulseWeaver-Setup-$Version-unstable.$AlphaRevision.exe" } else { "PulseWeaver-Setup-$Version.exe" }
 $installer = Join-Path $output $name
 Copy-Item -LiteralPath (Join-Path $publish "PulseWeaver-Setup-$Version-$suffix.exe") -Destination $installer
 $pluginStage = Join-Path $output 'lumia'

@@ -18,31 +18,36 @@ struct Identity {
 struct Version {
 	QVersionNumber base;
 	int alpha = -1;
+	int unstable = -1;
 };
 inline std::optional<Version> version(const Identity &identity)
 {
 	const bool mac = identity.channel == "mac-arm64-preview";
 	const bool alphaChannel = identity.channel == "windows-alpha";
-	if (!mac && !alphaChannel && identity.channel != "windows-public" && identity.channel != "windows-private")
+	const bool unstableChannel = identity.channel == "windows-unstable";
+	if (!mac && !alphaChannel && !unstableChannel && identity.channel != "windows-public" && identity.channel != "windows-private")
 		return {};
 	const QRegularExpression expression(mac ? "^mac-v([0-9]+\\.[0-9]+\\.[0-9]+)-alpha\\.([0-9]+)$" :
 					 alphaChannel ? "^v([0-9]+\\.[0-9]+\\.[0-9]+)-alpha\\.([0-9]+)$" :
+					 unstableChannel ? "^v([0-9]+\\.[0-9]+\\.[0-9]+)-unstable\\.([0-9]+)$" :
 						 "^v([0-9]+\\.[0-9]+\\.[0-9]+)$");
 	const auto match = expression.match(identity.tag);
 	if (!match.hasMatch())
 		return {};
 	const auto base = QVersionNumber::fromString(match.captured(1));
 	bool ok = true;
-	const int alpha = (mac || alphaChannel) ? match.captured(2).toInt(&ok) : -1;
+	const int revision = (mac || alphaChannel || unstableChannel) ? match.captured(2).toInt(&ok) : -1;
 	if (!ok || base.segmentCount() != 3)
 		return {};
-	return Version{base, alpha};
+	return Version{base, alphaChannel || mac ? revision : -1, unstableChannel ? revision : -1};
 }
 inline bool newer(const Version &left, const Version &right)
 {
 	const int comparison = QVersionNumber::compare(left.base, right.base);
-	return comparison > 0 || (comparison == 0 && left.alpha != right.alpha &&
-		(left.alpha == -1 || (right.alpha != -1 && left.alpha > right.alpha)));
+	if (comparison != 0) return comparison > 0;
+	auto rank = [](const Version &v) { return v.alpha >= 0 ? 0 : v.unstable >= 0 ? 1 : 2; };
+	if (rank(left) != rank(right)) return rank(left) > rank(right);
+	return left.alpha > right.alpha || left.unstable > right.unstable;
 }
 inline QString assetName(const Identity &identity)
 {
@@ -50,7 +55,10 @@ inline QString assetName(const Identity &identity)
 		return "PulseWeaver-Mac-" + identity.tag + "-AppleSilicon.dmg";
 	if (identity.channel == "windows-public")
 		return "PulseWeaver-Public-Dist-" + identity.tag.mid(1) + "-Setup.exe";
-	if (identity.channel == "windows-alpha")
+	if (identity.channel == "windows-alpha" || identity.channel == "windows-unstable")
+		return "PulseWeaver-Setup-" + identity.tag.mid(1) + ".exe";
+	if (identity.channel == "windows-private" &&
+		QVersionNumber::compare(QVersionNumber::fromString(identity.tag.mid(1)), QVersionNumber(1, 13, 0)) >= 0)
 		return "PulseWeaver-Setup-" + identity.tag.mid(1) + ".exe";
 	return "PulseWeaver-Setup-" + identity.tag.mid(1) + "-BETA.exe";
 }
@@ -63,7 +71,7 @@ struct Release {
 };
 // Only exact assets from this repository and this installation's channel qualify.
 inline std::optional<Release> selectRelease(const QJsonArray &releases, const Identity &installed,
-					   bool includeAlpha = false)
+					   bool includeAlpha = false, bool includeUnstable = false)
 {
 	auto bestVersion = version(installed);
 	if (!bestVersion)
@@ -75,10 +83,19 @@ inline std::optional<Release> selectRelease(const QJsonArray &releases, const Id
 			continue;
 		const QString tag = release.value("tag_name").toString();
 		QString channel = installed.channel;
-		if (installed.channel == "windows-private" && includeAlpha && tag.contains("-alpha."))
+		if (installed.channel == "mac-arm64-preview") {
+			channel = installed.channel;
+		} else if (tag.contains("-unstable.")) {
+			if (installed.channel == "windows-public" ||
+				(installed.channel != "windows-unstable" && !includeUnstable)) continue;
+			channel = "windows-unstable";
+		} else if (tag.contains("-alpha.")) {
+			if (installed.channel == "windows-public" ||
+				(installed.channel != "windows-alpha" && !includeAlpha)) continue;
 			channel = "windows-alpha";
-		else if (installed.channel == "windows-alpha" && !tag.contains("-alpha."))
+		} else if (installed.channel == "windows-alpha" || installed.channel == "windows-unstable") {
 			channel = "windows-private";
+		}
 		Identity candidate{channel, tag};
 		const auto candidateVersion = version(candidate);
 		if (!candidateVersion || !newer(*candidateVersion, *bestVersion))

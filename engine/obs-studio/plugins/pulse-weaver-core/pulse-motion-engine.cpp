@@ -38,6 +38,7 @@
 #include <QPaintEngine>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QSettings>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -96,8 +97,12 @@ double smoothStep(double value)
 	return value * value * (3.0 - 2.0 * value);
 }
 
-bool motionGraphicSwitch(const QString &sourceName)
+bool motionGraphicSwitch(const QString &sourceName, obs_source_t *source = nullptr)
 {
+	if (source) {
+		OBSDataAutoRelease metadata = obs_source_get_private_settings(source);
+		if (metadata && obs_data_get_bool(metadata, "pulseweaver.motion_graphic")) return true;
+	}
 	const QString name = sourceName.toLower();
 	if (name.endsWith("backdrop")) return true;
 	static const QSet<QString> graphics{
@@ -1683,7 +1688,13 @@ void PulseMotionEngine::loadActionIntoEditor(const QJsonObject &action)
 	if (mainContainer.isEmpty()) mainContainer = sceneField->currentData().toString();
 	populateSources();
 	const QString target = action.value("itemId").toString() + "|" + action.value("source").toString();
-	const int sourceRow = sourceField->findData(target);
+	int sourceRow = sourceField->findData(target);
+	if (sourceRow < 0 && !action.value("itemId").toString().isEmpty()) {
+		for (int row = 0; row < sourceField->count(); ++row)
+			if (sourceField->itemData(row).toString().section('|', 0, 0) == action.value("itemId").toString()) {
+				sourceRow = row; break;
+			}
+	}
 	if (sourceRow >= 0) sourceField->setCurrentIndex(sourceRow);
 	zoomField->setValue(action.value("zoomPercent").toInt(150));
 	durationField->setValue(action.value("durationMs").toInt(action.value("kind") == "punch" ? 250 : 750));
@@ -1751,6 +1762,9 @@ QJsonObject PulseMotionEngine::editorAction() const
 		const QStringList target = sourceField->currentData().toString().split('|');
 		action.insert("itemId", target.value(0));
 		action.insert("source", target.mid(1).join("|"));
+		if (OBSSceneItem item = resolveItem(action.value("container").toString(), target.value(0).toLongLong(),
+							    action.value("source").toString(), true))
+			action.insert("sourceUuid", QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item))));
 	}
 	QJsonArray items;
 	if (action.value("kind") == "layout" && itemTree) {
@@ -1764,6 +1778,9 @@ QJsonObject PulseMotionEngine::editorAction() const
 			if (!item) item = resolveItem(container, id, source, false);
 			if (!item) continue;
 			items.append(QJsonObject{{"container", container}, {"itemId", QString::number(id)}, {"source", source},
+				{"sourceUuid", QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item)))},
+				{"sourceWidth", int(obs_source_get_width(obs_sceneitem_get_source(item)))},
+				{"sourceHeight", int(obs_source_get_height(obs_sceneitem_get_source(item)))},
 				{"transform", serialize(capture(item))}});
 		}
 		for (auto it = parkedDrafts.cbegin(); it != parkedDrafts.cend(); ++it) {
@@ -1773,6 +1790,9 @@ QJsonObject PulseMotionEngine::editorAction() const
 				if (!item) continue;
 				items.append(QJsonObject{{"container", it.key()}, {"itemId", QString::number(id)},
 					{"source", QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item)))},
+					{"sourceUuid", QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item)))},
+					{"sourceWidth", int(obs_source_get_width(obs_sceneitem_get_source(item)))},
+					{"sourceHeight", int(obs_source_get_height(obs_sceneitem_get_source(item)))},
 					{"transform", serialize(capture(item))}});
 			}
 		}
@@ -1963,6 +1983,7 @@ obs_sceneitem_t *motionAddSource(obs_scene_t *scene, obs_source_t *source)
 
 void PulseMotionEngine::resetDraft(const QJsonArray &saved)
 {
+	if (!recordingPairedSwap) pairedSwapState = 0;
 	previewTimer.stop();
 	previewScene = nullptr;
 	draftIds.clear();
@@ -2233,10 +2254,12 @@ void PulseMotionEngine::swapFocus()
 		if (!item) continue;
 		const Transform frame = capture(item);
 		const QString name = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item)));
-		if (!frame.visible || frame.locked || motionGraphicSwitch(name)) continue;
 		obs_source_t *source = obs_sceneitem_get_source(item);
-		const double width = frame.boundsType == OBS_BOUNDS_NONE ? obs_source_get_width(source) * std::abs(frame.scale.x) : frame.bounds.x;
-		const double height = frame.boundsType == OBS_BOUNDS_NONE ? obs_source_get_height(source) * std::abs(frame.scale.y) : frame.bounds.y;
+		if (!frame.visible || frame.locked || motionGraphicSwitch(name, source)) continue;
+		const double width = frame.boundsType == OBS_BOUNDS_NONE ?
+			(std::max(0, int(obs_source_get_width(source)) - frame.crop.left - frame.crop.right) * std::abs(frame.scale.x)) : frame.bounds.x;
+		const double height = frame.boundsType == OBS_BOUNDS_NONE ?
+			(std::max(0, int(obs_source_get_height(source)) - frame.crop.top - frame.crop.bottom) * std::abs(frame.scale.y)) : frame.bounds.y;
 		if (width > 0 && height > 0) candidates.push_back({name, it.key(), width * height});
 	}
 	std::sort(candidates.begin(), candidates.end(), [](const Candidate &a, const Candidate &b) { return a.area > b.area; });
@@ -2246,6 +2269,7 @@ void PulseMotionEngine::swapFocus()
 	for (size_t i = 1; i < candidates.size(); ++i)
 		if (candidates[i].id == visualSelectedItem) { supporting = candidates[i]; break; }
 	const QString activeCanvas = draftContainer;
+	recordingPairedSwap = true;
 	auto swapInCurrent = [this, &main, &supporting]() {
 		OBSSceneItem first, second;
 		for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
@@ -2258,8 +2282,19 @@ void PulseMotionEngine::swapFocus()
 		if (!first || !second || first == second) return false;
 		rememberDraft();
 		Transform firstFrame = capture(first), secondFrame = capture(second);
+		auto visibleSize = [](obs_sceneitem_t *item, const Transform &frame) {
+			obs_source_t *source = obs_sceneitem_get_source(item);
+			const float width = frame.boundsType == OBS_BOUNDS_NONE ?
+				float(std::max(1, int(obs_source_get_width(source)) - frame.crop.left - frame.crop.right)) * std::abs(frame.scale.x) : frame.bounds.x;
+			const float height = frame.boundsType == OBS_BOUNDS_NONE ?
+				float(std::max(1, int(obs_source_get_height(source)) - frame.crop.top - frame.crop.bottom)) * std::abs(frame.scale.y) : frame.bounds.y;
+			return vec2{std::max(1.0f, width), std::max(1.0f, height)};
+		};
+		const vec2 firstSlot = visibleSize(first, firstFrame);
+		const vec2 secondSlot = visibleSize(second, secondFrame);
 		std::swap(firstFrame.pos, secondFrame.pos);
-		std::swap(firstFrame.bounds, secondFrame.bounds);
+		firstFrame.bounds = secondSlot;
+		secondFrame.bounds = firstSlot;
 		std::swap(firstFrame.order, secondFrame.order);
 		for (Transform *frame : {&firstFrame, &secondFrame}) {
 			frame->alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
@@ -2273,13 +2308,20 @@ void PulseMotionEngine::swapFocus()
 		refreshDraftRows();
 		return true;
 	};
-	if (!swapInCurrent()) { setStatus("These sources cannot be swapped in the selected canvas.", true); return; }
+	if (!swapInCurrent()) {
+		recordingPairedSwap = false;
+		setStatus("These sources cannot be swapped in the selected canvas.", true); return;
+	}
 	const QString otherCanvas = activeCanvas == mainContainer ? pairedContainer : mainContainer;
+	bool bothSwapped = false;
 	if (!otherCanvas.isEmpty()) {
 		activateDraft(otherCanvas);
-		swapInCurrent();
+		bothSwapped = swapInCurrent();
 		activateDraft(activeCanvas);
 	}
+	recordingPairedSwap = false;
+	pairedSwapCanvases = bothSwapped ? QStringList{activeCanvas, otherCanvas} : QStringList{};
+	pairedSwapState = bothSwapped ? 1 : 0;
 	refreshDraftRows(); syncVisualCanvas();
 	setStatus("Swapped “" + main.name + "” and “" + supporting.name + "”. Review both canvases, then save this look.");
 }
@@ -2359,7 +2401,8 @@ void PulseMotionEngine::applyDraftSnapshot(const QJsonArray &snapshot)
 		const auto row = value.toObject();
 		if (row.value("container").toString(mainContainer) != draftContainer) continue;
 		OBSSceneItem item = draftItem(row.value("itemId").toString().toLongLong());
-		if (item && QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item))) == row.value("source").toString())
+		if (item && (row.value("sourceUuid").toString().isEmpty() ||
+			QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item))) == row.value("sourceUuid").toString()))
 			states.emplace_back(item, deserialize(row.value("transform").toObject()));
 	}
 	std::sort(states.begin(), states.end(), [](const auto &a, const auto &b) { return a.second.order < b.second.order; });
@@ -2370,6 +2413,7 @@ void PulseMotionEngine::applyDraftSnapshot(const QJsonArray &snapshot)
 void PulseMotionEngine::rememberDraft()
 {
 	if (loadingDraft || !draftScene) return;
+	if (!recordingPairedSwap) pairedSwapState = 0;
 	draftDirty = true;
 	if (saveButton) saveButton->setText("Save look •");
 	previewTimer.stop(); previewScene = nullptr;
@@ -2459,7 +2503,24 @@ void PulseMotionEngine::refreshSourceChips()
 void PulseMotionEngine::editDraft(const QString &operation)
 {
 	if (!draftScene) return;
+	if ((operation == "undo" && pairedSwapState == 1) || (operation == "redo" && pairedSwapState == 2)) {
+		const QString activeCanvas = draftContainer;
+		for (const QString &canvas : pairedSwapCanvases) {
+			activateDraft(canvas);
+			auto &from = operation == "undo" ? undoStates : redoStates;
+			auto &to = operation == "undo" ? redoStates : undoStates;
+			if (from.empty()) { pairedSwapState = 0; break; }
+			to.push_back(draftSnapshot());
+			const QJsonArray snapshot = from.back(); from.pop_back();
+			applyDraftSnapshot(snapshot);
+		}
+		activateDraft(activeCanvas);
+		if (pairedSwapState) pairedSwapState = operation == "undo" ? 2 : 1;
+		refreshDraftRows(); syncVisualCanvas();
+		return;
+	}
 	if (operation == "undo" || operation == "redo") {
+		pairedSwapState = 0;
 		auto &from = operation == "undo" ? undoStates : redoStates;
 		auto &to = operation == "undo" ? redoStates : undoStates;
 		if (from.empty()) return;
@@ -2537,7 +2598,7 @@ void PulseMotionEngine::previewDraft(int progress)
 		if (!live || !preview) continue;
 		const Transform from = capture(live), to = capture(target);
 		const QString sourceName = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(target)));
-		if (motionGraphicSwitch(sourceName) && from.visible != to.visible) {
+		if (motionGraphicSwitch(sourceName, obs_sceneitem_get_source(target)) && from.visible != to.visible) {
 			apply(preview, progress < 50 ? from : to, true);
 			continue;
 		}
@@ -2556,7 +2617,7 @@ void PulseMotionEngine::previewDraft(int progress)
 			if (!live) continue;
 			const Transform from = capture(live), to = capture(target);
 			const QString sourceName = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(target)));
-			if (motionGraphicSwitch(sourceName) && from.visible != to.visible) {
+			if (motionGraphicSwitch(sourceName, obs_sceneitem_get_source(target)) && from.visible != to.visible) {
 				apply(preview, progress < 50 ? from : to, true);
 				continue;
 			}
@@ -2952,23 +3013,31 @@ void PulseMotionEngine::openShowWizard()
 			if (auto *finish = wizard.button(QWizard::FinishButton)) finish->setEnabled(valid);
 		});
 	});
-	if (wizard.exec() != QDialog::Accepted) return;
-	QJsonObject roleIds;
-	for (auto it = roles.cbegin(); it != roles.cend(); ++it)
-		roleIds.insert(it.key(), it.value()->currentData().toString());
-	QJsonArray chosenStages;
-	for (const QString &stage : {QString("Starting"), QString("Hangout"), QString("Gameplay"), QString("Intermission"), QString("Celebration")})
-		if (enabledStages.value(stage)->isChecked()) chosenStages.append(stage);
-	QJsonObject sourceSpecs;
-	for (auto it = plannedSources.cbegin(); it != plannedSources.cend(); ++it)
-		if (roleIds.value(it.key()).toString() == "new:" + it.key()) sourceSpecs.insert(it.key(), it.value());
-	QJsonObject choices{{"name", showName->text().trimmed()}, {"roles", roleIds}, {"newSources", sourceSpecs}, {"stages", chosenStages},
-		{"style", styles->currentItem() ? styles->currentItem()->data(Qt::UserRole).toString() : QString("corner")},
-		{"transition", transition->currentData().toString()}};
-	const QJsonObject result = createGuidedShow(choices);
-	setStatus(result.value("message").toString(), !result.value("ok").toBool());
-	if (!result.value("ok").toBool())
-		QMessageBox::warning(editor, "Show not created", result.value("message").toString());
+	while (wizard.exec() == QDialog::Accepted) {
+		QJsonObject roleIds;
+		for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+			roleIds.insert(it.key(), it.value()->currentData().toString());
+		QJsonArray chosenStages;
+		for (const QString &stage : {QString("Starting"), QString("Hangout"), QString("Gameplay"), QString("Intermission"), QString("Celebration")})
+			if (enabledStages.value(stage)->isChecked()) chosenStages.append(stage);
+		// A disabled stage must not create, validate or reserve its default title.
+		if (!chosenStages.contains("Starting")) roleIds.insert("starting", QString());
+		if (!chosenStages.contains("Intermission")) {
+			roleIds.insert("brb", QString()); roleIds.insert("ending", QString());
+		}
+		if (!chosenStages.contains("Celebration")) roleIds.insert("celebration", QString());
+		QJsonObject sourceSpecs;
+		for (auto it = plannedSources.cbegin(); it != plannedSources.cend(); ++it)
+			if (roleIds.value(it.key()).toString() == "new:" + it.key()) sourceSpecs.insert(it.key(), it.value());
+		QJsonObject choices{{"name", showName->text().trimmed()}, {"roles", roleIds}, {"newSources", sourceSpecs}, {"stages", chosenStages},
+			{"style", styles->currentItem() ? styles->currentItem()->data(Qt::UserRole).toString() : QString("corner")},
+			{"transition", transition->currentData().toString()}};
+		const QJsonObject result = createGuidedShow(choices);
+		setStatus(result.value("message").toString(), !result.value("ok").toBool());
+		if (result.value("ok").toBool()) return;
+		QMessageBox::warning(&wizard, "Show not created", result.value("message").toString() +
+			"\n\nYour choices are still here. Correct the highlighted name or source and choose Finish again.");
+	}
 }
 
 QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
@@ -3030,7 +3099,8 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 			if (!main.isEmpty()) plan.looks.push_back({"Starting", main, choose({"alertCamera"}), main == graphic ? QString() : graphic});
 		} else if (stage == "Hangout") {
 			const QString main = choose({"camera", "secondary", "desktop"});
-			const QString other = main == "camera" ? choose({"secondary", "desktop"}) : choose({"camera", "desktop"});
+			const QString other = main == "camera" ? choose({"secondary", "desktop"}) :
+				main == "secondary" ? choose({"camera", "desktop"}) : choose({"camera", "secondary"});
 			if (!main.isEmpty()) plan.looks.push_back({"Main focus", main, other});
 			if (!other.isEmpty() && other != main) plan.looks.push_back({"Swap focus", other, main});
 			if (sourceNames.contains("desktop") && main != "desktop" && other != "desktop")
@@ -3040,7 +3110,7 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 			const QString other = choose({"camera", "secondary"});
 			if (!main.isEmpty()) {
 				plan.looks.push_back({"Gameplay", main, other});
-				plan.looks.push_back({"Content focus", main, {}});
+				if (!other.isEmpty() && style != "full") plan.looks.push_back({"Content focus", main, {}});
 				if (!other.isEmpty()) plan.looks.push_back({"Swap focus", other, main});
 			}
 		} else if (stage == "Intermission") {
@@ -3132,8 +3202,8 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 			if (QUrl(url).scheme() != "https" && QUrl(url).scheme() != "http")
 				return fail("Use a complete https:// or http:// URL for “" + name + "”.");
 			obs_data_set_string(settings, "url", url.toUtf8().constData());
-			obs_data_set_int(settings, "width", horizontalInfo.base_width);
-			obs_data_set_int(settings, "height", horizontalInfo.base_height);
+			obs_data_set_int(settings, "width", it.key() == "portraitChat" ? verticalInfo.base_width : horizontalInfo.base_width);
+			obs_data_set_int(settings, "height", it.key() == "portraitChat" ? verticalInfo.base_height : horizontalInfo.base_height);
 		} else {
 			actualKind = "browser_source";
 			const QString title = it.key() == "starting" ? "STARTING" : it.key() == "brb" ? "BE RIGHT BACK" :
@@ -3203,6 +3273,11 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 			const QString uuid = selected.value(role).toString();
 			OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.toUtf8().constData());
 			if (!source) return fail("Source “" + role + "” disappeared while creating the show.");
+			if (role == "starting" || role == "brb" || role == "ending" || role == "celebration" ||
+				role == "landscapeChat" || role == "portraitChat" || role == "alerts" || role == "captions") {
+				OBSDataAutoRelease metadata = obs_source_get_private_settings(source);
+				obs_data_set_bool(metadata, "pulseweaver.motion_graphic", true);
+			}
 			OBSSourceAutoRelease portraitSource = portraitSourceIds.contains(role) ?
 				obs_get_source_by_uuid(portraitSourceIds.value(role).toUtf8().constData()) : obs_get_source_by_uuid(uuid.toUtf8().constData());
 			if (!portraitSource) return fail("Portrait source “" + role + "” disappeared while creating the show.");
@@ -3238,7 +3313,7 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 				transform.boundsAlignment = OBS_ALIGN_CENTER;
 				transform.boundsCrop = true;
 				transform.boundsType = OBS_BOUNDS_SCALE_OUTER;
-				transform.visible = entry.role == look.main || (entry.role == look.supporting && style != "full") || overlay;
+			transform.visible = entry.role == look.main || (entry.role == look.supporting && showSupporting) || overlay;
 				if (overlay && entry.role != look.graphic) {
 					transform.scale = {1, 1};
 					transform.bounds = {0, 0};
@@ -3261,8 +3336,12 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 						transform.bounds = {width * .5f, height};
 					}
 				}
-				targets.append(QJsonObject{{"container", container}, {"itemId", QString::number(obs_sceneitem_get_id(item))},
-					{"source", QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item)))}, {"transform", serialize(transform)}});
+			obs_source_t *itemSource = obs_sceneitem_get_source(item);
+			targets.append(QJsonObject{{"container", container}, {"itemId", QString::number(obs_sceneitem_get_id(item))},
+				{"source", QString::fromUtf8(obs_source_get_name(itemSource))},
+				{"sourceUuid", QString::fromUtf8(obs_source_get_uuid(itemSource))}, {"graphic", overlay},
+				{"sourceWidth", int(obs_source_get_width(itemSource))}, {"sourceHeight", int(obs_source_get_height(itemSource))},
+				{"transform", serialize(transform)}});
 			}
 		};
 		const int firstLook = newActions.size();
@@ -3312,6 +3391,12 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 	obs_frontend_save();
 	for (obs_source_t *source : createdSources) obs_source_release(source);
 	createdSources.clear();
+	if (!selected.value("game").toString().isEmpty()) {
+		const QString settingsPath = QDir(QFileInfo(storagePath).absolutePath()).absoluteFilePath("../../pulseweaver-ui.ini");
+		QSettings uiSettings(settingsPath, QSettings::IniFormat);
+		uiSettings.setValue("show/game_capture_uuid", selected.value("game").toString());
+		uiSettings.sync();
+	}
 	editingId = newActions.first().toObject().value("id").toString();
 	refreshEditor();
 	loadActionIntoEditor(actionByIdentity(editingId));
@@ -3657,7 +3742,8 @@ PulseMotionEngine::Transform PulseMotionEngine::punchTarget(obs_sceneitem_t *ite
 	return target;
 }
 
-OBSSceneItem PulseMotionEngine::resolveItem(const QString &container, qint64 itemId, const QString &sourceName, bool recursive) const
+OBSSceneItem PulseMotionEngine::resolveItem(const QString &container, qint64 itemId, const QString &sourceName, bool recursive,
+							 const QString &sourceUuid) const
 {
 	QString resolvedContainer = container;
 	OBSSourceAutoRelease owner;
@@ -3671,7 +3757,20 @@ OBSSceneItem PulseMotionEngine::resolveItem(const QString &container, qint64 ite
 	if (!scene && owner) scene = obs_group_from_source(owner);
 	if (!scene) return {};
 	OBSSceneItem item = itemId > 0 ? PulseRuntimeSafety::findSceneItemById(scene, itemId) : OBSSceneItem{};
-	if (item && !sourceName.isEmpty() && QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item))) != sourceName) item = nullptr;
+	// The scene-item ID is stable across a source rename. A recorded UUID guards
+	// against an ID being reused for a different source after scene editing.
+	if (item && !sourceUuid.isEmpty() && QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item))) != sourceUuid)
+		item = nullptr;
+	if (!item && !sourceUuid.isEmpty()) {
+		struct Search { QByteArray uuid; OBSSceneItem result; } search{sourceUuid.toUtf8(), {}};
+		obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *candidate, void *data) {
+			auto &search = *static_cast<Search *>(data);
+			if (search.uuid == obs_source_get_uuid(obs_sceneitem_get_source(candidate))) search.result = candidate;
+			return !search.result;
+		}, &search);
+		item = search.result;
+	}
+	if (item) return item;
 	if (!item && !sourceName.isEmpty()) {
 		if (recursive) {
 			item = PulseRuntimeSafety::findSceneItem(scene, sourceName.toUtf8().constData());
@@ -3685,6 +3784,9 @@ OBSSceneItem PulseMotionEngine::resolveItem(const QString &container, qint64 ite
 			item = search.result;
 		}
 	}
+	if (item && !sourceUuid.isEmpty() &&
+		QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item))) != sourceUuid)
+		item = nullptr;
 	return item;
 }
 
@@ -3761,14 +3863,15 @@ bool PulseMotionEngine::prepareExecution(Execution &execution, QString &error)
 		if (policy == "current") container.clear();
 		const qint64 itemId = policy == "current" ? 0 : action.value("itemId").toString().toLongLong();
 		const QString sourceName = action.value("source").toString();
-		OBSSceneItem item = resolveItem(container, itemId, sourceName, true);
+		OBSSceneItem item = resolveItem(container, itemId, sourceName, true, action.value("sourceUuid").toString());
 		if (!item) {
 			error = "“" + sourceName + "” was not found where this action expects it. Nothing was changed.";
 			return false;
 		}
 		Track track;
 		track.container = container;
-		track.sourceName = sourceName;
+		track.sourceName = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item)));
+		track.sourceUuid = QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item)));
 		track.itemId = obs_sceneitem_get_id(item);
 		track.item = item;
 		track.baseline = track.from = capture(item);
@@ -3781,18 +3884,39 @@ bool PulseMotionEngine::prepareExecution(Execution &execution, QString &error)
 			const QString container = saved.value("container").toString(action.value("container").toString());
 			const qint64 itemId = saved.value("itemId").toString().toLongLong();
 			const QString sourceName = saved.value("source").toString();
-			OBSSceneItem item = resolveItem(container, itemId, sourceName, false);
+			OBSSceneItem item = resolveItem(container, itemId, sourceName, false, saved.value("sourceUuid").toString());
 			if (!item) {
 				error = "Layout source “" + sourceName + "” is missing from “" + container + "”. Nothing was changed.";
 				return false;
 			}
 			Track track;
 			track.container = container;
-			track.sourceName = sourceName;
+			track.sourceName = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item)));
+			track.sourceUuid = QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item)));
+			track.graphic = saved.value("graphic").toBool() ||
+				motionGraphicSwitch(sourceName, obs_sceneitem_get_source(item));
 			track.itemId = obs_sceneitem_get_id(item);
 			track.item = item;
 			track.baseline = track.from = capture(item);
 			track.target = deserialize(saved.value("transform").toObject());
+			const int oldWidth = saved.value("sourceWidth").toInt();
+			const int oldHeight = saved.value("sourceHeight").toInt();
+			obs_source_t *source = obs_sceneitem_get_source(item);
+			const int newWidth = int(obs_source_get_width(source));
+			const int newHeight = int(obs_source_get_height(source));
+			if (oldWidth > 0 && oldHeight > 0 && newWidth > 0 && newHeight > 0 &&
+				(oldWidth != newWidth || oldHeight != newHeight)) {
+				// Keep the same on-canvas footprint when a browser, camera or game
+				// changes resolution. Bounds-based looks already have a fixed slot.
+				if (track.target.boundsType == OBS_BOUNDS_NONE) {
+					track.target.scale.x *= float(oldWidth) / float(newWidth);
+					track.target.scale.y *= float(oldHeight) / float(newHeight);
+				}
+				track.target.crop.left = int(std::lround(track.target.crop.left * double(newWidth) / oldWidth));
+				track.target.crop.right = int(std::lround(track.target.crop.right * double(newWidth) / oldWidth));
+				track.target.crop.top = int(std::lround(track.target.crop.top * double(newHeight) / oldHeight));
+				track.target.crop.bottom = int(std::lround(track.target.crop.bottom * double(newHeight) / oldHeight));
+			}
 			execution.tracks.push_back(std::move(track));
 		}
 		std::stable_sort(execution.tracks.begin(), execution.tracks.end(), [](const auto &a, const auto &b) { return a.target.order < b.target.order; });
@@ -4079,7 +4203,7 @@ void PulseMotionEngine::beginAfterStage()
 				active->action.value("focusX").toDouble(0.5), active->action.value("focusY").toDouble(0.42));
 		obs_scene_t *scene = obs_sceneitem_get_scene(track.item);
 		const float width = scene ? float(obs_source_get_width(obs_scene_get_source(scene))) : 0.0f;
-		if (active->action.value("kind") == "layout" && motionGraphicSwitch(track.sourceName) &&
+		if (active->action.value("kind") == "layout" && track.graphic &&
 		    track.from.visible != track.target.visible)
 			continue;
 		// Place entering layers outside the canvas before revealing them.
@@ -4121,10 +4245,10 @@ void PulseMotionEngine::tick()
 	if (!active->restoring && !active->graphicCommitted && progress >= 0.5) {
 		// Hide old artwork before revealing the new full-canvas graphics.
 		for (Track &track : active->tracks)
-			if (motionGraphicSwitch(track.sourceName) && track.from.visible && !track.target.visible)
+			if (track.graphic && track.from.visible && !track.target.visible)
 				apply(track.item, track.target, true);
 		for (Track &track : active->tracks)
-			if (motionGraphicSwitch(track.sourceName) && !track.from.visible && track.target.visible)
+			if (track.graphic && !track.from.visible && track.target.visible)
 				apply(track.item, track.target, true);
 		active->graphicCommitted = true;
 	}
@@ -4194,7 +4318,7 @@ void PulseMotionEngine::tick()
 	}
 	for (Track &track : active->tracks) {
 		if (covered[&track - active->tracks.data()]) continue;
-		if (!active->restoring && motionGraphicSwitch(track.sourceName) &&
+		if (!active->restoring && track.graphic &&
 		    track.from.visible != track.target.visible)
 			continue;
 		obs_scene_t *scene = obs_sceneitem_get_scene(track.item);
@@ -4312,7 +4436,7 @@ QJsonObject PulseMotionEngine::restoreLast()
 	if (lastRestore.empty()) return {{"ok", true}, {"message", "There is no completed layout to restore."}};
 	int restored = 0;
 	for (Track &track : lastRestore) {
-		OBSSceneItem item = resolveItem(track.container, track.itemId, track.sourceName, false);
+		OBSSceneItem item = resolveItem(track.container, track.itemId, track.sourceName, false, track.sourceUuid);
 		if (!item) continue;
 		apply(item, track.baseline, true);
 		++restored;

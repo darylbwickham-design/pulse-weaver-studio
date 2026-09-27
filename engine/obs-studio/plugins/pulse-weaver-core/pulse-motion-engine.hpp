@@ -67,6 +67,8 @@ private:
 	struct Track {
 		QString container;
 		QString sourceName;
+		QString sourceUuid;
+		bool graphic = false;
 		qint64 itemId = 0;
 		OBSSceneItem item;
 		Transform baseline;
@@ -174,6 +176,9 @@ private:
 	QString selectedStageGroup;
 	std::vector<QJsonArray> undoStates;
 	std::vector<QJsonArray> redoStates;
+	QStringList pairedSwapCanvases;
+	int pairedSwapState = 0; // 1: applied, 2: undone
+	bool recordingPairedSwap = false;
 	bool loadingDraft = false;
 	bool draftDirty = false;
 	bool mayLeaveDraft();
@@ -221,7 +226,8 @@ private:
 	static Transform transitionFrame(const Transform &from, const Transform &to, double progress, float canvasWidth);
 	static void apply(obs_sceneitem_t *item, const Transform &value, bool finalFrame = false);
 	static Transform punchTarget(obs_sceneitem_t *item, const Transform &original, double zoom, double focusX, double focusY);
-	OBSSceneItem resolveItem(const QString &container, qint64 itemId, const QString &sourceName, bool recursive = true) const;
+	OBSSceneItem resolveItem(const QString &container, qint64 itemId, const QString &sourceName, bool recursive = true,
+				     const QString &sourceUuid = {}) const;
 	bool prepareExecution(Execution &execution, QString &error);
 	void prepareCoveragePairs(Execution &execution);
 	void beginAfterStage();

@@ -13,6 +13,7 @@
     <Product Condition="'$(PreviewChannel)' == 'true'">Pulse Weaver Motion Preview Setup</Product>
     <DefineConstants Condition="'$(PreviewChannel)' == 'true'">$(DefineConstants);PULSE_MOTION_PREVIEW</DefineConstants>
     <DefineConstants Condition="'$(AlphaChannel)' == 'true'">$(DefineConstants);PULSE_ALPHA</DefineConstants>
+    <DefineConstants Condition="'$(UnstableChannel)' == 'true'">$(DefineConstants);PULSE_UNSTABLE</DefineConstants>
     <AlphaRevision Condition="'$(AlphaRevision)' == ''">1</AlphaRevision>
     <Version>$(ReleaseVersion)</Version>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

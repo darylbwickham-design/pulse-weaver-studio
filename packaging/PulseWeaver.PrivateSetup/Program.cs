@@ -25,14 +25,20 @@ internal static class Program
 #if PULSE_ALPHA
     const string UpdateChannel = "windows-alpha";
     internal const string InstallerSubtitle = "STREAMING STUDIO  ·  EXPERIMENTAL ALPHA";
+#elif PULSE_UNSTABLE
+    const string UpdateChannel = "windows-unstable";
+    internal const string InstallerSubtitle = "STREAMING STUDIO  ·  UNSTABLE SHOWCASE";
 #else
     const string UpdateChannel = "windows-private";
-    internal const string InstallerSubtitle = "STREAMING STUDIO  ·  BETA";
+    internal const string InstallerSubtitle = "STREAMING STUDIO  ·  RELEASE";
 #endif
 #endif
     internal static readonly string Version = Assembly.GetExecutingAssembly().GetName().Version!.ToString(3);
 #if PULSE_ALPHA
     internal static readonly string ReleaseTag = "v" + Version + "-alpha." + Assembly.GetExecutingAssembly()
+        .GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "AlphaRevision").Value;
+#elif PULSE_UNSTABLE
+    internal static readonly string ReleaseTag = "v" + Version + "-unstable." + Assembly.GetExecutingAssembly()
         .GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "AlphaRevision").Value;
 #else
     internal static readonly string ReleaseTag = "v" + Version;

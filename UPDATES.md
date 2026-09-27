@@ -14,9 +14,12 @@ without this identity do not guess an installation channel.
 | --- | --- | --- |
 | windows-public | v1.12.6 | PulseWeaver-Public-Dist-1.12.6-Setup.exe |
 | windows-private | v1.12.15 | PulseWeaver-Setup-1.12.15-BETA.exe |
+| windows-private | v1.13.0 | PulseWeaver-Setup-1.13.0.exe |
+| windows-alpha | v1.13.1-alpha.6 | PulseWeaver-Setup-1.13.1-alpha.6.exe |
+| windows-unstable | v1.14.0-unstable.1 | PulseWeaver-Setup-1.14.0-unstable.1.exe |
 | mac-arm64-preview | mac-v0.1.0-alpha.2 | PulseWeaver-Mac-mac-v0.1.0-alpha.2-AppleSilicon.dmg |
 
-Windows 1.12.2 and Mac alpha 2 introduce the updater. Windows installers use
+Windows 1.12.2 and Mac alpha 2 introduce the updater. The unstable channel is available after an update to alpha 6 or a later regular release. Windows installers use
 their Program.Version constant; Mac uses PULSE_MAC_TAG. Update both installer
 project/payload versions when making the next Windows release. Increment the Mac
 workflow's tag before publishing its next build; never replace a released tag.
