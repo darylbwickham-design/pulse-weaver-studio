@@ -59,12 +59,13 @@ void Auth::Load()
 	}
 
 	main->auth = Create(typeStr);
-	if (main->auth) {
-		if (main->auth->LoadInternal()) {
-			main->auth->LoadUI();
-			main->SetBroadcastFlowEnabled(main->auth->broadcastFlow());
-		}
+	if (main->auth && main->auth->LoadInternal()) {
+		main->auth->LoadUI();
+		main->SetBroadcastFlowEnabled(main->auth->broadcastFlow());
 	} else {
+		// A failed account load must not act like an authenticated broadcaster.
+		// Do not revoke or modify stored provider credentials here.
+		main->auth.reset();
 		main->SetBroadcastFlowEnabled(false);
 	}
 }

@@ -52,6 +52,9 @@ inline QString assetName(const Identity &identity)
 		return "PulseWeaver-Public-Dist-" + identity.tag.mid(1) + "-Setup.exe";
 	if (identity.channel == "windows-alpha")
 		return "PulseWeaver-Setup-" + identity.tag.mid(1) + ".exe";
+	if (identity.channel == "windows-private" &&
+	    QVersionNumber::compare(QVersionNumber::fromString(identity.tag.mid(1)), QVersionNumber(1, 13, 0)) >= 0)
+		return "PulseWeaver-Setup-" + identity.tag.mid(1) + ".exe";
 	return "PulseWeaver-Setup-" + identity.tag.mid(1) + "-BETA.exe";
 }
 struct Release {

@@ -164,10 +164,7 @@ OBSYoutubeActions::OBSYoutubeActions(QWidget *parent, Auth *auth, bool broadcast
 	ui->scrollAreaWidgetContents->layout()->addWidget(loadingLabel);
 
 	// Delete "loading..." label on completion
-	connect(workerThread, &WorkerThread::finished, this, [&] {
-		QLayoutItem *item = ui->scrollAreaWidgetContents->layout()->takeAt(0);
-		item->widget()->deleteLater();
-	});
+	connect(workerThread, &WorkerThread::finished, loadingLabel, &QObject::deleteLater);
 
 	connect(workerThread, &WorkerThread::failed, this, [&]() {
 		auto last_error = apiYouTube->GetLastError();
@@ -192,18 +189,18 @@ OBSYoutubeActions::OBSYoutubeActions(QWidget *parent, Auth *auth, bool broadcast
 			if (status == "live" || status == "testing") {
 				// Resumable stream
 				label->setText(QString("<big>%1</big><br/>%2")
-						       .arg(title, QTStr("YouTube.Actions.Stream.Resume")));
+						       .arg(title.toHtmlEscaped(), QTStr("YouTube.Actions.Stream.Resume")));
 
 			} else if (dateTimeString.isEmpty()) {
 				// The broadcast created by YouTube Studio has no start time.
 				// Yes this does violate the restrictions set in YouTube's API
 				// But why would YouTube care about consistency?
 				label->setText(QString("<big>%1</big><br/>%2")
-						       .arg(title, QTStr("YouTube.Actions.Stream.YTStudio")));
+						       .arg(title.toHtmlEscaped(), QTStr("YouTube.Actions.Stream.YTStudio")));
 			} else {
 				label->setText(
 					QString("<big>%1</big><br/>%2")
-						.arg(title,
+						.arg(title.toHtmlEscaped(),
 						     QTStr("YouTube.Actions.Stream.ScheduledFor").arg(dateTimeString)));
 			}
 

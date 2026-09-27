@@ -30,6 +30,9 @@ int main(int argc, char **argv)
 	const Identity privateWindows{"windows-private", "v1.12.1"};
 	const Identity mac{"mac-arm64-preview", "mac-v0.1.0-alpha.1"};
 	const Identity alpha{"windows-alpha", "v1.13.0-alpha.1"};
+	check(assetName({"windows-private", "v1.12.17"}) == "PulseWeaver-Setup-1.12.17-BETA.exe", "Legacy installer naming retained");
+	check(assetName({"windows-private", "v1.13.1"}) == "PulseWeaver-Setup-1.13.1.exe", "Regular release uses current installer naming");
+	check(selectRelease(QJsonArray{release({"windows-private", "v1.13.1"})}, {"windows-private", "v1.12.17"}).has_value(), "Old regular version can discover new release");
 	const QJsonArray alphaReleases{release(alpha), release({"windows-alpha", "v1.13.0-alpha.10"}),
 		release({"windows-private", "v1.12.16"})};
 	check(selectRelease(alphaReleases, privateWindows)->identity.tag == "v1.12.16", "Alpha is opt-in");

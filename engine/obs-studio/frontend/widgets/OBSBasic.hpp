@@ -536,6 +536,7 @@ private:
 
 public:
 	inline Auth *GetAuth() { return auth.get(); }
+	bool UsesYouTubeBroadcastFlow() const;
 
 	/* -------------------------------------
 	 * MARK: - OBSBasic_Browser
