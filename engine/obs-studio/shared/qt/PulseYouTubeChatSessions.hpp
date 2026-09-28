@@ -18,6 +18,8 @@ struct Session {
 	QString lastError;
 	bool suspended = false;
 	qint64 pollIntervalMs = 5000;
+	qint64 fallbackUntilMs = 0;
+	int streamFailures = 0;
 };
 
 inline void failed(Session &session, const QString &reason, const QString &error, qint64 now, qint64 blockedUntil)
@@ -41,6 +43,16 @@ inline Sessions create(const QString &mode, const QString &primaryBroadcastId,
 	if (mode == "dual" && !secondaryBroadcastId.isEmpty())
 		sessions.insert("vertical", {secondaryBroadcastId});
 	return sessions;
+}
+
+inline QString owner(const Sessions &sessions, const QString &chatId)
+{
+	for (auto it = sessions.cbegin(); it != sessions.cend(); ++it)
+		if (it->liveChatId == chatId && it->requestPending) return it.key();
+	QString route;
+	for (auto it = sessions.cbegin(); it != sessions.cend(); ++it)
+		if (it->liveChatId == chatId && (route.isEmpty() || it.key() < route)) route = it.key();
+	return route;
 }
 
 inline bool ready(const Sessions &sessions)

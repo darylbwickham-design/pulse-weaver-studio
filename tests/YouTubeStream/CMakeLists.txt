@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.28)
+project(PulseYouTubeStreamTests LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(Qt6 REQUIRED COMPONENTS Core)
+add_executable(PulseYouTubeStreamTests main.cpp)
+target_link_libraries(PulseYouTubeStreamTests PRIVATE Qt6::Core)
+enable_testing()
+add_test(NAME YouTubeStream COMMAND PulseYouTubeStreamTests --test)

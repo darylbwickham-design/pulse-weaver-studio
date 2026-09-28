@@ -5,6 +5,7 @@
 #include <json11.hpp>
 
 #include <QString>
+#include "../../shared/qt/PulseYouTubeStream.hpp"
 
 struct ChannelDescription {
 	QString id;
@@ -90,6 +91,9 @@ public:
 	bool GetLiveChatId(const QString &broadcast_id, QString &chat_id);
 	bool GetLiveChatMessages(const QString &chat_id, QString &page_token, QVector<YoutubeChatEvent> &events,
 				 int &poll_interval_ms);
+	PulseYouTubeStream::Result StreamLiveChatMessages(const QString &chatId, const QString &page,
+		const std::function<bool()> &cancelled,
+		const std::function<void(const QString &, const QVector<YoutubeChatEvent> &)> &batch);
 	bool DeleteLiveChatMessage(const QString &message_id);
 	bool ModerateLiveChatUser(const QString &chat_id, const QString &channel_id, int duration_seconds);
 	bool SendLiveChatMessage(const QString &chat_id, const QString &message);
