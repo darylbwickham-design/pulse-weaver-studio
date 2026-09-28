@@ -21,3 +21,7 @@ Install **Pulse Weaver 1.4.0** into Lumia as an update to the existing regular p
 ## Build
 
 Use `packaging/Build-ChannelRelease.ps1` with `-Channel release`, `-Channel alpha` or `-Channel unstable`, a version, a complete `-RuntimeRoot`, and `-YouTubeDesktopClientJson`. Alpha and unstable tags add `-alpha.N` and `-unstable.N`. Configure distributable builds with `PULSEWEAVER_MOTION_PREVIEW=OFF`. All three installers use the same verified recovery engine and preserve an existing profile, port and credentials.
+
+## Keeping fixes aligned
+
+When a regular or alpha release adds a generally applicable fix, carry it into the active 1.14 unstable branch as well. Preserve the unstable interface work, run the affected regressions in that branch, and publish an incremented unstable revision through GitHub, updater metadata, and Lumi-Con. Verify that regular users are not opted into unstable. Never update installed instances as part of release preparation without the user's instruction.

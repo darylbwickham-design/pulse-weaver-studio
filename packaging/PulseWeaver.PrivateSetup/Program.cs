@@ -178,12 +178,10 @@ internal static class Program
                 var document = registration.RootElement;
                 var client = document.GetProperty("installed");
                 var fields = client.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
-                bool validFields = UpdateChannel == "windows-unstable" ?
-                    fields.SetEquals(new[] { "client_id" }) :
-                    fields.SetEquals(new[] { "client_id", "client_secret" });
+                bool validFields = fields.SetEquals(new[] { "client_id", "client_secret" });
                 if (document.EnumerateObject().Count() != 1 || !validFields ||
                     !(client.GetProperty("client_id").GetString()?.EndsWith(".apps.googleusercontent.com", StringComparison.Ordinal) ?? false) ||
-                    (UpdateChannel != "windows-unstable" && string.IsNullOrWhiteSpace(client.GetProperty("client_secret").GetString()))) return 11;
+                    string.IsNullOrWhiteSpace(client.GetProperty("client_secret").GetString())) return 11;
             }
             if (File.ReadAllText(savedScene) != sceneJson || File.ReadAllText(savedConfig) != "keep") return 9;
             WriteUpdateIdentity(root);
