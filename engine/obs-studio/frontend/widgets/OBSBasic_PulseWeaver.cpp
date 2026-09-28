@@ -83,6 +83,7 @@
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -2758,70 +2759,197 @@ void OBSBasic::InitPulseWeaverShell()
 		recordStatus->setText(config_save_safe(Config(), "tmp", nullptr) == CONFIG_SUCCESS ?
 			"Saved for the next recording." : "Could not save the active profile. Check its folder permissions.");
 	});
-	auto *vodCard = card(soundSection, "Twitch VOD track", "Choose a separate VOD track and decide which audio source it contains. This is independent of YouTube and Kick source exclusions.");
+	auto *vodCard = card(soundSection, "Twitch VOD track", "Choose the separate VOD track here. Set which sources reach that track in Audio source routing below. This is independent of YouTube and Kick source exclusions.");
 	auto *vodEnabled = new QCheckBox("Use a separate Twitch VOD track");
 	vodCard->addWidget(vodEnabled);
 	auto *vodTrack = new QComboBox;
 	for (int track = 1; track <= 6; ++track) vodTrack->addItem("Audio track " + QString::number(track), track);
 	vodCard->addWidget(vodTrack);
-	auto *vodSource = new QComboBox;
-	vodSource->setAccessibleName("Audio source for Twitch VOD membership");
-	vodSource->addItem("Choose an audio source", QString());
-	vodCard->addWidget(vodSource);
-	auto *vodInclude = new QCheckBox("Include this source in the VOD track");
-	vodCard->addWidget(vodInclude);
-	auto *vodStatus = new QLabel("Choose a source to inspect its VOD track membership.");
+	auto *vodStatus = new QLabel("Advanced output can choose tracks 1–6. Simple output uses track 2. Assign sources in Audio source routing below.");
 	vodStatus->setWordWrap(true);
 	vodCard->addWidget(vodStatus);
-	auto refreshVodMembership = [vodTrack, vodSource, vodInclude] {
-		OBSSourceAutoRelease source = obs_get_source_by_uuid(vodSource->currentData().toString().toUtf8().constData());
-		const QSignalBlocker blocker(vodInclude);
-		vodInclude->setEnabled(source && vodTrack->isEnabled());
-		vodInclude->setChecked(source && (obs_source_get_audio_mixers(source) & (1u << (vodTrack->currentData().toInt() - 1))));
-	};
-	connect(vodSource, &QComboBox::currentIndexChanged, vodInclude, [refreshVodMembership](int) { refreshVodMembership(); });
-	connect(vodTrack, &QComboBox::currentIndexChanged, vodInclude, [refreshVodMembership](int) { refreshVodMembership(); });
-	auto refreshVod = [this, vodEnabled, vodTrack, vodSource, refreshVodMembership] {
+	auto refreshVod = [this, vodEnabled, vodTrack] {
 		if (!Config()) return;
 		const char *mode = config_get_string(Config(), "Output", "Mode");
 		const bool advanced = mode && strcmp(mode, "Advanced") == 0;
 		vodEnabled->setChecked(config_get_bool(Config(), advanced ? "AdvOut" : "SimpleOutput", "VodTrackEnabled"));
 		vodTrack->setCurrentIndex(advanced ? std::clamp(int(config_get_int(Config(), "AdvOut", "VodTrackIndex")), 1, 6) - 1 : 1);
 		vodTrack->setEnabled(advanced);
-		const QString chosen = vodSource->currentData().toString();
-		vodSource->clear();
-		vodSource->addItem("Choose an audio source", QString());
-		obs_enum_sources([](void *opaque, obs_source_t *source) {
-			if (obs_source_get_output_flags(source) & OBS_SOURCE_AUDIO)
-				static_cast<QComboBox *>(opaque)->addItem(QString::fromUtf8(obs_source_get_name(source)),
-					QString::fromUtf8(obs_source_get_uuid(source)));
-			return true;
-		}, vodSource);
-		vodSource->setCurrentIndex(std::max(0, vodSource->findData(chosen)));
-		refreshVodMembership();
 	};
 	connect(settings, &QPushButton::clicked, vodCard->parentWidget(), refreshVod);
-	action(vodCard, "Save Twitch VOD routing", "Save the track and source membership for the next broadcast", [this, vodEnabled, vodTrack, vodSource, vodInclude, vodStatus] {
+	action(vodCard, "Save Twitch VOD routing", "Save the chosen VOD track for the next broadcast", [this, vodEnabled, vodTrack, vodStatus] {
 		if (!Config()) { vodStatus->setText("Wait for the profile to finish loading."); return; }
 		if (obs_frontend_streaming_active()) { vodStatus->setText("Stop streaming before changing the VOD route."); return; }
-		const QString sourceUuid = vodSource->currentData().toString();
-		OBSSourceAutoRelease source = sourceUuid.isEmpty() ? nullptr : obs_get_source_by_uuid(sourceUuid.toUtf8().constData());
-		if (!sourceUuid.isEmpty() && !source) { vodStatus->setText("The selected audio source is missing. Reopen Settings and choose it again."); return; }
 		config_set_bool(Config(), "SimpleOutput", "VodTrackEnabled", vodEnabled->isChecked());
 		config_set_bool(Config(), "AdvOut", "VodTrackEnabled", vodEnabled->isChecked());
 		if (vodTrack->isEnabled()) config_set_int(Config(), "AdvOut", "VodTrackIndex", vodTrack->currentData().toInt());
 		if (config_save_safe(Config(), "tmp", nullptr) != CONFIG_SUCCESS) {
 			vodStatus->setText("Could not save the VOD setting to the active profile."); return;
 		}
-		if (source) {
-			const uint32_t bit = 1u << (vodTrack->currentData().toInt() - 1);
-			const uint32_t oldMask = obs_source_get_audio_mixers(source);
-			obs_source_set_audio_mixers(source, vodInclude->isChecked() ? oldMask | bit : oldMask & ~bit);
-			SaveProject();
-		}
-		vodStatus->setText("Saved for the next Twitch broadcast. Check the mixer before going live.");
+		vodStatus->setText("VOD track saved. Set its source membership in Audio source routing below, then check the mixer.");
 	});
-	action(vodCard, "Advanced audio tracks", "Open OBS track names, encoders and monitoring settings", [this] { on_action_Settings_triggered(); });
+	auto *trackCard = card(soundSection, "Audio track names", "Label the six OBS audio tracks so your stream, recording and Twitch VOD routes are easier to recognize. Names are stored in the active profile.");
+	auto *trackForm = new QFormLayout;
+	trackCard->addLayout(trackForm);
+	std::array<QLineEdit *, 6> trackNames{};
+	for (int index = 0; index < 6; ++index) {
+		auto *field = new QLineEdit;
+		field->setMaxLength(128);
+		field->setAccessibleName("Audio track " + QString::number(index + 1) + " name");
+		field->setEnabled(false);
+		trackForm->addRow("Track " + QString::number(index + 1), field);
+		trackNames[index] = field;
+	}
+	auto *trackStatus = new QLabel("Track names load when you open Settings.");
+	trackStatus->setWordWrap(true);
+	trackCard->addWidget(trackStatus);
+	auto refreshTrackNames = [this, trackNames] {
+		if (!Config()) return;
+		for (int index = 0; index < 6; ++index) {
+			const QByteArray key = "Track" + QByteArray::number(index + 1) + "Name";
+			trackNames[index]->setText(QString::fromUtf8(config_get_string(Config(), "AdvOut", key.constData())));
+			trackNames[index]->setEnabled(true);
+		}
+	};
+	connect(settings, &QPushButton::clicked, trackCard->parentWidget(), refreshTrackNames);
+	action(trackCard, "Save track names", "Save audio track labels to this profile", [this, trackNames, trackStatus] {
+		if (!Config()) { trackStatus->setText("Wait for the profile to finish loading."); return; }
+		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+			trackStatus->setText("Stop streaming and recording before changing audio track names."); return;
+		}
+		for (int index = 0; index < 6; ++index) {
+			if (!trackNames[index]->isEnabled()) { trackStatus->setText("Open Settings to load the active profile first."); return; }
+			const QByteArray key = "Track" + QByteArray::number(index + 1) + "Name";
+			const QByteArray name = trackNames[index]->text().trimmed().toUtf8();
+			config_set_string(Config(), "AdvOut", key.constData(), name.constData());
+		}
+		trackStatus->setText(config_save_safe(Config(), "tmp", nullptr) == CONFIG_SUCCESS ?
+			"Audio track names saved for the next output." : "Could not save the active profile. Check its folder permissions.");
+	});
+	auto *monitorCard = card(soundSection, "Audio monitoring", "Choose where locally monitored audio plays. This does not change the broadcast mix.");
+	auto *monitorDevice = new QComboBox;
+	monitorDevice->setAccessibleName("Audio monitoring device");
+	monitorDevice->setEnabled(false);
+	monitorCard->addWidget(monitorDevice);
+	auto *monitorStatus = new QLabel("Monitoring devices load when you open Settings.");
+	monitorStatus->setWordWrap(true);
+	monitorCard->addWidget(monitorStatus);
+	auto refreshMonitor = [this, monitorDevice, monitorStatus] {
+		if (!Config()) return;
+		const QSignalBlocker blocker(monitorDevice);
+		monitorDevice->clear();
+		if (!obs_audio_monitoring_available()) {
+			monitorDevice->addItem("Audio monitoring is unavailable on this system", QString());
+			monitorDevice->setEnabled(false);
+			monitorStatus->setText("The audio engine did not provide monitoring devices.");
+			return;
+		}
+		monitorDevice->addItem("System default", "default");
+		obs_enum_audio_monitoring_devices([](void *opaque, const char *name, const char *id) {
+			if (name && id) static_cast<QComboBox *>(opaque)->addItem(QString::fromUtf8(name), QString::fromUtf8(id));
+			return true;
+		}, monitorDevice);
+		const QString currentId = QString::fromUtf8(config_get_string(Config(), "Audio", "MonitoringDeviceId"));
+		int index = monitorDevice->findData(currentId);
+		if (index < 0) {
+			const QString currentName = QString::fromUtf8(config_get_string(Config(), "Audio", "MonitoringDeviceName"));
+			monitorDevice->addItem("Unavailable device · " + currentName, currentId);
+			index = monitorDevice->count() - 1;
+		}
+		monitorDevice->setCurrentIndex(index);
+		monitorDevice->setEnabled(true);
+		monitorStatus->setText("Choose a device, then save. Existing source monitoring modes are retained.");
+	};
+	connect(settings, &QPushButton::clicked, monitorCard->parentWidget(), refreshMonitor);
+	action(monitorCard, "Refresh monitoring devices", "Detect newly connected audio outputs", refreshMonitor);
+	action(monitorCard, "Save monitoring device", "Use this device for locally monitored audio", [this, monitorDevice, monitorStatus] {
+		if (!Config() || !monitorDevice->isEnabled() || monitorDevice->currentIndex() < 0) {
+			monitorStatus->setText("Open Settings and choose an available monitoring device first."); return;
+		}
+		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+			monitorStatus->setText("Stop streaming and recording before changing the monitoring device."); return;
+		}
+		const QByteArray id = monitorDevice->currentData().toString().toUtf8();
+		const QByteArray name = monitorDevice->currentText().toUtf8();
+		if (id.isEmpty()) { monitorStatus->setText("Choose an available monitoring device first."); return; }
+		config_set_string(Config(), "Audio", "MonitoringDeviceId", id.constData());
+		config_set_string(Config(), "Audio", "MonitoringDeviceName", name.constData());
+		if (config_save_safe(Config(), "tmp", nullptr) != CONFIG_SUCCESS) {
+			monitorStatus->setText("Could not save the monitoring device to this profile."); return;
+		}
+		obs_set_audio_monitoring_device(name.constData(), id.constData());
+		monitorStatus->setText("Monitoring device saved and active.");
+	});
+	auto *mixCard = card(soundSection, "Audio source routing", "Tick the tracks that contain each source, then choose whether it plays through your local monitoring device. Track membership also controls the Twitch VOD track selected above. This does not change YouTube or Kick source exclusions.");
+	auto *mixTable = new QTableWidget;
+	mixTable->setColumnCount(8);
+	mixTable->setHorizontalHeaderLabels({"Audio source", "1", "2", "3", "4", "5", "6", "Local monitor"});
+	mixTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+	mixTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
+	mixTable->setSelectionMode(QAbstractItemView::NoSelection);
+	mixTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	mixTable->setMinimumHeight(230);
+	mixTable->setAccessibleName("Audio source track and monitoring matrix");
+	mixCard->addWidget(mixTable);
+	auto *mixStatus = new QLabel("Open Settings to load your audio sources. Track 1 is the usual live mix; check your output settings before changing it.");
+	mixStatus->setWordWrap(true);
+	mixCard->addWidget(mixStatus);
+	auto refreshMix = [mixTable, mixStatus] {
+		mixTable->setRowCount(0);
+		obs_enum_sources([](void *opaque, obs_source_t *source) {
+			auto *table = static_cast<QTableWidget *>(opaque);
+			if (!(obs_source_get_output_flags(source) & OBS_SOURCE_AUDIO)) return true;
+			const int row = table->rowCount();
+			table->insertRow(row);
+			auto *name = new QTableWidgetItem(QString::fromUtf8(obs_source_get_name(source)));
+			name->setData(Qt::UserRole, QString::fromUtf8(obs_source_get_uuid(source)));
+			name->setFlags(Qt::ItemIsEnabled);
+			table->setItem(row, 0, name);
+			const uint32_t mask = obs_source_get_audio_mixers(source);
+			for (int track = 0; track < 6; ++track) {
+				auto *item = new QTableWidgetItem;
+				item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+				item->setCheckState(mask & (1u << track) ? Qt::Checked : Qt::Unchecked);
+				table->setItem(row, track + 1, item);
+			}
+			auto *monitor = new QComboBox(table);
+			monitor->addItem("Off", int(OBS_MONITORING_TYPE_NONE));
+			monitor->addItem("Monitor only", int(OBS_MONITORING_TYPE_MONITOR_ONLY));
+			monitor->addItem("Monitor + output", int(OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT));
+			monitor->setCurrentIndex(std::max(0, monitor->findData(int(obs_source_get_monitoring_type(source)))));
+			table->setCellWidget(row, 7, monitor);
+			return true;
+		}, mixTable);
+		mixStatus->setText(mixTable->rowCount() ? "Review the track checks and local monitor choice, then save." :
+			"No audio sources are in this scene collection yet. Add a microphone or desktop device first.");
+	};
+	connect(settings, &QPushButton::clicked, mixCard->parentWidget(), refreshMix);
+	action(mixCard, "Refresh audio sources", "Reload source names and their current track assignments", refreshMix);
+	action(mixCard, "Save audio source routing", "Apply these track and monitoring choices to the active scene collection", [this, mixTable, mixStatus] {
+		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+			mixStatus->setText("Stop streaming and recording before changing audio source routing."); return;
+		}
+		if (!mixTable->rowCount()) { mixStatus->setText("Refresh audio sources after adding an audio device."); return; }
+		for (int row = 0; row < mixTable->rowCount(); ++row) {
+			const auto *name = mixTable->item(row, 0);
+			const QByteArray uuid = name ? name->data(Qt::UserRole).toString().toUtf8() : QByteArray();
+			OBSSourceAutoRelease source = uuid.isEmpty() ? nullptr : obs_get_source_by_uuid(uuid.constData());
+			if (!source) { mixStatus->setText("An audio source changed since this list opened. Refresh and review before saving."); return; }
+		}
+		for (int row = 0; row < mixTable->rowCount(); ++row) {
+			const QByteArray uuid = mixTable->item(row, 0)->data(Qt::UserRole).toString().toUtf8();
+			OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.constData());
+			if (!source) { mixStatus->setText("An audio source disappeared while saving. Refresh and review the remaining routes."); return; }
+			uint32_t mask = 0;
+			for (int track = 0; track < 6; ++track)
+				if (mixTable->item(row, track + 1)->checkState() == Qt::Checked) mask |= 1u << track;
+			obs_source_set_audio_mixers(source, mask);
+			auto *monitor = qobject_cast<QComboBox *>(mixTable->cellWidget(row, 7));
+			if (monitor) obs_source_set_monitoring_type(source, obs_monitoring_type(monitor->currentData().toInt()));
+		}
+		SaveProject();
+		mixStatus->setText("Audio routing saved to this scene collection. Review the mixer before going live.");
+	});
 
 	auto *sourceSection = section("Sources and canvas", "Keep device capture, resolution and framing near the live stage editor.");
 	auto *sourceCard = card(sourceSection, "Capture devices", "Add or change a camera, game capture or screen source in Camera. Show has a quick game-window picker.");
@@ -2835,7 +2963,7 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *outputWidth = new QSpinBox;
 	auto *outputHeight = new QSpinBox;
 	for (QSpinBox *field : {baseWidth, baseHeight, outputWidth, outputHeight}) {
-		field->setRange(320, 7680);
+		field->setRange(1, 16384);
 		field->setSingleStep(16);
 		field->setEnabled(false);
 	}
