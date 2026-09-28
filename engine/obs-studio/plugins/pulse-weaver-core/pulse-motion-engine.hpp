@@ -159,6 +159,7 @@ private:
 	void addDraftSource(QString selected = {});
 	void adaptPortrait();
 	void swapFocus();
+	void chooseQuickLayout();
 	void pinOverlayAcrossLooks();
 	QHash<qint64, qint64> draftIds;
 	QHash<qint64, qint64> previewIds;

@@ -2610,31 +2610,121 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *soundCard = card(soundSection, "Sound check", "Use Show for live levels. Manage stages to exclude a source from YouTube or Kick while leaving Twitch's own VOD track setup intact.");
 	action(soundCard, "Open Show mixer", "Check levels and monitoring", [this] { SetPulseWeaverWorkspace(0); });
 	action(soundCard, "Route stage sources", "Configure provider exclusions", [this] { ManagePulseWeaverStages(); });
+	auto *deviceCard = card(soundSection, "Audio devices", "Choose the desktop and microphone devices used by this scene collection. Changes are saved immediately while outputs are stopped.");
+	auto *deviceForm = new QFormLayout;
+	deviceCard->addLayout(deviceForm);
+	QMap<int, QComboBox *> audioDevices;
+	for (const auto &[channel, label] : std::vector<std::pair<int, QString>>{
+		{1, "Desktop audio"}, {2, "Desktop audio 2"}, {3, "Mic / Aux"},
+		{4, "Mic / Aux 2"}, {5, "Mic / Aux 3"}, {6, "Mic / Aux 4"}}) {
+		auto *field = new QComboBox;
+		field->setAccessibleName(label + " device");
+		field->addItem("Open Settings to load devices", "");
+		field->setEnabled(false);
+		deviceForm->addRow(label, field);
+		audioDevices.insert(channel, field);
+	}
+	auto *deviceStatus = new QLabel("Select Settings to load available devices.");
+	deviceStatus->setWordWrap(true);
+	deviceCard->addWidget(deviceStatus);
+	auto loadAudioDevices = [audioDevices, deviceStatus] {
+		for (auto it = audioDevices.cbegin(); it != audioDevices.cend(); ++it) {
+			QComboBox *field = it.value();
+			const char *sourceId = it.key() <= 2 ? App()->OutputAudioSource() : App()->InputAudioSource();
+			obs_properties_t *properties = sourceId ? obs_get_source_properties(sourceId) : nullptr;
+			obs_property_t *devices = properties ? obs_properties_get(properties, "device_id") : nullptr;
+			const QSignalBlocker blocker(field);
+			field->clear();
+			field->addItem("Disabled", "disabled");
+			if (devices) {
+				for (size_t i = 0; i < obs_property_list_item_count(devices); ++i) {
+					const char *name = obs_property_list_item_name(devices, i);
+					const char *id = obs_property_list_item_string(devices, i);
+					if (name && id) field->addItem(QString::fromUtf8(name), QString::fromUtf8(id));
+				}
+			}
+			if (properties) obs_properties_destroy(properties);
+			QString currentId = "disabled";
+			OBSSourceAutoRelease current = obs_get_output_source(it.key());
+			if (current) {
+				OBSDataAutoRelease sourceSettings = obs_source_get_settings(current);
+				if (sourceSettings) currentId = QString::fromUtf8(obs_data_get_string(sourceSettings, "device_id"));
+			}
+			int index = field->findData(currentId);
+			if (index < 0) {
+				field->addItem("Unavailable device · " + currentId, currentId);
+				index = field->count() - 1;
+			}
+			field->setCurrentIndex(index);
+			field->setEnabled(devices != nullptr);
+		}
+		deviceStatus->setText("Choose the devices, then Save audio devices. Disabled channels stay off.");
+	};
+	connect(settings, &QPushButton::clicked, deviceCard->parentWidget(), loadAudioDevices);
+	action(deviceCard, "Refresh available devices", "Detect devices connected since opening Settings", loadAudioDevices);
+	action(deviceCard, "Save audio devices", "Apply and save these scene collection devices", [this, audioDevices, deviceStatus] {
+		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+			deviceStatus->setText("Stop streaming and recording before changing audio devices."); return;
+		}
+		for (auto it = audioDevices.cbegin(); it != audioDevices.cend(); ++it) {
+			if (!it.value()->isEnabled() || it.value()->currentData().toString().isEmpty()) {
+				deviceStatus->setText("Refresh available devices before saving."); return;
+			}
+		}
+		for (auto it = audioDevices.cbegin(); it != audioDevices.cend(); ++it) {
+			const bool input = it.key() >= 3;
+			const QByteArray device = it.value()->currentData().toString().toUtf8();
+			const QByteArray label = it.value()->accessibleName().toUtf8();
+			ResetAudioDevice(input ? App()->InputAudioSource() : App()->OutputAudioSource(),
+				device.constData(), label.constData(), it.key());
+		}
+		SaveProject();
+		deviceStatus->setText("Audio devices saved to this scene collection.");
+	});
 	auto *recordCard = card(soundSection, "Recording", "Choose where your recordings are saved. A new location takes effect when the next recording starts.");
 	auto *recordPathRow = new QHBoxLayout;
 	recordCard->addLayout(recordPathRow);
 	auto *recordPath = new QLineEdit;
+	auto *recordFormat = new QComboBox;
+	recordFormat->addItem("MKV · recoverable if recording stops unexpectedly", "mkv");
+	recordFormat->addItem("Hybrid MP4 · compatible and recoverable", "hybrid_mp4");
+	recordFormat->addItem("MP4 · finalised when recording stops", "mp4");
+	recordFormat->setAccessibleName("Recording container");
+	recordCard->addWidget(recordFormat);
 	// The shell is constructed before the active OBS profile is loaded.
 	// Populate profile-backed fields only after Config() becomes available.
 	recordPath->setEnabled(false);
-	auto refreshProfileSettings = [this, recordPath, bitrateFields] {
+	auto refreshProfileSettings = [this, recordPath, recordFormat, bitrateFields] {
 		if (!Config()) return;
 		const char *mode = config_get_string(Config(), "Output", "Mode");
 		const bool advanced = mode && strcmp(mode, "Advanced") == 0;
+		const char *section = advanced ? "AdvOut" : "SimpleOutput";
+		const char *recordType = advanced ? config_get_string(Config(), "AdvOut", "RecType") : nullptr;
+		const bool customOutput = advanced && recordType && strcmp(recordType, "FFmpeg") == 0;
 		const char *path = config_get_string(Config(), advanced ? "AdvOut" : "SimpleOutput",
-			advanced ? "RecFilePath" : "FilePath");
+			customOutput ? "FFFilePath" : advanced ? "RecFilePath" : "FilePath");
 		recordPath->setText(QString::fromUtf8(path ? path : ""));
 		recordPath->setEnabled(true);
+		const char *format = config_get_string(Config(), section, "RecFormat2");
+		int formatIndex = recordFormat->findData(QString::fromUtf8(format ? format : ""));
+		if (formatIndex < 0 && format && *format) {
+			recordFormat->insertItem(0, "Current format · " + QString::fromUtf8(format), QString::fromUtf8(format));
+			formatIndex = 0;
+		}
+		recordFormat->setCurrentIndex(formatIndex);
+		recordFormat->setEnabled(!customOutput);
+		recordFormat->setToolTip(customOutput ? "Custom FFmpeg recording uses its own format; configure it in Advanced OBS options." :
+			"Applies the next time a recording starts.");
 		for (auto it = bitrateFields.cbegin(); it != bitrateFields.cend(); ++it)
 			it.value()->setValue(PulseOutputBitrates::Read(Config(), it.key()));
 	};
 	auto *profileReadyTimer = new QTimer(recordPath);
-	connect(profileReadyTimer, &QTimer::timeout, recordPath, [this, profileReadyTimer, refreshProfileSettings] {
-		if (!Config()) return;
+	connect(profileReadyTimer, &QTimer::timeout, recordPath, [this, refreshProfileSettings, activeProfile = static_cast<config_t *>(nullptr)]() mutable {
+		if (!Config() || Config() == activeProfile) return;
+		activeProfile = Config();
 		refreshProfileSettings();
-		profileReadyTimer->stop();
 	});
-	profileReadyTimer->start(100);
+	profileReadyTimer->start(500);
 	connect(settings, &QPushButton::clicked, recordPath, refreshProfileSettings);
 	recordPath->setAccessibleName("Recording folder");
 	recordPathRow->addWidget(recordPath, 1);
@@ -2648,26 +2738,172 @@ void OBSBasic::InitPulseWeaverShell()
 	recordStatus->setWordWrap(true);
 	recordStatus->setStyleSheet("color:#9eb8d0;");
 	recordCard->addWidget(recordStatus);
-	action(recordCard, "Save recording folder", "Use this folder for the next recording", [this, recordPath, recordStatus] {
+	action(recordCard, "Save recording choices", "Use this folder and format for the next recording", [this, recordPath, recordFormat, recordStatus] {
 		if (!Config()) { recordStatus->setText("Wait for the profile to finish loading."); return; }
+		if (obs_frontend_recording_active()) { recordStatus->setText("Stop recording before changing its folder or format."); return; }
 		const char *mode = config_get_string(Config(), "Output", "Mode");
 		const bool advanced = mode && strcmp(mode, "Advanced") == 0;
+		const char *recordType = advanced ? config_get_string(Config(), "AdvOut", "RecType") : nullptr;
+		const bool customOutput = advanced && recordType && strcmp(recordType, "FFmpeg") == 0;
 		const QString recordSection = advanced ? "AdvOut" : "SimpleOutput";
-		const QString recordKey = advanced ? "RecFilePath" : "FilePath";
+		const QString recordKey = customOutput ? "FFFilePath" : advanced ? "RecFilePath" : "FilePath";
 		const QString path = recordPath->text().trimmed();
 		if (path.isEmpty() || !QDir(path).exists()) { recordStatus->setText("Choose an existing folder first."); return; }
+		if (!customOutput && recordFormat->currentIndex() < 0) {
+			recordStatus->setText("Choose a supported recording format first."); return;
+		}
 		config_set_string(Config(), recordSection.toUtf8().constData(), recordKey.toUtf8().constData(), path.toUtf8().constData());
-		config_save_safe(Config(), "tmp", nullptr);
-		recordStatus->setText("Saved for the next recording.");
+		if (!customOutput)
+			config_set_string(Config(), recordSection.toUtf8().constData(), "RecFormat2", recordFormat->currentData().toString().toUtf8().constData());
+		recordStatus->setText(config_save_safe(Config(), "tmp", nullptr) == CONFIG_SUCCESS ?
+			"Saved for the next recording." : "Could not save the active profile. Check its folder permissions.");
 	});
-	auto *vodCard = card(soundSection, "Twitch VOD and audio devices", "Your Twitch VOD track and device assignments remain in the OBS engine audio settings. Check them before a live show, especially when excluding music from other destinations.");
-	action(vodCard, "Open track and device settings", "Open OBS audio output settings", [this] { on_action_Settings_triggered(); });
+	auto *vodCard = card(soundSection, "Twitch VOD track", "Choose a separate VOD track and decide which audio source it contains. This is independent of YouTube and Kick source exclusions.");
+	auto *vodEnabled = new QCheckBox("Use a separate Twitch VOD track");
+	vodCard->addWidget(vodEnabled);
+	auto *vodTrack = new QComboBox;
+	for (int track = 1; track <= 6; ++track) vodTrack->addItem("Audio track " + QString::number(track), track);
+	vodCard->addWidget(vodTrack);
+	auto *vodSource = new QComboBox;
+	vodSource->setAccessibleName("Audio source for Twitch VOD membership");
+	vodSource->addItem("Choose an audio source", QString());
+	vodCard->addWidget(vodSource);
+	auto *vodInclude = new QCheckBox("Include this source in the VOD track");
+	vodCard->addWidget(vodInclude);
+	auto *vodStatus = new QLabel("Choose a source to inspect its VOD track membership.");
+	vodStatus->setWordWrap(true);
+	vodCard->addWidget(vodStatus);
+	auto refreshVodMembership = [vodTrack, vodSource, vodInclude] {
+		OBSSourceAutoRelease source = obs_get_source_by_uuid(vodSource->currentData().toString().toUtf8().constData());
+		const QSignalBlocker blocker(vodInclude);
+		vodInclude->setEnabled(source && vodTrack->isEnabled());
+		vodInclude->setChecked(source && (obs_source_get_audio_mixers(source) & (1u << (vodTrack->currentData().toInt() - 1))));
+	};
+	connect(vodSource, &QComboBox::currentIndexChanged, vodInclude, [refreshVodMembership](int) { refreshVodMembership(); });
+	connect(vodTrack, &QComboBox::currentIndexChanged, vodInclude, [refreshVodMembership](int) { refreshVodMembership(); });
+	auto refreshVod = [this, vodEnabled, vodTrack, vodSource, refreshVodMembership] {
+		if (!Config()) return;
+		const char *mode = config_get_string(Config(), "Output", "Mode");
+		const bool advanced = mode && strcmp(mode, "Advanced") == 0;
+		vodEnabled->setChecked(config_get_bool(Config(), advanced ? "AdvOut" : "SimpleOutput", "VodTrackEnabled"));
+		vodTrack->setCurrentIndex(advanced ? std::clamp(int(config_get_int(Config(), "AdvOut", "VodTrackIndex")), 1, 6) - 1 : 1);
+		vodTrack->setEnabled(advanced);
+		const QString chosen = vodSource->currentData().toString();
+		vodSource->clear();
+		vodSource->addItem("Choose an audio source", QString());
+		obs_enum_sources([](void *opaque, obs_source_t *source) {
+			if (obs_source_get_output_flags(source) & OBS_SOURCE_AUDIO)
+				static_cast<QComboBox *>(opaque)->addItem(QString::fromUtf8(obs_source_get_name(source)),
+					QString::fromUtf8(obs_source_get_uuid(source)));
+			return true;
+		}, vodSource);
+		vodSource->setCurrentIndex(std::max(0, vodSource->findData(chosen)));
+		refreshVodMembership();
+	};
+	connect(settings, &QPushButton::clicked, vodCard->parentWidget(), refreshVod);
+	action(vodCard, "Save Twitch VOD routing", "Save the track and source membership for the next broadcast", [this, vodEnabled, vodTrack, vodSource, vodInclude, vodStatus] {
+		if (!Config()) { vodStatus->setText("Wait for the profile to finish loading."); return; }
+		if (obs_frontend_streaming_active()) { vodStatus->setText("Stop streaming before changing the VOD route."); return; }
+		const QString sourceUuid = vodSource->currentData().toString();
+		OBSSourceAutoRelease source = sourceUuid.isEmpty() ? nullptr : obs_get_source_by_uuid(sourceUuid.toUtf8().constData());
+		if (!sourceUuid.isEmpty() && !source) { vodStatus->setText("The selected audio source is missing. Reopen Settings and choose it again."); return; }
+		config_set_bool(Config(), "SimpleOutput", "VodTrackEnabled", vodEnabled->isChecked());
+		config_set_bool(Config(), "AdvOut", "VodTrackEnabled", vodEnabled->isChecked());
+		if (vodTrack->isEnabled()) config_set_int(Config(), "AdvOut", "VodTrackIndex", vodTrack->currentData().toInt());
+		if (config_save_safe(Config(), "tmp", nullptr) != CONFIG_SUCCESS) {
+			vodStatus->setText("Could not save the VOD setting to the active profile."); return;
+		}
+		if (source) {
+			const uint32_t bit = 1u << (vodTrack->currentData().toInt() - 1);
+			const uint32_t oldMask = obs_source_get_audio_mixers(source);
+			obs_source_set_audio_mixers(source, vodInclude->isChecked() ? oldMask | bit : oldMask & ~bit);
+			SaveProject();
+		}
+		vodStatus->setText("Saved for the next Twitch broadcast. Check the mixer before going live.");
+	});
+	action(vodCard, "Advanced audio tracks", "Open OBS track names, encoders and monitoring settings", [this] { on_action_Settings_triggered(); });
 
 	auto *sourceSection = section("Sources and canvas", "Keep device capture, resolution and framing near the live stage editor.");
 	auto *sourceCard = card(sourceSection, "Capture devices", "Add or change a camera, game capture or screen source in Camera. Show has a quick game-window picker.");
 	action(sourceCard, "Edit cameras and sources", "Open Camera source editing", [this] { SetPulseWeaverWorkspace(2); });
 	action(sourceCard, "Choose a game window", "Open Show's Game Capture selector", [this] { SetPulseWeaverWorkspace(0); });
-	action(sourceCard, "Video resolution and frame rate", "Open the OBS engine video settings", [this] { on_action_Settings_triggered(); });
+	auto *videoCard = card(sourceSection, "Canvas and frame rate", "Set the base and output size for the active profile. Changes take effect after restarting Pulse Weaver; review saved looks after changing a canvas size.");
+	auto *videoForm = new QFormLayout;
+	videoCard->addLayout(videoForm);
+	auto *baseWidth = new QSpinBox;
+	auto *baseHeight = new QSpinBox;
+	auto *outputWidth = new QSpinBox;
+	auto *outputHeight = new QSpinBox;
+	for (QSpinBox *field : {baseWidth, baseHeight, outputWidth, outputHeight}) {
+		field->setRange(320, 7680);
+		field->setSingleStep(16);
+		field->setEnabled(false);
+	}
+	auto *baseSize = new QWidget;
+	auto *baseRow = new QHBoxLayout(baseSize);
+	baseRow->setContentsMargins(0, 0, 0, 0);
+	baseRow->addWidget(baseWidth);
+	baseRow->addWidget(new QLabel("×"));
+	baseRow->addWidget(baseHeight);
+	videoForm->addRow("Base canvas", baseSize);
+	auto *outputSize = new QWidget;
+	auto *outputRow = new QHBoxLayout(outputSize);
+	outputRow->setContentsMargins(0, 0, 0, 0);
+	outputRow->addWidget(outputWidth);
+	outputRow->addWidget(new QLabel("×"));
+	outputRow->addWidget(outputHeight);
+	videoForm->addRow("Output size", outputSize);
+	auto *frameRate = new QComboBox;
+	for (const QString &rate : {QString("24"), QString("25"), QString("30"), QString("50"), QString("60")})
+		frameRate->addItem(rate + " fps", rate);
+	frameRate->setEnabled(false);
+	videoForm->addRow("Frame rate", frameRate);
+	auto *videoStatus = new QLabel("Profile video settings load when you open Settings.");
+	videoStatus->setWordWrap(true);
+	videoCard->addWidget(videoStatus);
+	auto refreshVideo = [this, baseWidth, baseHeight, outputWidth, outputHeight, frameRate] {
+		if (!Config()) return;
+		baseWidth->setValue(int(config_get_uint(Config(), "Video", "BaseCX")));
+		baseHeight->setValue(int(config_get_uint(Config(), "Video", "BaseCY")));
+		outputWidth->setValue(int(config_get_uint(Config(), "Video", "OutputCX")));
+		outputHeight->setValue(int(config_get_uint(Config(), "Video", "OutputCY")));
+		for (QSpinBox *field : {baseWidth, baseHeight, outputWidth, outputHeight}) field->setEnabled(true);
+		const QString current = QString::fromUtf8(config_get_string(Config(), "Video", "FPSCommon"));
+		const bool common = config_get_uint(Config(), "Video", "FPSType") == 0;
+		int index = common ? frameRate->findData(current) : -1;
+		if (index < 0) {
+			const int old = frameRate->findData(QString());
+			if (old >= 0) frameRate->removeItem(old);
+			frameRate->addItem(common ? "Current · " + current + " fps" : "Current custom frame rate", QString());
+			index = frameRate->count() - 1;
+		}
+		frameRate->setCurrentIndex(index);
+		frameRate->setEnabled(true);
+	};
+	connect(settings, &QPushButton::clicked, videoCard->parentWidget(), refreshVideo);
+	action(videoCard, "Save canvas and frame rate", "Save video settings for the next app start", [this, baseWidth, baseHeight, outputWidth, outputHeight, frameRate, videoStatus] {
+		if (!Config()) { videoStatus->setText("Wait for the profile to finish loading."); return; }
+		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+			videoStatus->setText("Stop outputs before changing video settings."); return;
+		}
+		const int bw = baseWidth->value(), bh = baseHeight->value();
+		const int ow = outputWidth->value(), oh = outputHeight->value();
+		if (bw < 320 || bh < 320 || ow < 320 || oh < 320 || ow > bw || oh > bh) {
+			videoStatus->setText("Output size must fit within the base canvas."); return;
+		}
+		config_set_uint(Config(), "Video", "BaseCX", bw);
+		config_set_uint(Config(), "Video", "BaseCY", bh);
+		config_set_uint(Config(), "Video", "OutputCX", ow);
+		config_set_uint(Config(), "Video", "OutputCY", oh);
+		const QString rate = frameRate->currentData().toString();
+		if (!rate.isEmpty()) {
+			config_set_uint(Config(), "Video", "FPSType", 0);
+			config_set_string(Config(), "Video", "FPSCommon", rate.toUtf8().constData());
+		}
+		videoStatus->setText(config_save_safe(Config(), "tmp", nullptr) == CONFIG_SUCCESS ?
+			"Saved. Restart Pulse Weaver for video changes to apply, then review both canvas layouts." :
+			"Could not save the active profile. Check its folder permissions.");
+	});
 
 	auto *systemSection = section("Automation and app", "Keep Lumia connection, appearance, updates and recovery discoverable from the same settings workspace.");
 	auto *apiCard = card(systemSection, "Local automation API", "Lumia connects to this port on this PC. Changing it requires restarting Pulse Weaver and matching the port in Lumia.");
@@ -2744,6 +2980,11 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseYouTubeChatTimer->setInterval(4000);
 	connect(pulseYouTubeChatTimer, &QTimer::timeout, this, &OBSBasic::PollPulseWeaverYouTubeChat);
 	SetPulseWeaverWorkspace(0);
+	// A new scene collection opens with a concrete first step. Existing stage
+	// catalogues continue to open on Show for fast day-to-day operation.
+	QTimer::singleShot(0, this, [this] {
+		if (loadPulseWeaverStages().isEmpty()) SetPulseWeaverWorkspace(4);
+	});
 	QTimer::singleShot(0, this, &OBSBasic::RefreshPulseWeaverChatComposer);
 }
 

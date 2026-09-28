@@ -60,6 +60,7 @@
 #include <cmath>
 #include <limits>
 #include <mutex>
+#include <tuple>
 #include <utility>
 
 #ifdef _WIN32
@@ -1028,8 +1029,13 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	auto *swapFocusButton = new QPushButton("Swap focus", canvasCard);
 	swapFocusButton->setAccessibleName("Swap the large and supporting sources on both canvases");
 	swapFocusButton->setToolTip("Swap the main and inset sources, keeping each source's own crop. Save the look when it is right.");
+	auto *chooseLayoutButton = new QPushButton("Choose sources + layout…", canvasCard);
+	chooseLayoutButton->setAccessibleName("Choose the main source, supporting source and layout for both canvases");
+	chooseLayoutButton->setToolTip("Preview a main source and supporting source on both canvases. Undo or save the look afterwards.");
+	canvasShortcuts->addWidget(chooseLayoutButton);
 	canvasShortcuts->addWidget(swapFocusButton);
 	canvasLayout->addLayout(canvasShortcuts);
+	connect(chooseLayoutButton, &QPushButton::clicked, this, [this] { chooseQuickLayout(); });
 	connect(swapFocusButton, &QPushButton::clicked, this, [this] { swapFocus(); });
 	auto *layerRail = new QFrame;
 	layerRail->setObjectName("PulseWeaverCard");
@@ -1379,6 +1385,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	connect(saveButton, &QPushButton::clicked, this, [this] { saveEditorAction(); });
 	connect(remove, &QPushButton::clicked, this, [this] { deleteEditorAction(); });
 	connect(run, &QPushButton::clicked, this, [this] {
+		if (draftDirty) { setStatus("Save this preview before applying it to the live output.", true); return; }
 		if (editingId.isEmpty()) saveEditorAction();
 		if (editingId.isEmpty()) return;
 		const QJsonObject result = runAction(editingId);
@@ -2280,6 +2287,142 @@ void PulseMotionEngine::adaptPortrait()
 	setStatus("Portrait adapted. Review the framing, then save. Chatty remains full canvas; Undo restores the previous draft.");
 }
 
+void PulseMotionEngine::chooseQuickLayout()
+{
+	if (!draftScene || !kindField || kindField->currentData().toString() != "layout" || pairedContainer.isEmpty()) {
+		setStatus("Choose a saved stage look with landscape and portrait canvases first.", true);
+		return;
+	}
+	struct Choice { QString name; QString uuid; double area; };
+	std::vector<Choice> choices;
+	for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
+		OBSSceneItem item = draftItem(it.key());
+		if (!item) continue;
+		obs_source_t *source = obs_sceneitem_get_source(item);
+		const QString name = QString::fromUtf8(obs_source_get_name(source));
+		const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
+		const Transform frame = capture(item);
+		if (frame.locked || motionGraphicSwitch(name, source) ||
+			std::any_of(choices.begin(), choices.end(), [&](const Choice &choice) { return choice.uuid == uuid; })) continue;
+		const double width = frame.boundsType == OBS_BOUNDS_NONE ?
+			std::max(1, int(obs_source_get_width(source))) * std::abs(frame.scale.x) : frame.bounds.x;
+		const double height = frame.boundsType == OBS_BOUNDS_NONE ?
+			std::max(1, int(obs_source_get_height(source))) * std::abs(frame.scale.y) : frame.bounds.y;
+		choices.push_back({name, uuid, frame.visible ? width * height : 0.0});
+	}
+	if (choices.size() < 2) {
+		setStatus("Add two content sources to this stage with + Source, then choose their layout.", true);
+		return;
+	}
+	std::stable_sort(choices.begin(), choices.end(), [](const Choice &a, const Choice &b) { return a.area > b.area; });
+	QDialog dialog(editor);
+	dialog.setWindowTitle("Choose sources and layout");
+	auto *layout = new QVBoxLayout(&dialog);
+	auto *help = new QLabel("Choose the large source and the supporting source. Both canvases change in the preview only; Save look makes this arrangement available on output.", &dialog);
+	help->setWordWrap(true);
+	layout->addWidget(help);
+	auto *form = new QFormLayout;
+	layout->addLayout(form);
+	auto *main = new QComboBox(&dialog);
+	auto *support = new QComboBox(&dialog);
+	for (const Choice &choice : choices) {
+		main->addItem(choice.name, choice.uuid);
+		support->addItem(choice.name, choice.uuid);
+	}
+	support->setCurrentIndex(1);
+	form->addRow("Large source", main);
+	form->addRow("Supporting source", support);
+	auto *style = new QComboBox(&dialog);
+	style->addItem("Main + corner", "corner");
+	style->addItem("Side by side", "split");
+	style->addItem("Full screen main", "full");
+	form->addRow("Layout", style);
+	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+	buttons->button(QDialogButtonBox::Ok)->setText("Preview layout");
+	layout->addWidget(buttons);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	if (dialog.exec() != QDialog::Accepted) return;
+	const QString mainUuid = main->currentData().toString();
+	const QString supportUuid = support->currentData().toString();
+	if (mainUuid == supportUuid) {
+		setStatus("Choose two different sources. Use Full screen main to hide the supporting source.", true);
+		return;
+	}
+	const QString activeCanvas = draftContainer;
+	const QString otherCanvas = activeCanvas == mainContainer ? pairedContainer : mainContainer;
+	auto itemsForCurrent = [this, &mainUuid, &supportUuid] {
+		std::pair<qint64, qint64> ids{-1, -1};
+		for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
+			OBSSceneItem item = draftItem(it.key());
+			if (!item) continue;
+			const QString uuid = QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item)));
+			if (uuid == mainUuid) ids.first = it.key();
+			if (uuid == supportUuid) ids.second = it.key();
+		}
+		return ids;
+	};
+	const auto firstIds = itemsForCurrent();
+	activateDraft(otherCanvas);
+	const auto otherIds = itemsForCurrent();
+	activateDraft(activeCanvas);
+	if (firstIds.first < 0 || firstIds.second < 0 || otherIds.first < 0 || otherIds.second < 0) {
+		setStatus("Both sources must be in both canvases. Use + Source on the missing canvas, then try again.", true);
+		return;
+	}
+	const QString selectedStyle = style->currentData().toString();
+	recordingPairedSwap = true;
+	auto applyCurrent = [this, &mainUuid, &supportUuid, &selectedStyle] {
+		rememberDraft();
+		const float width = float(obs_source_get_width(obs_scene_get_source(draftScene)));
+		const float height = float(obs_source_get_height(obs_scene_get_source(draftScene)));
+		const bool portrait = draftContainer == pairedContainer;
+		for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
+			OBSSceneItem item = draftItem(it.key());
+			if (!item) continue;
+			obs_source_t *source = obs_sceneitem_get_source(item);
+			const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
+			const QString name = QString::fromUtf8(obs_source_get_name(source));
+			Transform frame = capture(item);
+			if (frame.locked || motionGraphicSwitch(name, source)) continue;
+			const bool isMain = uuid == mainUuid;
+			const bool isSupport = uuid == supportUuid;
+			if (!isMain && !isSupport) { frame.visible = false; apply(item, frame, true); includeDraftItem(it.key()); continue; }
+			frame.visible = isMain || selectedStyle != "full";
+			frame.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+			frame.boundsAlignment = OBS_ALIGN_CENTER;
+			frame.boundsCrop = true;
+			frame.boundsType = OBS_BOUNDS_SCALE_OUTER;
+			frame.scale = {frame.scale.x < 0 ? -1.0f : 1.0f, frame.scale.y < 0 ? -1.0f : 1.0f};
+			frame.order = isMain ? 0 : 1;
+			if (portrait) {
+				frame.pos = isMain ? vec2{0, height / 3} : vec2{0, 0};
+				frame.bounds = isMain ? vec2{width, height * 2 / 3} : vec2{width, height / 3};
+			} else if (selectedStyle == "split") {
+				frame.pos = isMain ? vec2{0, 0} : vec2{width / 2, 0};
+				frame.bounds = {width / 2, height};
+			} else {
+				frame.pos = isMain ? vec2{0, 0} : vec2{width * .72f, height * .04f};
+				frame.bounds = isMain ? vec2{width, height} : vec2{width * .25f, height * .28f};
+			}
+			if (selectedStyle == "full" && isMain) { frame.pos = {0, 0}; frame.bounds = {width, height}; }
+			apply(item, frame, true);
+			includeDraftItem(it.key());
+		}
+		refreshDraftRows();
+	};
+	applyCurrent();
+	activateDraft(otherCanvas);
+	applyCurrent();
+	activateDraft(activeCanvas);
+	recordingPairedSwap = false;
+	pairedSwapCanvases = {activeCanvas, otherCanvas};
+	pairedSwapState = 1;
+	refreshDraftRows();
+	syncVisualCanvas();
+	setStatus("Previewing " + style->currentText() + " with “" + main->currentText() + "” and “" + support->currentText() + "”. Review both canvases, then Save look.");
+}
+
 void PulseMotionEngine::swapFocus()
 {
 	if (!draftScene || !kindField || kindField->currentData().toString() != "layout") {
@@ -3014,9 +3157,29 @@ void PulseMotionEngine::openShowWizard()
 	});
 	static_cast<QVBoxLayout *>(overlays->layout())->addStretch();
 
-	auto *sound = makePage("Route optional music", "Choose a dedicated music source if it should stay on Twitch but be excluded from YouTube and Kick.");
+	auto *sound = makePage("Set up sound", "Choose desktop and microphone devices, then optionally route a separate music source away from YouTube and Kick.");
 	auto *soundForm = new QFormLayout;
 	sound->layout()->addItem(soundForm);
+	QMap<int, QComboBox *> audioChoices;
+	for (const auto &[channel, label, sourceId] : std::vector<std::tuple<int, QString, QString>>{
+		{1, "Desktop audio", "wasapi_output_capture"}, {3, "Microphone", "wasapi_input_capture"}}) {
+		auto *choice = new QComboBox(sound);
+		choice->addItem("Keep current device", QString());
+		choice->addItem("Disabled", "disabled");
+		obs_properties_t *properties = obs_get_source_properties(sourceId.toUtf8().constData());
+		obs_property_t *devices = properties ? obs_properties_get(properties, "device_id") : nullptr;
+		if (devices) for (size_t i = 0; i < obs_property_list_item_count(devices); ++i) {
+			const char *name = obs_property_list_item_name(devices, i);
+			const char *id = obs_property_list_item_string(devices, i);
+			if (name && id) choice->addItem(QString::fromUtf8(name), QString::fromUtf8(id));
+		}
+		if (properties) obs_properties_destroy(properties);
+		soundForm->addRow(label, choice);
+		audioChoices.insert(channel, choice);
+	}
+	auto *audioHelp = new QLabel("Keep current device preserves an existing scene collection. On a fresh setup, choose your actual desktop and microphone devices here. Additional devices are available in Settings → Sound and recording.", sound);
+	audioHelp->setWordWrap(true);
+	sound->layout()->addWidget(audioHelp);
 	auto *musicSource = new QComboBox(sound);
 	musicSource->setAccessibleName("Music source excluded from YouTube and Kick");
 	musicSource->addItem("No dedicated music source", QString());
@@ -3143,8 +3306,12 @@ void PulseMotionEngine::openShowWizard()
 		QJsonObject framing;
 		for (auto it = framingChoices.cbegin(); it != framingChoices.cend(); ++it)
 			if (!it.value()->currentData().toJsonObject().isEmpty()) framing.insert(it.key(), it.value()->currentData().toJsonObject());
+		QJsonObject selectedAudio;
+		for (auto it = audioChoices.cbegin(); it != audioChoices.cend(); ++it)
+			selectedAudio.insert(QString::number(it.key()), it.value()->currentData().toString());
 		QJsonObject choices{{"name", showName->text().trimmed()}, {"roles", roleIds}, {"newSources", sourceSpecs}, {"stages", chosenStages},
 			{"framing", framing}, {"musicSource", excludeMusic->isChecked() ? musicSource->currentData().toString() : QString()},
+			{"audioDevices", selectedAudio},
 			{"style", styles->currentItem() ? styles->currentItem()->data(Qt::UserRole).toString() : QString("corner")},
 			{"transition", transition->currentData().toString()}};
 		const QJsonObject result = createGuidedShow(choices);
@@ -3190,6 +3357,22 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 	const QJsonArray requested = choices.value("stages").toArray();
 	if (requested.isEmpty()) return {{"ok", false}, {"message", "Choose at least one stage."}};
 	const QJsonObject roleFraming = choices.value("framing").toObject();
+	QMap<int, QString> selectedAudio;
+	const QJsonObject audioChoices = choices.value("audioDevices").toObject();
+	for (const int channel : {1, 3}) {
+		const QString device = audioChoices.value(QString::number(channel)).toString();
+		if (device.isEmpty() || device == "disabled") { selectedAudio.insert(channel, device); continue; }
+		const char *sourceId = channel == 1 ? "wasapi_output_capture" : "wasapi_input_capture";
+		obs_properties_t *properties = obs_get_source_properties(sourceId);
+		obs_property_t *list = properties ? obs_properties_get(properties, "device_id") : nullptr;
+		bool found = false;
+		if (list) for (size_t i = 0; i < obs_property_list_item_count(list); ++i)
+			if (device == QString::fromUtf8(obs_property_list_item_string(list, i))) { found = true; break; }
+		if (properties) obs_properties_destroy(properties);
+		if (!found)
+			return {{"ok", false}, {"message", "The selected audio device is unavailable. Reopen the sound step and choose another device."}};
+		selectedAudio.insert(channel, device);
+	}
 	QString musicName;
 	const QString musicUuid = choices.value("musicSource").toString();
 	if (!musicUuid.isEmpty()) {
@@ -3310,6 +3493,23 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 	};
 	const QString collection = motionCollection();
 	QMap<QString, QString> createdRoleIds;
+	QMap<int, obs_source_t *> newAudioSources;
+	for (auto it = selectedAudio.cbegin(); it != selectedAudio.cend(); ++it) {
+		if (it.value().isEmpty() || it.value() == "disabled") continue;
+		OBSSourceAutoRelease current = obs_get_output_source(it.key());
+		if (current) continue;
+		const QString label = it.key() == 1 ? "Desktop audio" : "Microphone";
+		const QString name = prefix + " · " + label;
+		OBSSourceAutoRelease nameInUse = obs_get_source_by_name(name.toUtf8().constData());
+		if (nameInUse) return fail("An audio source named “" + name + "” already exists. Choose another show name.");
+		OBSDataAutoRelease audioSettings = obs_data_create();
+		obs_data_set_string(audioSettings, "device_id", it.value().toUtf8().constData());
+		obs_source_t *source = obs_source_create(it.key() == 1 ? "wasapi_output_capture" : "wasapi_input_capture",
+			name.toUtf8().constData(), audioSettings, nullptr);
+		if (!source) return fail("Could not create the selected " + label + " device.");
+		createdSources.push_back(source);
+		newAudioSources.insert(it.key(), source);
+	}
 	for (auto it = newSourceSpecs.begin(); it != newSourceSpecs.end(); ++it) {
 		if (!std::any_of(selected.begin(), selected.end(), [&](const QJsonValue &value) { return value.toString() == "new:" + it.key(); })) continue;
 		const QJsonObject spec = it.value().toObject();
@@ -3536,6 +3736,20 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 		actions = oldActions;
 		save();
 		return fail("Could not save the new Stage catalogue. The new scenes and looks were rolled back.");
+	}
+	for (auto it = selectedAudio.cbegin(); it != selectedAudio.cend(); ++it) {
+		if (it.value().isEmpty()) continue;
+		if (it.value() == "disabled") { obs_set_output_source(it.key(), nullptr); continue; }
+		if (newAudioSources.contains(it.key())) {
+			obs_set_output_source(it.key(), newAudioSources.value(it.key()));
+		} else {
+			OBSSourceAutoRelease current = obs_get_output_source(it.key());
+			if (current) {
+				OBSDataAutoRelease settings = obs_source_get_settings(current);
+				obs_data_set_string(settings, "device_id", it.value().toUtf8().constData());
+				obs_source_update(current, settings);
+			}
+		}
 	}
 	obs_frontend_save();
 	for (obs_source_t *source : createdSources) obs_source_release(source);
