@@ -1,6 +1,6 @@
 # Build a show in Pulse Weaver
 
-This guide applies to Pulse Weaver 1.14 unstable 5. A new setup opens at **Settings → Start here**. Existing setups continue to open on Show.
+This guide applies to Pulse Weaver 1.14 unstable 6. A new setup opens at **Settings → Start here**. Existing setups continue to open on Show.
 
 1. Open **Show Control** and click **Build my show…** beside the Stage selector on a fresh install. If you already have stages, click **Control** in the Show heading, then **Build my show…**. You can start with an empty scene collection.
 2. Name the show and tick the stages you want: Starting, Hangout, Gameplay, BRB/Ending, and Raid/Shoutout. Click **Next**.
@@ -28,7 +28,7 @@ The picker changes only the selected Game Capture source's target window. Its au
 3. Open **Settings → Sources and canvas**. Check the base canvas, output size and frame rate. Click **Save canvas and frame rate** if changing them, restart Pulse Weaver, then review landscape and portrait looks.
 4. In **Settings → Destinations**, check the Kick and YouTube bitrates and save them for the next output start. Kick has a landscape bitrate only. Choose the actual live destinations on Show.
 5. Under **Twitch VOD track**, enable the separate track and choose its track number when using Advanced output. Simple output uses track 2. Under **Audio track names**, give the tracks useful names, such as Live, VOD and Recording, then save.
-6. Under **Audio monitoring**, choose the device on which you hear locally monitored sources. Under **Audio source routing**, tick which of the six tracks contains each source, choose Off, Monitor only, or Monitor + output, and click **Save audio source routing**. These track checks determine which sources reach the Twitch VOD track; they do not change YouTube or Kick source exclusions. Stop outputs before saving and check the mixer before going live.
+6. Under **Audio monitoring**, choose the device on which you hear locally monitored sources. Under **Audio source routing**, tick which of the six tracks contains each source, choose Off, Monitor only, or Monitor + output, and click **Save audio source routing**. The matrix shows your saved track membership even when a stage temporarily uses other tracks for provider exclusions. These checks determine which sources reach the Twitch VOD track; they do not change YouTube or Kick source exclusions. Stop outputs before saving and check the mixer before going live.
 7. Advanced encoders and custom FFmpeg recording still use **Advanced OBS options**. Keep the current settings unless you intend to change the relevant output profile.
 
 ## If a source is missing

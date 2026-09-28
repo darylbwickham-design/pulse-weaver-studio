@@ -2672,6 +2672,7 @@ void OBSBasic::InitPulseWeaverShell()
 				deviceStatus->setText("Refresh available devices before saving."); return;
 			}
 		}
+		RestorePulseWeaverAudioRouting();
 		for (auto it = audioDevices.cbegin(); it != audioDevices.cend(); ++it) {
 			const bool input = it.key() >= 3;
 			const QByteArray device = it.value()->currentData().toString().toUtf8();
@@ -2679,8 +2680,8 @@ void OBSBasic::InitPulseWeaverShell()
 			ResetAudioDevice(input ? App()->InputAudioSource() : App()->OutputAudioSource(),
 				device.constData(), label.constData(), it.key());
 		}
-		SaveProject();
-		deviceStatus->setText("Audio devices saved to this scene collection.");
+		SaveProjectNow();
+		deviceStatus->setText("Audio devices saved. Stage exclusions return when you select a stage or start an output.");
 	});
 	auto *recordCard = card(soundSection, "Recording", "Choose where your recordings are saved. A new location takes effect when the next recording starts.");
 	auto *recordPathRow = new QHBoxLayout;
@@ -2905,7 +2906,8 @@ void OBSBasic::InitPulseWeaverShell()
 			name->setData(Qt::UserRole, QString::fromUtf8(obs_source_get_uuid(source)));
 			name->setFlags(Qt::ItemIsEnabled);
 			table->setItem(row, 0, name);
-			const uint32_t mask = obs_source_get_audio_mixers(source);
+			const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
+			const uint32_t mask = pulseAudioMixerBaselines.value(uuid, obs_source_get_audio_mixers(source));
 			for (int track = 0; track < 6; ++track) {
 				auto *item = new QTableWidgetItem;
 				item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
@@ -2936,6 +2938,11 @@ void OBSBasic::InitPulseWeaverShell()
 			OBSSourceAutoRelease source = uuid.isEmpty() ? nullptr : obs_get_source_by_uuid(uuid.constData());
 			if (!source) { mixStatus->setText("An audio source changed since this list opened. Refresh and review before saving."); return; }
 		}
+		/* A selected stage can temporarily own tracks for provider-specific
+		 * exclusions. Persist only the operator's baseline membership. The
+		 * current stage will rebuild its temporary routes when selected or
+		 * before the next output starts. */
+		RestorePulseWeaverAudioRouting();
 		for (int row = 0; row < mixTable->rowCount(); ++row) {
 			const QByteArray uuid = mixTable->item(row, 0)->data(Qt::UserRole).toString().toUtf8();
 			OBSSourceAutoRelease source = obs_get_source_by_uuid(uuid.constData());
@@ -2947,8 +2954,8 @@ void OBSBasic::InitPulseWeaverShell()
 			auto *monitor = qobject_cast<QComboBox *>(mixTable->cellWidget(row, 7));
 			if (monitor) obs_source_set_monitoring_type(source, obs_monitoring_type(monitor->currentData().toInt()));
 		}
-		SaveProject();
-		mixStatus->setText("Audio routing saved to this scene collection. Review the mixer before going live.");
+		SaveProjectNow();
+		mixStatus->setText("Audio routing saved. Stage exclusions are rebuilt when you select a stage or start an output. Review the mixer before going live.");
 	});
 
 	auto *sourceSection = section("Sources and canvas", "Keep device capture, resolution and framing near the live stage editor.");
