@@ -154,6 +154,7 @@ bool YoutubeApiWrappers::UpdateAccessToken()
 		return false;
 	}
 	token = json_out["access_token"].string_value();
+	expire_time = uint64_t(QDateTime::currentSecsSinceEpoch()) + std::max(60, json_out["expires_in"].int_value());
 	return token.empty() ? false : true;
 }
 
@@ -511,6 +512,28 @@ bool YoutubeApiWrappers::GetLiveChatId(const QString &broadcast_id, QString &cha
 	return !chat_id.isEmpty();
 }
 
+static void parseYouTubeChatEvents(const Json &json, QVector<YoutubeChatEvent> &events)
+{
+	events.clear();
+	for (const Json &item : json["items"].array_items()) {
+		const Json snippet = item["snippet"];
+		const Json author = item["authorDetails"];
+		QStringList badges;
+		if (author["isChatOwner"].bool_value()) badges << "owner";
+		if (author["isChatModerator"].bool_value()) badges << "mod";
+		if (author["isChatSponsor"].bool_value()) badges << "member";
+		if (author["isVerified"].bool_value()) badges << "verified";
+		events.push_back({QString::fromStdString(item["id"].string_value()),
+			PulseYouTubeStream::eventType(QString::fromStdString(snippet["type"].string_value())),
+			QString::fromStdString(author["displayName"].string_value()),
+			QString::fromStdString(snippet["displayMessage"].string_value()),
+			QString::fromStdString(snippet["superChatDetails"]["amountDisplayString"].string_value()),
+			QString::fromStdString(author["channelId"].string_value()), {}, badges,
+			QString::fromStdString(snippet["messageDeletedDetails"]["deletedMessageId"].string_value()),
+			QString::fromStdString(snippet["userBannedDetails"]["bannedUserDetails"]["channelId"].string_value())});
+	}
+}
+
 bool YoutubeApiWrappers::GetLiveChatMessages(const QString &chat_id, QString &page_token,
 		QVector<YoutubeChatEvent> &events, int &poll_interval_ms)
 {
@@ -524,25 +547,49 @@ bool YoutubeApiWrappers::GetLiveChatMessages(const QString &chat_id, QString &pa
 		return false;
 	page_token = QString::fromStdString(json["nextPageToken"].string_value());
 	poll_interval_ms = std::max(1000, json["pollingIntervalMillis"].int_value());
-	events.clear();
-	for (const Json &item : json["items"].array_items()) {
-		const Json snippet = item["snippet"];
-		const Json author = item["authorDetails"];
-		QStringList badges;
-		if (author["isChatOwner"].bool_value()) badges << "owner";
-		if (author["isChatModerator"].bool_value()) badges << "mod";
-		if (author["isChatSponsor"].bool_value()) badges << "member";
-		if (author["isVerified"].bool_value()) badges << "verified";
-		events.push_back({QString::fromStdString(item["id"].string_value()),
-			QString::fromStdString(snippet["type"].string_value()),
-			QString::fromStdString(author["displayName"].string_value()),
-			QString::fromStdString(snippet["displayMessage"].string_value()),
-			QString::fromStdString(snippet["superChatDetails"]["amountDisplayString"].string_value()),
-			QString::fromStdString(author["channelId"].string_value()), {}, badges,
-			QString::fromStdString(snippet["messageDeletedDetails"]["deletedMessageId"].string_value()),
-			QString::fromStdString(snippet["userBannedDetails"]["bannedUserDetails"]["channelId"].string_value())});
-	}
+	parseYouTubeChatEvents(json, events);
 	return true;
+}
+
+PulseYouTubeStream::Result YoutubeApiWrappers::StreamLiveChatMessages(const QString &chatId,
+	const QString &page, const std::function<bool()> &cancelled,
+	const std::function<void(const QString &, const QVector<YoutubeChatEvent> &)> &batch)
+{
+	QString cursor = page;
+	bool received = false;
+	for (int attempt = 0; attempt < 2; ++attempt) {
+		if (cancelled()) return {"cancelled", received};
+		QString access;
+		{
+			std::lock_guard<std::mutex> lock(youtubeApiRequestMutex);
+			const auto pause = quotaPause();
+			if (pause.until) return {pause.reason, received};
+			if (attempt || TokenExpired()) {
+				if (!UpdateAccessToken()) return {"unauthenticated", received};
+				QMetaObject::invokeMethod(this, [this] { SavePulseWeaverAccount(); }, Qt::QueuedConnection);
+			}
+			access = QString::fromStdString(token);
+		}
+		if (access.isEmpty()) return {"unauthenticated", received};
+		const QString executable = QCoreApplication::applicationDirPath() + "/youtube-chat/PulseWeaver.YouTubeChat.exe";
+		auto result = PulseYouTubeStream::run(executable,
+			{{"token", access}, {"chatId", chatId}, {"pageToken", cursor}}, cancelled,
+			[&](const QJsonObject &object) {
+				std::string error;
+				const auto json = Json::parse(QJsonDocument(object).toJson(QJsonDocument::Compact).toStdString(), error);
+				QVector<YoutubeChatEvent> events;
+				parseYouTubeChatEvents(json, events);
+				const QString next = object.value("nextPageToken").toString();
+				if (!next.isEmpty()) cursor = next;
+				batch(cursor, events);
+			});
+		received = received || result.received;
+		if (result.reason == "unauthenticated" && !attempt) continue;
+		PulseYouTubeQuota::record(quotaFile(), quotaKey(), result.reason, 0, QDateTime::currentMSecsSinceEpoch());
+		result.received = received;
+		return result;
+	}
+	return {"unauthenticated", received};
 }
 
 bool YoutubeApiWrappers::DeleteLiveChatMessage(const QString &message_id)

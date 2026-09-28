@@ -43,6 +43,11 @@ foreach ($doc in @('PRIVACY.md','TERMS.md')) { Copy-Item -LiteralPath (Join-Path
 foreach ($doc in @('ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$doc") -Destination (Join-Path $payload 'docs')
 }
+# Publish the isolated gRPC chat transport into every channel's clean payload.
+& dotnet publish (Join-Path $projectRoot 'integrations/youtube-chat-stream/PulseWeaver.YouTubeChat.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o (Join-Path $payload 'bin/64bit/youtube-chat')
+if ($LASTEXITCODE -ne 0) { throw 'YouTube streaming transport publish failed.' }
+Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/youtube-chat-stream/LICENSE-proto.txt') -Destination (Join-Path $payload 'bin/64bit/youtube-chat/LICENSE-proto.txt')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/youtube-chat-stream/README.md') -Destination (Join-Path $payload 'bin/64bit/youtube-chat/README.md')
 $archive = Join-Path $output 'payload.zip'
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive -CompressionLevel Optimal
 $suffix = if ($Channel -eq 'alpha') {'ALPHA'} elseif ($Channel -eq 'unstable') {'UNSTABLE'} else {'RELEASE'}

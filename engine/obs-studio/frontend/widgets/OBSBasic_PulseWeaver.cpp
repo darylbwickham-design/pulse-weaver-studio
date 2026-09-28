@@ -5226,6 +5226,17 @@ bool OBSBasic::PulseWeaverYouTubeChatAvailable() const
 void OBSBasic::PollPulseWeaverYouTubeChat()
 {
 #ifdef YOUTUBE_ENABLED
+	if (pulseYouTubeDestination && pulseYouTubeDestination->currentData().toString() == "off" &&
+	    !pulseYouTubeOutput && !pulseYouTubeSecondOutput) {
+		if (!pulseYouTubeChatSessions.isEmpty()) {
+			pulseYouTubeChatCancellation->fetch_add(1, std::memory_order_acq_rel);
+			++pulseYouTubeChatGeneration;
+			pulseYouTubeChatSessions.clear();
+			pulseYouTubeChatQueue.clear();
+			RefreshPulseWeaverChatComposer();
+		}
+		return;
+	}
 	if (!pulseYouTubeAuth || pulseYouTubeChatSessions.isEmpty())
 		return;
 	const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -5242,12 +5253,51 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 	const quint64 generation = pulseYouTubeChatGeneration;
 	const auto cancellation = pulseYouTubeChatCancellation;
 	const quint64 requestEpoch = cancellation->load(std::memory_order_acquire);
+	if (now >= pulseYouTubeNextSubscriberPoll && !pulseYouTubeBroadcastId.isEmpty()) {
+		pulseYouTubeNextSubscriberPoll = now + 300000;
+		QPointer<OBSBasic> guard(this);
+		pulseStartYouTubeChatWorker(pulseYouTubeChatWorkers, [guard, auth, generation, cancellation, requestEpoch] {
+			QVector<YoutubeSubscriber> subscribers;
+			bool subscribersOk = false;
+			{
+				std::lock_guard<std::mutex> lock(pulseYouTubeChatRequestMutex);
+				if (cancellation->load(std::memory_order_acquire) != requestEpoch) return;
+				subscribersOk = auth->GetRecentSubscribers(subscribers);
+			}
+			if (!guard) return;
+			QMetaObject::invokeMethod(guard, [guard, generation, subscribersOk, subscribers] {
+				if (!guard || guard->pulseYouTubeChatGeneration != generation) return;
+				if (subscribersOk) {
+					QSet<QString> subscriberIds;
+					for (const YoutubeSubscriber &subscriber : subscribers) {
+						subscriberIds.insert(subscriber.id);
+						if (!guard->pulseYouTubeSubscribersSeeded ||
+						    guard->pulseYouTubeSubscriberIds.contains(subscriber.id))
+							continue;
+						const QJsonObject payload{{"id", subscriber.id}, {"user", subscriber.name},
+							{"visibility", "public_subscriber"}};
+						calldata_t data; calldata_init(&data);
+						calldata_set_string(&data, "platform", "youtube");
+						calldata_set_string(&data, "type", "channel.subscribe");
+						const QByteArray json = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+						calldata_set_string(&data, "json", json.constData());
+						proc_handler_call(obs_get_proc_handler(), "pulseweaver_publish", &data);
+						calldata_free(&data);
+					}
+					guard->pulseYouTubeSubscriberIds = subscriberIds;
+					guard->pulseYouTubeSubscribersSeeded = true;
+				}
+			}, Qt::QueuedConnection);
+		});
+	}
 	const QStringList routes = pulseYouTubeChatSessions.keys();
 	for (const QString &route : routes) {
 		auto sessionIt = pulseYouTubeChatSessions.find(route);
 		if (sessionIt == pulseYouTubeChatSessions.end() || sessionIt->suspended || sessionIt->requestPending ||
 		    sessionIt->nextRequestMs > now)
 			continue;
+		if (!sessionIt->liveChatId.isEmpty() &&
+		    PulseYouTubeChat::owner(pulseYouTubeChatSessions, sessionIt->liveChatId) != route) continue;
 		sessionIt->requestPending = true;
 		const QString broadcastId = sessionIt->broadcastId;
 		const QString chatId = sessionIt->liveChatId;
@@ -5309,123 +5359,128 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 			continue;
 		}
 
-		sessionIt->nextRequestMs = now + 4000;
-		const bool pollSubscribers = broadcastId == pulseYouTubeBroadcastId &&
-			now >= pulseYouTubeNextSubscriberPoll;
-		if (pollSubscribers) pulseYouTubeNextSubscriberPoll = now + 300000;
+		const bool useStream = now >= sessionIt->fallbackUntilMs;
 		const bool started = pulseStartYouTubeChatWorker(pulseYouTubeChatWorkers,
-			[guard, auth, route, broadcastId, chatId, page, generation, pollSubscribers,
-			 cancellation, requestEpoch] {
-			QString next = page;
-			QVector<YoutubeChatEvent> events;
-			QVector<YoutubeSubscriber> subscribers;
-			int interval = 4000;
-			bool ok = false;
-			bool subscribersOk = false;
-			QString pollError, pollReason;
-			{
-				std::lock_guard<std::mutex> chatRequestLock(pulseYouTubeChatRequestMutex);
-				if (cancellation->load(std::memory_order_acquire) != requestEpoch)
-					return;
-				ok = auth->GetLiveChatMessages(chatId, next, events, interval);
-				if (!ok) {
-					pollError = auth->GetLastError();
-					pollReason = auth->GetLastErrorReason();
-				}
-				if (ok && pollSubscribers) {
-					if (cancellation->load(std::memory_order_acquire) != requestEpoch)
-						return;
-					subscribersOk = auth->GetRecentSubscribers(subscribers);
-				}
-			}
-			if (!guard)
-				return;
-			QMetaObject::invokeMethod(guard, [guard, route, broadcastId, chatId, generation, ok, next,
-					events, interval, pollSubscribers, subscribersOk, subscribers, pollError, pollReason, auth] {
-				if (!guard || guard->pulseYouTubeChatGeneration != generation)
-					return;
-				auto currentSession = guard->pulseYouTubeChatSessions.find(route);
-				if (currentSession == guard->pulseYouTubeChatSessions.end() ||
-				    currentSession->broadcastId != broadcastId || currentSession->liveChatId != chatId)
-					return;
-				currentSession->requestPending = false;
-				currentSession->nextRequestMs = QDateTime::currentMSecsSinceEpoch() +
-					PulseYouTubeQuota::pollDelay(interval);
-				if (!ok) {
-					PulseYouTubeChat::failed(*currentSession, pollReason, pollError,
-						QDateTime::currentMSecsSinceEpoch(), auth->ApiBlockedUntil());
-					if (guard->pulseChatStatus) {
-						const QString routeName = route == "vertical" ? "9:16" : "16:9";
-						guard->pulseChatStatus->setText("YouTube " + routeName + (currentSession->suspended ? " chat unavailable" : " chat retry delayed") +
-							(pollError.isEmpty() ? QString(".") : ": " + pollError));
+			[guard, auth, route, broadcastId, chatId, page, generation, useStream, cancellation, requestEpoch] {
+			auto cancelled = [auth, cancellation, requestEpoch] {
+				return cancellation->load(std::memory_order_acquire) != requestEpoch ||
+				       auth->ApiBlockedUntil() > QDateTime::currentMSecsSinceEpoch();
+			};
+			auto deliver = [guard, auth, route, broadcastId, chatId, generation, useStream]
+				(const QString &next, const QVector<YoutubeChatEvent> &events, bool finished,
+				 const QString &reason, int interval) {
+				if (!guard) return;
+				QMetaObject::invokeMethod(guard, [guard, auth, route, broadcastId, chatId, generation,
+					next, events, finished, reason, interval, useStream] {
+					if (!guard || guard->pulseYouTubeChatGeneration != generation) return;
+					auto currentSession = guard->pulseYouTubeChatSessions.find(route);
+					if (currentSession == guard->pulseYouTubeChatSessions.end() ||
+					    currentSession->broadcastId != broadcastId || currentSession->liveChatId != chatId) return;
+					const qint64 now = QDateTime::currentMSecsSinceEpoch();
+					if (finished) currentSession->requestPending = false;
+					if (!next.isEmpty()) {
+						for (auto &session : guard->pulseYouTubeChatSessions)
+							if (session.liveChatId == chatId) session.pageToken = next;
 					}
-
-					return;
-				}
-				currentSession->pollIntervalMs = PulseYouTubeQuota::pollDelay(interval);
-				currentSession->failures = 0;
-				currentSession->lastError.clear();
-				currentSession->pageToken = next;
-				if (pollSubscribers)
-					guard->pulseYouTubeNextSubscriberPoll = QDateTime::currentMSecsSinceEpoch() + 300000;
-				if (subscribersOk) {
-					QSet<QString> subscriberIds;
-					for (const YoutubeSubscriber &subscriber : subscribers) {
-						subscriberIds.insert(subscriber.id);
-						if (!guard->pulseYouTubeSubscribersSeeded ||
-						    guard->pulseYouTubeSubscriberIds.contains(subscriber.id))
+					if (!reason.isEmpty()) {
+						PulseYouTubeChat::failed(*currentSession, reason, "YouTube chat: " + reason,
+							now, auth->ApiBlockedUntil());
+						if (PulseYouTubeStream::terminal(reason)) currentSession->suspended = true;
+						if (useStream && PulseYouTubeStream::fallbackEligible(reason)) {
+							++currentSession->streamFailures;
+							if (reason == "streamUnsupported" || currentSession->streamFailures >= 3)
+								currentSession->fallbackUntilMs = now + 15 * 60 * 1000;
+						}
+						for (auto &session : guard->pulseYouTubeChatSessions) {
+							if (session.liveChatId == chatId) {
+								session.suspended = currentSession->suspended;
+								session.nextRequestMs = currentSession->nextRequestMs;
+								session.fallbackUntilMs = currentSession->fallbackUntilMs;
+							}
+						}
+						guard->RefreshPulseWeaverChatComposer();
+						if (guard->pulseChatStatus) {
+							const QString pause = auth->ApiPauseMessage();
+							guard->pulseChatStatus->setText(!pause.isEmpty() ? pause :
+								currentSession->suspended ? "YouTube chat unavailable (" + reason +
+								"). Reconnect YouTube for authentication or permission errors." :
+								currentSession->fallbackUntilMs > now ? "YouTube streaming chat unavailable; using slower polling temporarily." :
+								"YouTube chat connection interrupted; reconnecting with a delay.");
+						}
+						return;
+					}
+					currentSession->pollIntervalMs = PulseYouTubeQuota::pollDelay(interval);
+					currentSession->nextRequestMs = now + currentSession->pollIntervalMs;
+					if (!finished || !useStream) {
+						const bool recovered = !currentSession->lastError.isEmpty();
+						currentSession->failures = 0;
+						if (useStream) currentSession->streamFailures = 0;
+						currentSession->lastError.clear();
+						if (recovered) guard->RefreshPulseWeaverChatComposer();
+					}
+					for (const YoutubeChatEvent &event : events) {
+						if (event.type == "tombstone") {
+							if (!event.id.isEmpty()) PulseChat::markDeleted(guard->pulseChatFeed, "youtube", event.id);
 							continue;
-						const QJsonObject payload{{"id", subscriber.id}, {"user", subscriber.name},
-							{"visibility", "public_subscriber"}};
+						}
+						if (!event.id.isEmpty() && guard->pulseYouTubeSeenMessageIds.contains(event.id))
+							continue;
+						if (!event.id.isEmpty())
+							guard->pulseYouTubeSeenMessageIds.insert(event.id);
+						QString type = "chat.message";
+						if (event.type == "newSponsorEvent") type = "membership.received";
+						else if (event.type == "memberMilestoneChatEvent") type = "membership.milestone";
+						else if (event.type == "membershipGiftingEvent" || event.type == "giftMembershipReceivedEvent") type = "membership.gift";
+						else if (event.type == "superChatEvent") type = "super_chat.received";
+						else if (event.type == "superStickerEvent") type = "super_sticker.received";
+						const QJsonObject payload{{"id", event.id}, {"user", event.user}, {"message", event.message},
+							{"amount", event.amount}, {"youtubeType", event.type}, {"route", route},
+							{"broadcastId", broadcastId}};
 						calldata_t data; calldata_init(&data);
 						calldata_set_string(&data, "platform", "youtube");
-						calldata_set_string(&data, "type", "channel.subscribe");
+						calldata_set_string(&data, "type", type.toUtf8().constData());
 						const QByteArray json = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 						calldata_set_string(&data, "json", json.constData());
 						proc_handler_call(obs_get_proc_handler(), "pulseweaver_publish", &data);
 						calldata_free(&data);
+						if (event.type == "messageDeletedEvent" && !event.deleted_message_id.isEmpty())
+							PulseChat::markDeleted(guard->pulseChatFeed, "youtube", event.deleted_message_id);
+						if (event.type == "userBannedEvent" && !event.banned_user_id.isEmpty())
+							PulseChat::markDeleted(guard->pulseChatFeed, "youtube", {}, event.banned_user_id);
+						if (guard->pulseChatFeed && event.type == "textMessageEvent")
+							pulseAppendUnifiedChat(guard->pulseChatFeed, "youtube", event.user, event.message,
+								event.user_colour, event.badges, event.user_id, event.id, false, chatId, route);
 					}
-					guard->pulseYouTubeSubscriberIds = subscriberIds;
-					guard->pulseYouTubeSubscribersSeeded = true;
+					if (guard->pulseYouTubeSeenMessageIds.size() > 4000)
+						guard->pulseYouTubeSeenMessageIds.clear();
+				}, Qt::QueuedConnection);
+			};
+			if (cancelled()) { deliver({}, {}, true, {}, 5000); return; }
+			if (useStream) {
+				const auto result = auth->StreamLiveChatMessages(chatId, page, cancelled,
+					[&](const QString &next, const QVector<YoutubeChatEvent> &events) {
+						deliver(next, events, false, {}, 5000);
+					});
+				// Cancellation due to quota must release pending state; generation guards reject old shows.
+				deliver({}, {}, true, result.reason == "cancelled" ? QString() : result.reason, 5000);
+			} else {
+				QString next = page, reason;
+				QVector<YoutubeChatEvent> events;
+				int interval = 15000;
+				bool ok;
+				{
+					std::lock_guard<std::mutex> lock(pulseYouTubeChatRequestMutex);
+					if (cancelled()) { deliver({}, {}, true, {}, 5000); return; }
+					ok = auth->GetLiveChatMessages(chatId, next, events, interval);
+					if (!ok) reason = auth->GetLastErrorReason();
 				}
-				for (const YoutubeChatEvent &event : events) {
-					if (!event.id.isEmpty() && guard->pulseYouTubeSeenMessageIds.contains(event.id))
-						continue;
-					if (!event.id.isEmpty())
-						guard->pulseYouTubeSeenMessageIds.insert(event.id);
-					QString type = "chat.message";
-					if (event.type == "newSponsorEvent") type = "membership.received";
-					else if (event.type == "memberMilestoneChatEvent") type = "membership.milestone";
-					else if (event.type == "membershipGiftingEvent" || event.type == "giftMembershipReceivedEvent") type = "membership.gift";
-					else if (event.type == "superChatEvent") type = "super_chat.received";
-					else if (event.type == "superStickerEvent") type = "super_sticker.received";
-					const QJsonObject payload{{"id", event.id}, {"user", event.user}, {"message", event.message},
-						{"amount", event.amount}, {"youtubeType", event.type}, {"route", route},
-						{"broadcastId", broadcastId}};
-					calldata_t data; calldata_init(&data);
-					calldata_set_string(&data, "platform", "youtube");
-					calldata_set_string(&data, "type", type.toUtf8().constData());
-					const QByteArray json = QJsonDocument(payload).toJson(QJsonDocument::Compact);
-					calldata_set_string(&data, "json", json.constData());
-					proc_handler_call(obs_get_proc_handler(), "pulseweaver_publish", &data);
-					calldata_free(&data);
-					if (event.type == "messageDeletedEvent" && !event.deleted_message_id.isEmpty())
-						PulseChat::markDeleted(guard->pulseChatFeed, "youtube", event.deleted_message_id);
-					if (event.type == "userBannedEvent" && !event.banned_user_id.isEmpty())
-						PulseChat::markDeleted(guard->pulseChatFeed, "youtube", {}, event.banned_user_id);
-					if (guard->pulseChatFeed && event.type == "textMessageEvent")
-						pulseAppendUnifiedChat(guard->pulseChatFeed, "youtube", event.user, event.message,
-							event.user_colour, event.badges, event.user_id, event.id, false, chatId, route);
-				}
-				if (guard->pulseYouTubeSeenMessageIds.size() > 4000)
-					guard->pulseYouTubeSeenMessageIds.clear();
-			}, Qt::QueuedConnection);
+				deliver(next, events, true, ok ? QString() : reason.isEmpty() ? "networkError" : reason,
+					std::max(15000, interval));
+			}
 		});
 		if (!started) {
 			sessionIt->requestPending = false;
-			sessionIt->nextRequestMs = now + 2000;
-			if (pulseChatStatus)
-				pulseChatStatus->setText("YouTube chat worker could not start; retrying.");
+			PulseYouTubeChat::failed(*sessionIt, "workerUnavailable", {}, now, 0);
 		}
 	}
 	FlushPulseWeaverYouTubeChatQueue();
