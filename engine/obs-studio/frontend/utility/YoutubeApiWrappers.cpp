@@ -2,6 +2,8 @@
 #include "../../shared/qt/PulseYouTubeRegistration.hpp"
 #include "../../shared/qt/PulseChatProtocol.hpp"
 #include "../../shared/qt/PulseBroadcastFlow.hpp"
+#include "../../shared/qt/PulseYouTubeQuota.hpp"
+#include <QCryptographicHash>
 #include <QJsonDocument>
 #include "YoutubeApiWrappers.hpp"
 
@@ -13,6 +15,7 @@
 #include <ui-config.h>
 
 #include <QFile>
+#include <QFileInfo>
 #include <QMimeDatabase>
 #include <QUrl>
 
@@ -23,6 +26,20 @@
 using namespace json11;
 
 namespace {
+std::mutex youtubeApiRequestMutex;
+QString quotaFile()
+{
+	return QFileInfo(PulseAppCredentials::path()).absolutePath() + "/youtube-api-budget.ini";
+}
+QString quotaKey()
+{
+	return QString::fromLatin1(QCryptographicHash::hash(PulseYouTubeRegistration::current().clientId.toUtf8(),
+		QCryptographicHash::Sha256).toHex());
+}
+PulseYouTubeQuota::Pause quotaPause()
+{
+	return PulseYouTubeQuota::read(quotaFile(), quotaKey(), QDateTime::currentMSecsSinceEpoch());
+}
 using std::string_view_literals::operator""sv;
 
 constexpr auto youtubeLiveStreamUrl = "https://www.googleapis.com/youtube/v3/liveStreams"sv;
@@ -72,17 +89,14 @@ bool YoutubeApiWrappers::GetTranslatedError(QString &error_message)
 
 YoutubeApiWrappers::YoutubeApiWrappers(const Def &d) : YoutubeAuth(d) {}
 
+qint64 YoutubeApiWrappers::ApiBlockedUntil() const { return quotaPause().until; }
+QString YoutubeApiWrappers::ApiPauseMessage() const { return PulseYouTubeQuota::message(quotaPause()); }
+
 bool YoutubeApiWrappers::TryInsertCommand(const char *url, const char *content_type, std::string request_type,
 					  const char *data, Json &json_out, long *error_code, int data_size)
 {
 	long httpStatusCode = 0;
 
-#ifdef _DEBUG
-	blog(LOG_DEBUG, "YouTube API command URL: %s", url);
-	if (data && data[0] == '{') { // only log JSON data
-		blog(LOG_DEBUG, "YouTube API command data: %s", data);
-	}
-#endif
 	if (token.empty()) {
 		lastErrorMessage = "Reconnect YouTube before using chat actions.";
 		if (error_code) *error_code = 0;
@@ -111,9 +125,6 @@ bool YoutubeApiWrappers::TryInsertCommand(const char *url, const char *content_t
 	}
 
 	json_out = Json::parse(output, error);
-#ifdef _DEBUG
-	blog(LOG_DEBUG, "YouTube API command answer: %s", json_out.dump().c_str());
-#endif
 	if (!error.empty()) {
 		return false;
 	}
@@ -149,9 +160,17 @@ bool YoutubeApiWrappers::UpdateAccessToken()
 bool YoutubeApiWrappers::InsertCommand(const char *url, const char *content_type, std::string request_type,
 				       const char *data, Json &json_out, int data_size)
 {
+	// Serialize native and Pulse Weaver API consumers so queued requests observe a quota rejection.
+	std::lock_guard<std::mutex> requestLock(youtubeApiRequestMutex);
 	long error_code = 0;
 	lastErrorMessage.clear();
 	lastErrorReason.clear();
+	const auto paused = quotaPause();
+	if (paused.until) {
+		lastErrorReason = paused.reason;
+		lastErrorMessage = PulseYouTubeQuota::message(paused);
+		return false;
+	}
 	bool success = TryInsertCommand(url, content_type, request_type, data, json_out, &error_code, data_size);
 
 	if (error_code == 401) {
@@ -163,15 +182,22 @@ bool YoutubeApiWrappers::InsertCommand(const char *url, const char *content_type
 	}
 
 	if (json_out.object_items().find("error") != json_out.object_items().end()) {
-		blog(LOG_ERROR, "YouTube API error:\n\tHTTP status: %ld\n\tURL: %s\n\tJSON: %s", error_code, url,
-		     json_out.dump().c_str());
-
 		lastError = json_out["error"]["code"].int_value();
 		lastErrorReason = QString(json_out["error"]["errors"][0]["reason"].string_value().c_str());
 		lastErrorMessage = QString(json_out["error"]["message"].string_value().c_str());
+		blog(LOG_WARNING, "YouTube API request rejected: HTTP %ld, reason %s", error_code,
+		     lastErrorReason.toUtf8().constData());
 
 		// The existence of an error implies non-success even if the HTTP status code disagrees.
 		success = false;
+	}
+	if (!success) {
+		const auto pause = PulseYouTubeQuota::record(quotaFile(), quotaKey(), lastErrorReason, error_code,
+			QDateTime::currentMSecsSinceEpoch());
+		if (pause.until) {
+			lastErrorReason = pause.reason;
+			lastErrorMessage = PulseYouTubeQuota::message(pause);
+		}
 	}
 	return success;
 }
