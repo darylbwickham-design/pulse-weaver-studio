@@ -2599,6 +2599,7 @@ void OBSBasic::InitPulseWeaverShell()
 	bitrateStatus->setStyleSheet("color:#9eb8d0;");
 	bitrateCard->addWidget(bitrateStatus);
 	action(bitrateCard, "Save bandwidth plan", "Save destination bitrates in the active profile", [this, bitrateFields, bitrateStatus] {
+		if (!Config()) { bitrateStatus->setText("Wait for the profile to finish loading."); return; }
 		for (auto it = bitrateFields.cbegin(); it != bitrateFields.cend(); ++it)
 			config_set_int(Config(), PulseOutputBitrates::Section, PulseOutputBitrates::Keys[it.key()], it.value()->value());
 		config_save_safe(Config(), "tmp", nullptr);
@@ -2613,11 +2614,28 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *recordPathRow = new QHBoxLayout;
 	recordCard->addLayout(recordPathRow);
 	auto *recordPath = new QLineEdit;
-	const char *outputMode = Config() ? config_get_string(Config(), "Output", "Mode") : nullptr;
-	const bool advancedOutput = outputMode && strcmp(outputMode, "Advanced") == 0;
-	const QString recordSection = advancedOutput ? "AdvOut" : "SimpleOutput";
-	const QString recordKey = advancedOutput ? "RecFilePath" : "FilePath";
-	recordPath->setText(QString::fromUtf8(config_get_string(Config(), recordSection.toUtf8().constData(), recordKey.toUtf8().constData())));
+	// The shell is constructed before the active OBS profile is loaded.
+	// Populate profile-backed fields only after Config() becomes available.
+	recordPath->setEnabled(false);
+	auto refreshProfileSettings = [this, recordPath, bitrateFields] {
+		if (!Config()) return;
+		const char *mode = config_get_string(Config(), "Output", "Mode");
+		const bool advanced = mode && strcmp(mode, "Advanced") == 0;
+		const char *path = config_get_string(Config(), advanced ? "AdvOut" : "SimpleOutput",
+			advanced ? "RecFilePath" : "FilePath");
+		recordPath->setText(QString::fromUtf8(path ? path : ""));
+		recordPath->setEnabled(true);
+		for (auto it = bitrateFields.cbegin(); it != bitrateFields.cend(); ++it)
+			it.value()->setValue(PulseOutputBitrates::Read(Config(), it.key()));
+	};
+	auto *profileReadyTimer = new QTimer(recordPath);
+	connect(profileReadyTimer, &QTimer::timeout, recordPath, [this, profileReadyTimer, refreshProfileSettings] {
+		if (!Config()) return;
+		refreshProfileSettings();
+		profileReadyTimer->stop();
+	});
+	profileReadyTimer->start(100);
+	connect(settings, &QPushButton::clicked, recordPath, refreshProfileSettings);
 	recordPath->setAccessibleName("Recording folder");
 	recordPathRow->addWidget(recordPath, 1);
 	auto *browseRecordPath = new QPushButton("Browse…");
@@ -2630,7 +2648,12 @@ void OBSBasic::InitPulseWeaverShell()
 	recordStatus->setWordWrap(true);
 	recordStatus->setStyleSheet("color:#9eb8d0;");
 	recordCard->addWidget(recordStatus);
-	action(recordCard, "Save recording folder", "Use this folder for the next recording", [this, recordPath, recordStatus, recordSection, recordKey] {
+	action(recordCard, "Save recording folder", "Use this folder for the next recording", [this, recordPath, recordStatus] {
+		if (!Config()) { recordStatus->setText("Wait for the profile to finish loading."); return; }
+		const char *mode = config_get_string(Config(), "Output", "Mode");
+		const bool advanced = mode && strcmp(mode, "Advanced") == 0;
+		const QString recordSection = advanced ? "AdvOut" : "SimpleOutput";
+		const QString recordKey = advanced ? "RecFilePath" : "FilePath";
 		const QString path = recordPath->text().trimmed();
 		if (path.isEmpty() || !QDir(path).exists()) { recordStatus->setText("Choose an existing folder first."); return; }
 		config_set_string(Config(), recordSection.toUtf8().constData(), recordKey.toUtf8().constData(), path.toUtf8().constData());
