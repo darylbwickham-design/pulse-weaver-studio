@@ -102,6 +102,9 @@ public:
 	bool FindStream(const QString &id, json11::Json &json_out);
 
 	QString GetLastError() { return lastErrorMessage; };
+	QString GetLastErrorReason() const { return lastErrorReason; }
+	qint64 ApiBlockedUntil() const;
+	QString ApiPauseMessage() const;
 	bool GetTranslatedError(QString &error_message);
 
 private:
