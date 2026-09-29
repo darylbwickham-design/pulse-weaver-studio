@@ -1138,21 +1138,87 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	}
 	toolRows->addLayout(historyRow);
 	railLayout->addWidget(lookTools);
+	auto *previewTools = new QWidget(canvasCard);
+	auto *previewToolsLayout = new QVBoxLayout(previewTools);
+	previewToolsLayout->setContentsMargins(0, 0, 0, 0);
+	previewToolsLayout->setSpacing(5);
+	previewExplanation = new QLabel(previewTools);
+	previewExplanation->setObjectName("Muted");
+	previewExplanation->setWordWrap(true);
+	previewToolsLayout->addWidget(previewExplanation);
+	auto *previewStartRow = new QHBoxLayout;
+	previewStartRow->addWidget(new QLabel("Preview from", previewTools));
+	previewFromLook = new QComboBox(previewTools);
+	previewFromLook->setAccessibleName("Starting look for offline movement preview");
+	previewFromLook->setToolTip("Choose another saved look in this Stage, or use the scene's current placement. This never changes the live output.");
+	previewStartRow->addWidget(previewFromLook, 1);
+	previewToolsLayout->addLayout(previewStartRow);
 	auto *previewRow = new QHBoxLayout;
-	auto *previewButton = new QPushButton("▶ Preview movement");
+	auto *previewButton = new QPushButton("▶ Play look movement");
 	previewProgress = new QSlider(Qt::Horizontal);
 	previewProgress->setRange(0, 100); previewProgress->setValue(100);
-	previewProgress->setToolTip("Scrub from current output framing to this look. Only the design canvas changes.");
+	previewProgress->setToolTip("Scrub from the chosen starting look to this look. Only the design canvases change.");
 	previewRow->addWidget(previewButton); previewRow->addWidget(previewProgress, 1);
-	canvasLayout->addLayout(previewRow);
+	previewToolsLayout->addLayout(previewRow);
+	previewFeedback = new QLabel("This preview changes the design canvases only.", previewTools);
+	previewFeedback->setObjectName("Muted");
+	previewFeedback->setWordWrap(true);
+	previewToolsLayout->addWidget(previewFeedback);
+	canvasLayout->addWidget(previewTools);
+	previewTools->setVisible(kindField->currentData().toString() == "layout");
+	connect(kindField, &QComboBox::currentIndexChanged, previewTools, [this, previewTools] {
+		previewTools->setVisible(kindField->currentData().toString() == "layout");
+	});
 	connect(previewProgress, &QSlider::valueChanged, this, [this](int value) { previewDraft(value); });
+	connect(previewFromLook, &QComboBox::currentIndexChanged, this, [this](int) {
+		previewTimer.stop(); previewScene = nullptr; pairedPreviews.clear();
+		if (previewProgress) previewProgress->setValue(100);
+		if (previewFeedback) previewFeedback->setText("Starting placement changed. Press Play to rehearse the movement.");
+		syncVisualCanvas();
+	});
 	connect(previewButton, &QPushButton::clicked, this, [this] {
+		if (!draftScene || kindField->currentData().toString() != "layout") {
+			setStatus("Choose a saved stage look before previewing its movement.", true); return;
+		}
+		auto differs = [this](const QString &container, qint64 originalId, OBSSceneItem target) {
+			if (!target) return false;
+			obs_source_t *source = obs_sceneitem_get_source(target);
+			OBSSceneItem live = resolveItem(container, originalId,
+				QString::fromUtf8(obs_source_get_name(source)), false,
+				QString::fromUtf8(obs_source_get_uuid(source)));
+			if (!live) return false;
+			Transform from = capture(live);
+			previewStartTransform(container, target, originalId, from);
+			const Transform to = capture(target);
+			if (!from.visible && !to.visible) return false;
+			QJsonObject before = serialize(from), after = serialize(to);
+			before.remove("locked"); after.remove("locked");
+			return before != after;
+		};
+		bool changes = false;
+		for (auto it = draftIds.cbegin(); it != draftIds.cend() && !changes; ++it)
+			changes = differs(draftContainer, it.key(), draftItem(it.key()));
+		for (auto canvas = parkedDrafts.cbegin(); canvas != parkedDrafts.cend() && !changes; ++canvas)
+			for (auto item = canvas->ids.cbegin(); item != canvas->ids.cend() && !changes; ++item)
+				changes = differs(canvas.key(), item.key(), obs_scene_find_sceneitem_by_id(canvas->scene, item.value()));
+		if (!changes) {
+			if (previewFeedback) previewFeedback->setText("No movement: the starting placement already matches this Look. Choose another starting Look.");
+			setStatus("The chosen starting placement already matches this Look. Choose a different starting Look above to see movement.");
+			return;
+		}
+		const QString fromName = previewFromLook && !previewFromLook->currentData().toString().isEmpty() ?
+			previewFromLook->currentText() : QString("current scene state");
+		setStatus("Simulating “" + fromName + "” → “" + nameField->text() + "” on the design canvases. Live output is unchanged.");
+		if (previewFeedback) previewFeedback->setText("Playing “" + fromName + "” → “" + nameField->text() + "”. Live output is unchanged.");
 		previewClock.restart(); previewProgress->setValue(0); previewDraft(0); previewTimer.start(16);
 	});
 	connect(&previewTimer, &QTimer::timeout, this, [this] {
 		const int progress = int(std::min<qint64>(100, previewClock.elapsed() * 100 / std::max(1, durationField->value())));
 		previewProgress->setValue(progress);
-		if (progress >= 100) previewTimer.stop();
+		if (progress >= 100) {
+			previewTimer.stop();
+			if (previewFeedback) previewFeedback->setText("Preview ended. Live output is unchanged. Save edits, then Run saved look live to send it to output.");
+		}
 	});
 	visualCanvas->beginEdit = [this] { rememberDraft(); };
 	visualCanvas->transformed = [this](qint64 draftId, QPointF delta, double factorX, double factorY,
@@ -1273,8 +1339,8 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	auto *buttons = new QHBoxLayout;
 	saveButton = new QPushButton("Save look");
 	saveButton->setObjectName("Primary");
-	auto *run = new QPushButton("Apply saved look");
-	run->setToolTip("Runs the saved action on the real output. Save your edits first.");
+	auto *run = new QPushButton("Run saved look live");
+	run->setToolTip("Save edits first. Within the same Stage, sources move to this Look. From another Stage, its Stage transition reveals the finished Look.");
 	auto *stop = new QPushButton("STOP + RESTORE");
 	auto *remove = new QPushButton("DELETE");
 	buttons->addWidget(saveButton);
@@ -1343,9 +1409,9 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 				actionList->setCurrentRow(row); break;
 			}
 	});
-	connect(kindField, &QComboBox::currentIndexChanged, this, [this] { if (!loadingDraft) resetDraft(); populateItems(); refreshDraftRows(); refreshSummary(); });
+	connect(kindField, &QComboBox::currentIndexChanged, this, [this] { if (!loadingDraft) resetDraft(); populateItems(); refreshDraftRows(); refreshSummary(); if (!loadingDraft) refreshPreviewChoices(); });
 	connect(policyField, &QComboBox::currentIndexChanged, this, [this] { refreshSummary(); });
-	connect(stageField, &QComboBox::currentIndexChanged, this, [this] { refreshSummary(); });
+	connect(stageField, &QComboBox::currentIndexChanged, this, [this] { refreshSummary(); if (!loadingDraft) refreshPreviewChoices(); });
 	connect(sceneField, &QComboBox::currentIndexChanged, this, [this] {
 		visualSelectedItem = -1;
 		if (!loadingDraft) {
@@ -1359,6 +1425,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 		refreshDraftRows();
 		refreshSummary();
 		syncVisualCanvas();
+		if (!loadingDraft) refreshPreviewChoices();
 	});
 	connect(sourceField, &QComboBox::currentIndexChanged, this, [this] { refreshSummary(); syncVisualCanvas(); });
 	connect(zoomField, &QSpinBox::valueChanged, this, [this] { refreshSummary(); syncVisualCanvas(); });
@@ -1385,7 +1452,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	connect(saveButton, &QPushButton::clicked, this, [this] { saveEditorAction(); });
 	connect(remove, &QPushButton::clicked, this, [this] { deleteEditorAction(); });
 	connect(run, &QPushButton::clicked, this, [this] {
-		if (draftDirty) { setStatus("Save this preview before applying it to the live output.", true); return; }
+		if (draftDirty) { setStatus("Save this arrangement before running it on the live output.", true); return; }
 		if (editingId.isEmpty()) saveEditorAction();
 		if (editingId.isEmpty()) return;
 		const QJsonObject result = runAction(editingId);
@@ -1769,6 +1836,7 @@ void PulseMotionEngine::loadActionIntoEditor(const QJsonObject &action)
 	}
 	refreshSummary();
 	syncVisualCanvas();
+	refreshPreviewChoices();
 	setStatus(action.value("draft").toBool() ? "Imported draft: review the targets and press Save Action before running it." : "Editing does not change the live output.");
 	draftDirty = false;
 	if (saveButton) saveButton->setText("Save look");
@@ -1888,7 +1956,7 @@ void PulseMotionEngine::saveEditorAction()
 	editingId = action.value("id").toString();
 	if (!save()) { actions = before; return; }
 	refreshEditor();
-	setStatus("Saved “" + action.value("name").toString() + "”. It is now available to Lumia and other controllers.");
+	setStatus("Saved “" + action.value("name").toString() + "”. Use Run saved look live to send it to output, or trigger it through Lumia.");
 	emitEvent("motion_catalogue_changed", {{"action", editingId}});
 }
 
@@ -2747,6 +2815,82 @@ void PulseMotionEngine::editDraft(const QString &operation)
 	refreshDraftRows(); refreshSummary();
 }
 
+void PulseMotionEngine::refreshPreviewChoices()
+{
+	if (!previewFromLook) return;
+	const QSignalBlocker blocker(previewFromLook);
+	previewFromLook->clear();
+	previewFromLook->addItem("Current scene state", QString());
+	const QJsonObject selected = actionByIdentity(editingId);
+	const QString stage = stageField ? stageField->currentData().toString() : selected.value("stage").toString();
+	const QString container = mainContainer.isEmpty() ? selected.value("container").toString() : mainContainer;
+	for (const QJsonValue &value : actions) {
+		const QJsonObject candidate = value.toObject();
+		if (candidate.value("kind").toString() != "layout" || candidate.value("draft").toBool() ||
+			candidate.value("id").toString() == editingId || candidate.value("stage").toString() != stage ||
+			candidate.value("container").toString() != container ||
+			candidate.value("collection").toString() != selected.value("collection").toString()) continue;
+		previewFromLook->addItem(candidate.value("name").toString(), candidate.value("id").toString());
+	}
+	// A saved starting look makes the preview useful even when the programme
+	// already has the selected destination framing.
+	previewFromLook->setCurrentIndex(previewFromLook->count() > 1 ? 1 : 0);
+	if (previewExplanation) {
+		previewExplanation->setText("A Look saves where sources end up. On the same Stage, applying it animates from the current placement. "
+			"Switching Stages uses that Stage's fade, cut or stinger and reveals the Look already arranged. "
+			"Choose a starting Look below to rehearse source movement without changing the live output.");
+	}
+}
+
+PulseMotionEngine::Transform PulseMotionEngine::savedTransformForSource(const QJsonObject &saved, obs_source_t *source)
+{
+	Transform result = deserialize(saved.value("transform").toObject());
+	if (!source) return result;
+	const int oldWidth = saved.value("sourceWidth").toInt();
+	const int oldHeight = saved.value("sourceHeight").toInt();
+	const int newWidth = int(obs_source_get_width(source));
+	const int newHeight = int(obs_source_get_height(source));
+	if (oldWidth > 0 && oldHeight > 0 && newWidth > 0 && newHeight > 0 &&
+		(oldWidth != newWidth || oldHeight != newHeight)) {
+		if (result.boundsType == OBS_BOUNDS_NONE) {
+			result.scale.x *= float(oldWidth) / float(newWidth);
+			result.scale.y *= float(oldHeight) / float(newHeight);
+		}
+		result.crop.left = int(std::lround(result.crop.left * double(newWidth) / oldWidth));
+		result.crop.right = int(std::lround(result.crop.right * double(newWidth) / oldWidth));
+		result.crop.top = int(std::lround(result.crop.top * double(newHeight) / oldHeight));
+		result.crop.bottom = int(std::lround(result.crop.bottom * double(newHeight) / oldHeight));
+	}
+	return result;
+}
+
+bool PulseMotionEngine::previewStartTransform(const QString &container, obs_sceneitem_t *item, qint64 itemId, Transform &from) const
+{
+	if (!previewFromLook || !item) return false;
+	const QString startId = previewFromLook->currentData().toString();
+	if (startId.isEmpty()) return false;
+	const QJsonObject start = actionByIdentity(startId);
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	if (!source) return false;
+	const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
+	const QString name = QString::fromUtf8(obs_source_get_name(source));
+	QJsonObject best;
+	int bestScore = -1;
+	for (const QJsonValue &value : start.value("items").toArray()) {
+		const QJsonObject saved = value.toObject();
+		if (saved.value("container").toString(start.value("container").toString()) != container) continue;
+		const QString savedUuid = saved.value("sourceUuid").toString();
+		if ((!savedUuid.isEmpty() && savedUuid != uuid) ||
+			(savedUuid.isEmpty() && saved.value("source").toString() != name) ||
+			!saved.value("transform").isObject()) continue;
+		const int score = saved.value("itemId").toString().toLongLong() == itemId ? 2 : 1;
+		if (score > bestScore) { best = saved; bestScore = score; }
+	}
+	if (bestScore < 0) return false;
+	from = savedTransformForSource(best, source);
+	return true;
+}
+
 void PulseMotionEngine::previewDraft(int progress)
 {
 	if (!draftScene || !kindField || kindField->currentData().toString() != "layout") return;
@@ -2774,10 +2918,14 @@ void PulseMotionEngine::previewDraft(int progress)
 	for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
 		OBSSceneItem target = draftItem(it.key());
 		if (!target) continue;
-		OBSSceneItem live = resolveItem(draftContainer, it.key(), QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(target))), false);
+		obs_source_t *targetSource = obs_sceneitem_get_source(target);
+		OBSSceneItem live = resolveItem(draftContainer, it.key(), QString::fromUtf8(obs_source_get_name(targetSource)), false,
+			QString::fromUtf8(obs_source_get_uuid(targetSource)));
 		auto *preview = obs_scene_find_sceneitem_by_id(previewScene, previewIds.value(it.value(), -1));
 		if (!live || !preview) continue;
-		const Transform from = capture(live), to = capture(target);
+		Transform from = capture(live);
+		previewStartTransform(draftContainer, target, it.key(), from);
+		const Transform to = capture(target);
 		const QString sourceName = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(target)));
 		if (motionGraphicSwitch(sourceName, obs_sceneitem_get_source(target)) && from.visible != to.visible) {
 			apply(preview, progress < 50 ? from : to, true);
@@ -2794,9 +2942,13 @@ void PulseMotionEngine::previewDraft(int progress)
 			auto *target = obs_scene_find_sceneitem_by_id(targetDraft.scene, targetDraft.ids.value(id.key(), -1));
 			auto *preview = obs_scene_find_sceneitem_by_id(it->scene, id.value());
 			if (!target || !preview) continue;
-			OBSSceneItem live = resolveItem(it.key(), id.key(), QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(target))), false);
+			obs_source_t *targetSource = obs_sceneitem_get_source(target);
+			OBSSceneItem live = resolveItem(it.key(), id.key(), QString::fromUtf8(obs_source_get_name(targetSource)), false,
+				QString::fromUtf8(obs_source_get_uuid(targetSource)));
 			if (!live) continue;
-			const Transform from = capture(live), to = capture(target);
+			Transform from = capture(live);
+			previewStartTransform(it.key(), target, id.key(), from);
+			const Transform to = capture(target);
 			const QString sourceName = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(target)));
 			if (motionGraphicSwitch(sourceName, obs_sceneitem_get_source(target)) && from.visible != to.visible) {
 				apply(preview, progress < 50 ? from : to, true);
@@ -4261,25 +4413,7 @@ bool PulseMotionEngine::prepareExecution(Execution &execution, QString &error)
 			track.itemId = obs_sceneitem_get_id(item);
 			track.item = item;
 			track.baseline = track.from = capture(item);
-			track.target = deserialize(saved.value("transform").toObject());
-			const int oldWidth = saved.value("sourceWidth").toInt();
-			const int oldHeight = saved.value("sourceHeight").toInt();
-			obs_source_t *source = obs_sceneitem_get_source(item);
-			const int newWidth = int(obs_source_get_width(source));
-			const int newHeight = int(obs_source_get_height(source));
-			if (oldWidth > 0 && oldHeight > 0 && newWidth > 0 && newHeight > 0 &&
-				(oldWidth != newWidth || oldHeight != newHeight)) {
-				// Keep the same on-canvas footprint when a browser, camera or game
-				// changes resolution. Bounds-based looks already have a fixed slot.
-				if (track.target.boundsType == OBS_BOUNDS_NONE) {
-					track.target.scale.x *= float(oldWidth) / float(newWidth);
-					track.target.scale.y *= float(oldHeight) / float(newHeight);
-				}
-				track.target.crop.left = int(std::lround(track.target.crop.left * double(newWidth) / oldWidth));
-				track.target.crop.right = int(std::lround(track.target.crop.right * double(newWidth) / oldWidth));
-				track.target.crop.top = int(std::lround(track.target.crop.top * double(newHeight) / oldHeight));
-				track.target.crop.bottom = int(std::lround(track.target.crop.bottom * double(newHeight) / oldHeight));
-			}
+			track.target = savedTransformForSource(saved, obs_sceneitem_get_source(item));
 			execution.tracks.push_back(std::move(track));
 		}
 		std::stable_sort(execution.tracks.begin(), execution.tracks.end(), [](const auto &a, const auto &b) { return a.target.order < b.target.order; });

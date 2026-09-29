@@ -164,6 +164,9 @@ private:
 	QHash<qint64, qint64> draftIds;
 	QHash<qint64, qint64> previewIds;
 	QPointer<QSlider> previewProgress;
+	QPointer<QComboBox> previewFromLook;
+	QPointer<QLabel> previewExplanation;
+	QPointer<QLabel> previewFeedback;
 	QTimer previewTimer;
 	QElapsedTimer previewClock;
 	QPointer<QWidget> lookTools;
@@ -191,6 +194,9 @@ private:
 	void editDraft(const QString &operation);
 	void refreshDraftRows();
 	void previewDraft(int progress);
+	void refreshPreviewChoices();
+	bool previewStartTransform(const QString &container, obs_sceneitem_t *item, qint64 itemId, Transform &from) const;
+	static Transform savedTransformForSource(const QJsonObject &saved, obs_source_t *source);
 	void createLook(const QString &name, bool duplicate);
 	void createStarterStage();
 	void openShowWizard();

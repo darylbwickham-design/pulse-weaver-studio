@@ -1,6 +1,6 @@
 # Build a show in Pulse Weaver
 
-This guide applies to Pulse Weaver 1.14 unstable 6. A new setup opens at **Settings → Start here**. Existing setups continue to open on Show.
+This guide applies to Pulse Weaver 1.14 unstable 7. A new setup opens at **Settings → Start here**. Existing setups continue to open on Show.
 
 1. Open **Show Control** and click **Build my show…** beside the Stage selector on a fresh install. If you already have stages, click **Control** in the Show heading, then **Build my show…**. You can start with an empty scene collection.
 2. Name the show and tick the stages you want: Starting, Hangout, Gameplay, BRB/Ending, and Raid/Shoutout. Click **Next**.
@@ -11,7 +11,20 @@ This guide applies to Pulse Weaver 1.14 unstable 6. A new setup opens at **Setti
 7. Choose **Main + corner**, **Side by side**, or **Fullscreen focus**. The portrait layout fills its lower two thirds with the main source and uses the upper third for the supporting source. Choose a transition for switching stages, including an existing stinger if one is listed. Click **Next**.
 8. Review the stages and source assignments. Resolve any missing-source messages, then click **Finish**. Only now does the builder create the requested sources, landscape and portrait scenes, and saved looks. It removes what it just created if this step fails, and keeps your wizard choices available to correct the issue. Your existing scenes remain available.
 9. In **Control**, choose a stage and look using the blue text choices above the previews. Click **Choose sources + layout…** to pick the large and supporting sources explicitly, then preview **Main + corner**, **Side by side** or **Full screen main** on both canvases. Click **Undo** if it is wrong, or **Save look** when ready. **Swap focus** exchanges the two main sources. You can also click a preview and drag a source to move it; drag a corner to resize; use **Shift** with a corner to stretch or **Alt** with a corner to crop. The right rail has **Fill**, **Corner**, **Left** and **Right** placements for an individual source.
-10. Click **Apply saved look** to run the look on output. Switching to another stage uses the stage transition; changing looks within one stage uses the saved motion. The existing Lumia **Run Stage Look / Motion Action** action can trigger saved looks.
+10. Click **Run saved look live** to send the look to output. Switching to another Stage uses its fade, cut or stinger and reveals the finished look. Changing looks while staying in one Stage animates the sources into their saved positions. The existing Lumia **Run Stage Look / Motion Action** action can trigger saved looks.
+
+## Understand Control and live output
+
+**Stage** chooses the scene and destination routing. **Look** saves the end positions, visibility and layer order of sources in that Stage. Clicking a Stage or Look name in Control loads it into the design canvases; it does not change the broadcast. Editing a canvas changes only the draft until you click **Save look**.
+
+To rehearse the pictured Gameplay transition without touching output:
+
+1. In Control, choose **Gameplay** and then **Printer activity**.
+2. Under **Preview from**, choose **Screen activity**. This gives the preview a different saved starting arrangement. Choose **Current scene state** only when you want to compare with the scene's present placement.
+3. Click **Play look movement** or drag its slider. The two design canvases simulate the source movement. If the start and end placements already match, Control says why nothing moved.
+4. To perform it live later, keep the Gameplay Stage active, run **Screen activity**, then run **Printer activity**. The source movement uses the duration under **Settings → Movement** in Control. Save any draft edits before running a look live.
+
+If you run Printer activity from a different Stage, the Stage's transition takes priority and reveals the prepared Printer activity layout. You will not see the same within-Stage source movement after that Stage switch.
 
 ## Change the captured game
 
