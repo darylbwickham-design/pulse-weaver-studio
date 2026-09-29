@@ -48,7 +48,6 @@ constexpr auto youtubeLiveBroadcastTransitionUrl = "https://www.googleapis.com/y
 constexpr auto youtubeLiveBroadcastBindUrl = "https://www.googleapis.com/youtube/v3/liveBroadcasts/bind"sv;
 constexpr auto youtubeLiveChatMessagesUrl = "https://www.googleapis.com/youtube/v3/liveChat/messages"sv;
 constexpr auto youtubeLiveChatBansUrl = "https://www.googleapis.com/youtube/v3/liveChat/bans"sv;
-constexpr auto youtubeSubscriptionsUrl = "https://www.googleapis.com/youtube/v3/subscriptions"sv;
 
 constexpr auto youtubeLiveChannelUrl = "https://www.googleapis.com/youtube/v3/channels"sv;
 constexpr auto youtubeLiveTokenUrl = "https://oauth2.googleapis.com/token"sv;
@@ -618,25 +617,6 @@ bool YoutubeApiWrappers::SendLiveChatMessage(const QString &chat_id, const QStri
 		{"type", "textMessageEvent"}, {"textMessageDetails", Json::object{{"messageText", QT_TO_UTF8(message)}}}}}};
 	Json result;
 	return InsertCommand(url.c_str(), "application/json", "", data.dump().c_str(), result);
-}
-
-bool YoutubeApiWrappers::GetRecentSubscribers(QVector<YoutubeSubscriber> &subscribers)
-{
-	/* YouTube rejects mine=true together with myRecentSubscribers=true.  The
-	 * latter already identifies the authenticated creator's recent public
-	 * subscribers, so use the documented mutually-compatible form. */
-	const std::string url = std::string(youtubeSubscriptionsUrl) +
-		"?part=subscriberSnippet&myRecentSubscribers=true&maxResults=50";
-	Json json;
-	if (!InsertCommand(url.c_str(), "application/json", "", nullptr, json))
-		return false;
-	subscribers.clear();
-	for (const Json &item : json["items"].array_items()) {
-		const Json snippet = item["subscriberSnippet"];
-		subscribers.push_back({QString::fromStdString(snippet["channelId"].string_value()),
-			QString::fromStdString(snippet["title"].string_value())});
-	}
-	return true;
 }
 
 void YoutubeApiWrappers::SetBroadcastId(QString &broadcast_id)

@@ -388,9 +388,6 @@ private:
 		std::make_shared<PulseYouTubeChatWorkerBarrier>();
 	quint64 pulseYouTubeChatMessageSequence = 0;
 	bool pulseYouTubeChatSending = false;
-	bool pulseYouTubeSubscribersSeeded = false;
-	qint64 pulseYouTubeNextSubscriberPoll = 0;
-	QSet<QString> pulseYouTubeSubscriberIds;
 	QPointer<QTimer> pulseStatusTimer;
 	QString pulseCompactMixerSignature;
 	QString pulseLastHorizontalSceneUuid;
