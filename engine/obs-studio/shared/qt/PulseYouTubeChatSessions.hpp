@@ -18,8 +18,7 @@ struct Session {
 	QString lastError;
 	bool suspended = false;
 	qint64 pollIntervalMs = 5000;
-	qint64 fallbackUntilMs = 0;
-	int streamFailures = 0;
+	int emptyCompletions = 0;
 };
 
 inline void failed(Session &session, const QString &reason, const QString &error, qint64 now, qint64 blockedUntil)
@@ -29,6 +28,18 @@ inline void failed(Session &session, const QString &reason, const QString &error
 	session.suspended = PulseYouTubeQuota::terminalChatError(reason);
 	session.nextRequestMs = std::max(blockedUntil,
 		now + std::max(session.pollIntervalMs, PulseYouTubeQuota::backoff(session.failures)));
+}
+
+// Successful completion remains successful. Guard against rapid reconnects
+// separately from RPC errors, preserving streaming and the resume cursor.
+inline void completed(Session &session, bool receivedBatch, qint64 now)
+{
+    session.failures = 0;
+    session.lastError.clear();
+    session.emptyCompletions = receivedBatch ? 0 : std::min(7, session.emptyCompletions + 1);
+    const qint64 delay = session.emptyCompletions == 0 ? 1000 :
+        std::min<qint64>(300000, 5000LL << (session.emptyCompletions - 1));
+    session.nextRequestMs = now + delay;
 }
 
 using Sessions = QHash<QString, Session>;

@@ -34,11 +34,18 @@ internal static class Program
             StatusCode.ResourceExhausted => "rateLimitExceeded",
             StatusCode.Unimplemented => "streamUnsupported",
             StatusCode.InvalidArgument => "invalidArgument",
+            StatusCode.DeadlineExceeded => "deadlineExceeded",
+            StatusCode.Cancelled => "cancelled",
             _ => "streamUnavailable"
         };
     }
 
-    private static void Error(string reason) => Console.WriteLine(JsonSerializer.Serialize(new { error = reason }));
+    private static void Error(string reason, int grpcStatus = -1) => Console.WriteLine(JsonSerializer.Serialize(new { error = reason, grpcStatus }));
+
+    internal static AsyncServerStreamingCall<LiveChatMessageListResponse> OpenStream(
+        V3DataLiveChatMessageService.V3DataLiveChatMessageServiceClient client,
+        LiveChatMessageListRequest request, Metadata headers, CancellationToken cancellationToken)
+        => client.StreamList(request, headers, cancellationToken: cancellationToken);
 
     public static async Task<int> Main(string[] args)
     {
@@ -69,8 +76,8 @@ internal static class Program
             request.Part.Add(new[] { "id", "snippet", "authorDetails" });
             if (root.TryGetProperty("pageToken", out var cursor) && !string.IsNullOrEmpty(cursor.GetString())) request.PageToken = cursor.GetString();
             var headers = new Metadata { { "authorization", "Bearer " + token } };
-            // A bounded lifetime permits token renewal without reconnecting on quiet chat.
-            using var call = client.StreamList(request, headers, deadline: DateTime.UtcNow.AddMinutes(45), cancellationToken: stop.Token);
+            // Keep healthy connections open; the parent refreshes expired credentials on reconnect.
+            using var call = OpenStream(client, request, headers, stop.Token);
             await foreach (var response in call.ResponseStream.ReadAllAsync(stop.Token))
             {
                 Console.WriteLine(JsonFormatter.Default.Format(response));
@@ -78,8 +85,8 @@ internal static class Program
             }
             return 0;
         }
-        catch (RpcException error) { Error(Reason(error)); return 0; }
-        catch (OperationCanceledException) { return 0; }
+        catch (RpcException error) { Error(Reason(error), (int)error.StatusCode); return 0; }
+        catch (OperationCanceledException) { Error("cancelled"); return 0; }
         catch { Error("streamUnavailable"); return 1; }
     }
 }

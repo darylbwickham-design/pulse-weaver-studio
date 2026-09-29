@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QProcess>
 #include <QSet>
+#include <QElapsedTimer>
 #include <functional>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -18,14 +19,13 @@ namespace PulseYouTubeStream {
 struct Result {
     QString reason;
     bool received = false;
+    qint64 durationMs = 0;
+    int batches = 0;
+    int grpcStatus = -1;
 };
-inline bool fallbackEligible(const QString &reason)
-{
-    return reason == "streamUnsupported" || reason == "streamUnavailable";
-}
 inline bool terminal(const QString &reason)
 {
-    return reason == "unauthenticated" || reason == "invalidArgument";
+    return reason == "unauthenticated" || reason == "invalidArgument" || reason == "streamUnsupported";
 }
 inline QString eventType(QString type)
 {
@@ -54,9 +54,11 @@ inline Result run(const QString &executable, const QJsonObject &input,
     if (!child.waitForStarted(5000)) return {"streamUnsupported"};
     child.write(QJsonDocument(input).toJson(QJsonDocument::Compact) + '\n');
     Result result;
+    QElapsedTimer lifetime;
+    lifetime.start();
     QByteArray pending;
     const QSet<QString> reasons{"quotaExceeded", "rateLimitExceeded", "unauthenticated", "forbidden",
-        "liveChatEnded", "liveChatNotFound", "streamUnsupported", "invalidArgument", "streamUnavailable"};
+        "liveChatEnded", "liveChatNotFound", "streamUnsupported", "invalidArgument", "streamUnavailable", "deadlineExceeded", "cancelled"};
     while (true) {
         if (cancelled()) { result.reason = "cancelled"; break; }
         child.waitForReadyRead(250);
@@ -74,9 +76,12 @@ inline Result run(const QString &executable, const QJsonObject &input,
             if (object.contains("error")) {
                 const auto reason = object.value("error").toString();
                 result.reason = reasons.contains(reason) ? reason : "streamUnavailable";
+                const int status = object.value("grpcStatus").toInt(-1);
+                result.grpcStatus = status >= 0 && status <= 16 ? status : -1;
                 break;
             }
             result.received = true;
+            ++result.batches;
             batch(object);
             bool ended = !object.value("offlineAt").toString().isEmpty();
             for (const auto &item : object.value("items").toArray())
@@ -94,7 +99,8 @@ inline Result run(const QString &executable, const QJsonObject &input,
     }
     child.closeWriteChannel();
     if (!child.waitForFinished(1000)) { child.kill(); child.waitForFinished(1000); }
-    if (!result.received && result.reason.isEmpty()) result.reason = "streamUnavailable";
+    result.durationMs = lifetime.elapsed();
+    if (result.reason.isEmpty()) result.grpcStatus = 0;
     return result;
 }
 }

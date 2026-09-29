@@ -16,7 +16,8 @@ internal static class SelfTest
             (StatusCode.Unauthenticated, "unauthenticated"), (StatusCode.PermissionDenied, "forbidden"),
             (StatusCode.ResourceExhausted, "rateLimitExceeded"), (StatusCode.Unimplemented, "streamUnsupported"),
             (StatusCode.NotFound, "liveChatNotFound"), (StatusCode.FailedPrecondition, "liveChatEnded"),
-            (StatusCode.Unavailable, "streamUnavailable") })
+            (StatusCode.Unavailable, "streamUnavailable"),
+            (StatusCode.DeadlineExceeded, "deadlineExceeded"), (StatusCode.Cancelled, "cancelled") })
             Check(Program.Reason(new RpcException(new Status(pair.Item1, "secret must not escape"))) == pair.Item2);
         var status = new Google.Rpc.Status { Code = 8 };
         status.Details.Add(Any.Pack(new Google.Rpc.ErrorInfo { Reason = "QUOTA_EXCEEDED" }));
@@ -43,8 +44,8 @@ internal static class SelfTest
     {
         using var channel = GrpcChannel.ForAddress("https://youtube.googleapis.com", new GrpcChannelOptions { HttpHandler = new FakeServer() });
         var client = new V3DataLiveChatMessageService.V3DataLiveChatMessageServiceClient(channel);
-        using var call = client.StreamList(new LiveChatMessageListRequest { LiveChatId = "fake", PageToken = "resume" },
-            new Metadata { { "authorization", "Bearer test-only" } });
+        using var call = Program.OpenStream(client, new LiveChatMessageListRequest { LiveChatId = "fake", PageToken = "resume" },
+            new Metadata { { "authorization", "Bearer test-only" } }, CancellationToken.None);
         var cursors = new List<string>();
         await foreach (var item in call.ResponseStream.ReadAllAsync()) cursors.Add(item.NextPageToken);
         if (!cursors.SequenceEqual(new[] { "one", "two" })) throw new Exception("gRPC response framing failed");
@@ -56,6 +57,7 @@ internal static class SelfTest
         {
             if (request.RequestUri?.AbsolutePath != "/youtube.api.v3.V3DataLiveChatMessageService/StreamList" ||
                 request.Headers.Authorization?.ToString() != "Bearer test-only") throw new Exception("gRPC route or authentication failed");
+            if (request.Headers.Contains("grpc-timeout")) throw new Exception("Healthy streams must not have a forced deadline");
             var requestBytes = await request.Content!.ReadAsByteArrayAsync(cancellationToken);
             var decoded = LiveChatMessageListRequest.Parser.ParseFrom(requestBytes[5..]);
             if (decoded.PageToken != "resume") throw new Exception("Resume cursor missing");

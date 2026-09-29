@@ -5955,19 +5955,18 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 			continue;
 		}
 
-		const bool useStream = now >= sessionIt->fallbackUntilMs;
 		const bool started = pulseStartYouTubeChatWorker(pulseYouTubeChatWorkers,
-			[guard, auth, route, broadcastId, chatId, page, generation, useStream, cancellation, requestEpoch] {
+			[guard, auth, route, broadcastId, chatId, page, generation, cancellation, requestEpoch] {
 			auto cancelled = [auth, cancellation, requestEpoch] {
 				return cancellation->load(std::memory_order_acquire) != requestEpoch ||
 				       auth->ApiBlockedUntil() > QDateTime::currentMSecsSinceEpoch();
 			};
-			auto deliver = [guard, auth, route, broadcastId, chatId, generation, useStream]
+			auto deliver = [guard, auth, route, broadcastId, chatId, generation]
 				(const QString &next, const QVector<YoutubeChatEvent> &events, bool finished,
-				 const QString &reason, int interval) {
+				 const QString &reason, qint64 durationMs, bool receivedBatch = false) {
 				if (!guard) return;
 				QMetaObject::invokeMethod(guard, [guard, auth, route, broadcastId, chatId, generation,
-					next, events, finished, reason, interval, useStream] {
+					next, events, finished, reason, durationMs, receivedBatch] {
 					if (!guard || guard->pulseYouTubeChatGeneration != generation) return;
 					auto currentSession = guard->pulseYouTubeChatSessions.find(route);
 					if (currentSession == guard->pulseYouTubeChatSessions.end() ||
@@ -5979,21 +5978,14 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 							if (session.liveChatId == chatId) session.pageToken = next;
 					}
 					if (!reason.isEmpty()) {
-						if (useStream && PulseYouTubeStream::fallbackEligible(reason))
-							currentSession->pollIntervalMs = std::max<qint64>(currentSession->pollIntervalMs, 15000);
+                        if (durationMs >= 60000) currentSession->failures = 0;
 						PulseYouTubeChat::failed(*currentSession, reason, "YouTube chat: " + reason,
 							now, auth->ApiBlockedUntil());
 						if (PulseYouTubeStream::terminal(reason)) currentSession->suspended = true;
-						if (useStream && PulseYouTubeStream::fallbackEligible(reason)) {
-							++currentSession->streamFailures;
-							if (reason == "streamUnsupported" || currentSession->streamFailures >= 3)
-								currentSession->fallbackUntilMs = now + 15 * 60 * 1000;
-						}
 						for (auto &session : guard->pulseYouTubeChatSessions) {
 							if (session.liveChatId == chatId) {
 								session.suspended = currentSession->suspended;
 								session.nextRequestMs = currentSession->nextRequestMs;
-								session.fallbackUntilMs = currentSession->fallbackUntilMs;
 							}
 						}
 						guard->RefreshPulseWeaverChatComposer();
@@ -6001,21 +5993,19 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 							const QString pause = auth->ApiPauseMessage();
 							guard->pulseChatStatus->setText(!pause.isEmpty() ? pause :
 								currentSession->suspended ? "YouTube chat unavailable (" + reason +
-								"). Reconnect YouTube for authentication or permission errors." :
-								currentSession->fallbackUntilMs > now ? "YouTube streaming chat unavailable; using slower polling temporarily." :
+								"). Check the connection details in the log." :
 								"YouTube chat connection interrupted; reconnecting with a delay.");
 						}
 						return;
 					}
-					currentSession->pollIntervalMs = PulseYouTubeQuota::pollDelay(interval);
-					currentSession->nextRequestMs = now + currentSession->pollIntervalMs;
-					if (!finished || !useStream) {
+					if (!finished && durationMs >= 60000) {
 						const bool recovered = !currentSession->lastError.isEmpty();
 						currentSession->failures = 0;
+                        currentSession->emptyCompletions = 0;
 						currentSession->lastError.clear();
 						if (recovered) guard->RefreshPulseWeaverChatComposer();
 					}
-					if (finished && useStream) currentSession->streamFailures = 0;
+					if (finished) PulseYouTubeChat::completed(*currentSession, receivedBatch, now);
 					for (const YoutubeChatEvent &event : events) {
 						if (event.type == "tombstone") {
 							if (!event.id.isEmpty()) PulseChat::markDeleted(guard->pulseChatFeed, "youtube", event.id);
@@ -6053,35 +6043,16 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 						guard->pulseYouTubeSeenMessageIds.clear();
 				}, Qt::QueuedConnection);
 			};
-			if (cancelled()) { deliver({}, {}, true, {}, 5000); return; }
-			if (useStream) {
-				const qint64 streamStartedMs = QDateTime::currentMSecsSinceEpoch();
-				const auto result = auth->StreamLiveChatMessages(chatId, page, cancelled,
-					[&](const QString &next, const QVector<YoutubeChatEvent> &events) {
-						deliver(next, events, false, {}, 5000);
-					});
-				// A chat stream should remain open. Repeated clean closes within a minute
-				// otherwise reconnect every few seconds and spend quota. After three,
-				// use the existing, slower list fallback until streaming can be retried.
-				const bool closedEarly = result.reason.isEmpty() && result.received &&
-					QDateTime::currentMSecsSinceEpoch() - streamStartedMs < 60000;
-				// Cancellation due to quota must release pending state; generation guards reject old shows.
-				deliver({}, {}, true, result.reason == "cancelled" ? QString() :
-					closedEarly ? QStringLiteral("streamUnavailable") : result.reason, 15000);
-			} else {
-				QString next = page, reason;
-				QVector<YoutubeChatEvent> events;
-				int interval = 15000;
-				bool ok;
-				{
-					std::lock_guard<std::mutex> lock(pulseYouTubeChatRequestMutex);
-					if (cancelled()) { deliver({}, {}, true, {}, 5000); return; }
-					ok = auth->GetLiveChatMessages(chatId, next, events, interval);
-					if (!ok) reason = auth->GetLastErrorReason();
-				}
-				deliver(next, events, true, ok ? QString() : reason.isEmpty() ? "networkError" : reason,
-					std::max(15000, interval));
-			}
+			if (cancelled()) { deliver({}, {}, true, "cancelled", 0); return; }
+			QElapsedTimer lifetime;
+            lifetime.start();
+            const auto result = auth->StreamLiveChatMessages(chatId, page, cancelled,
+                [&](const QString &next, const QVector<YoutubeChatEvent> &events) {
+                    deliver(next, events, false, {}, lifetime.elapsed());
+                });
+            deliver({}, {}, true, result.reason,
+                result.durationMs, result.received);
+
 		});
 		if (!started) {
 			sessionIt->requestPending = false;

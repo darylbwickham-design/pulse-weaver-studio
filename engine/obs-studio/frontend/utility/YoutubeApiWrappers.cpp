@@ -20,6 +20,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <atomic>
 
 #include "moc_YoutubeApiWrappers.cpp"
 
@@ -105,8 +106,22 @@ bool YoutubeApiWrappers::TryInsertCommand(const char *url, const char *content_t
 	std::string error;
 	// Increase timeout by the time it takes to transfer `data_size` at 1 Mbps
 	int timeout = 60 + data_size / 125000;
+	// Count attempts (including retries), without logging URLs, IDs or credentials.
+    static std::atomic<unsigned long long> requestSequence{0};
+    const auto sequence = ++requestSequence;
+    const QString path = QUrl(QString::fromUtf8(url)).path();
+    const QSet<QString> safePaths{"/youtube/v3/liveBroadcasts", "/youtube/v3/liveBroadcasts/bind",
+        "/youtube/v3/liveBroadcasts/transition", "/youtube/v3/liveStreams", "/youtube/v3/liveChat/messages",
+        "/youtube/v3/liveChat/bans", "/youtube/v3/channels", "/youtube/v3/videos",
+        "/youtube/v3/thumbnails/set", "/token"};
+    const QByteArray operation = safePaths.contains(path) ? path.toUtf8() : QByteArray("other");
+    const char *method = request_type == "DELETE" ? "DELETE" : request_type == "PUT" ? "PUT" :
+        request_type == "PATCH" ? "PATCH" : (data || request_type == "POST") ? "POST" : "GET";
+    blog(LOG_INFO, "[YouTube requests] REST attempt=%llu method=%s operation=%s",
+        sequence, method, operation.constData());
 	bool success = GetRemoteFile(url, output, error, &httpStatusCode, content_type, request_type, data,
 				     {"Authorization: Bearer " + token}, nullptr, timeout, false, data_size);
+	blog(LOG_INFO, "[YouTube requests] REST attempt=%llu HTTP=%ld", sequence, httpStatusCode);
 	if (error_code) {
 		*error_code = httpStatusCode;
 	}
@@ -547,6 +562,11 @@ bool YoutubeApiWrappers::GetLiveChatMessages(const QString &chat_id, QString &pa
 	page_token = QString::fromStdString(json["nextPageToken"].string_value());
 	poll_interval_ms = std::max(1000, json["pollingIntervalMillis"].int_value());
 	parseYouTubeChatEvents(json, events);
+    if (!json["offlineAt"].string_value().empty() ||
+        std::any_of(events.begin(), events.end(), [](const YoutubeChatEvent &event) { return event.type == "chatEndedEvent"; })) {
+        lastErrorReason = "liveChatEnded";
+        return false;
+    }
 	return true;
 }
 
@@ -571,6 +591,9 @@ PulseYouTubeStream::Result YoutubeApiWrappers::StreamLiveChatMessages(const QStr
 		}
 		if (access.isEmpty()) return {"unauthenticated", received};
 		const QString executable = QCoreApplication::applicationDirPath() + "/youtube-chat/PulseWeaver.YouTubeChat.exe";
+		static std::atomic<unsigned long long> streamSequence{0};
+        const auto sequence = ++streamSequence;
+        blog(LOG_INFO, "[YouTube requests] streamList attempt=%llu started", sequence);
 		auto result = PulseYouTubeStream::run(executable,
 			{{"token", access}, {"chatId", chatId}, {"pageToken", cursor}}, cancelled,
 			[&](const QJsonObject &object) {
@@ -582,6 +605,9 @@ PulseYouTubeStream::Result YoutubeApiWrappers::StreamLiveChatMessages(const QStr
 				if (!next.isEmpty()) cursor = next;
 				batch(cursor, events);
 			});
+		blog(LOG_INFO, "[YouTube requests] streamList attempt=%llu duration_ms=%lld batches=%d grpc_status=%d outcome=%s",
+            sequence, static_cast<long long>(result.durationMs), result.batches, result.grpcStatus,
+            result.reason.isEmpty() ? "completed" : result.reason.toUtf8().constData());
 		received = received || result.received;
 		if (result.reason == "unauthenticated" && !attempt) continue;
 		PulseYouTubeQuota::record(quotaFile(), quotaKey(), result.reason, 0, QDateTime::currentMSecsSinceEpoch());
