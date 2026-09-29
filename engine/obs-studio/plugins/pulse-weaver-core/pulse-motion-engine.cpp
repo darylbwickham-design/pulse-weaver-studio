@@ -800,8 +800,19 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	stageRow->addLayout(commandRow);
 	auto *lookRow = new QHBoxLayout;
 	lookRow->setSpacing(8);
-	lookRow->addWidget(new QLabel("Look", libraryPage));
+	auto *lookLabel = new QLabel("Look · select to edit", libraryPage);
+	lookLabel->setToolTip("Selecting a Look opens its saved layout on the design canvases. Changes stay off air until you run the saved Look live.");
+	lookRow->addWidget(lookLabel);
 	lookRow->addWidget(makeNavigationStrip(lookCards), 1);
+	auto *editLook = new QPushButton("Edit selected look", libraryPage);
+	editLook->setToolTip("Select a Look, then choose a layer or click a canvas to change its layout. Save look when finished.");
+	lookRow->addWidget(editLook);
+	auto *newLayout = new QPushButton("+ New look", libraryPage);
+	newLayout->setToolTip("Create a new Look in this Stage with its own source positions and visibility.");
+	lookRow->addWidget(newLayout);
+	auto *duplicateLook = new QPushButton("Duplicate look", libraryPage);
+	duplicateLook->setToolTip("Copy the selected Look as a starting point for a new one.");
+	lookRow->addWidget(duplicateLook);
 	libraryLayout->addLayout(lookRow);
 	auto *showBuilder = new QPushButton("Build my show…");
 	showBuilder->setObjectName("Primary");
@@ -810,10 +821,8 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	commandRow->addWidget(showBuilder);
 	connect(showBuilder, &QPushButton::clicked, this, [this] { openShowWizard(); });
 	auto *newPunch = new QPushButton("+ CLOSE-UP");
-	auto *newLayout = new QPushButton("+ LOOK");
 	commandRow->addWidget(newPunch);
-	commandRow->addWidget(newLayout);
-	newPunch->hide(); newLayout->hide();
+	newPunch->hide();
 	auto *originalButton = new QPushButton("RESTORE ORIGINAL SCENES");
 	originalButton->setToolTip("Restore protected original framing, visibility and layers, even after restarting.");
 	commandRow->addWidget(originalButton);
@@ -1374,14 +1383,29 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 		const QString name = QInputDialog::getText(editor, "Create a stage look", "Name this look (Game, Chatting, BRB, Printer…)", QLineEdit::Normal, "Chatting", &ok);
 		if (ok && !name.trimmed().isEmpty()) createLook(name.trimmed(), false);
 	});
-	auto *duplicateLook = new QPushButton("DUPLICATE LOOK");
-	commandRow->insertWidget(3, duplicateLook);
-	duplicateLook->hide();
 	connect(moreMenu->addAction("Duplicate this look…"), &QAction::triggered, duplicateLook, &QPushButton::click);
 	connect(duplicateLook, &QPushButton::clicked, this, [this] {
+		if (!mayLeaveDraft()) return;
 		bool ok = false;
 		const QString name = QInputDialog::getText(editor, "Duplicate look", "Name the new look", QLineEdit::Normal, nameField->text() + " copy", &ok);
 		if (ok && !name.trimmed().isEmpty()) createLook(name.trimmed(), true);
+	});
+	connect(editLook, &QPushButton::clicked, this, [this, advancedButton] {
+		if (!nameField || nameField->text().trimmed().isEmpty()) {
+			setStatus("Choose a Look above, or create one with + New look.", true);
+			return;
+		}
+		advancedButton->setChecked(false);
+		if (itemTree && !itemTree->currentItem()) {
+			for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
+				QTreeWidgetItem *item = itemTree->topLevelItem(row);
+				if (item->checkState(0) == Qt::Checked) {
+					itemTree->setCurrentItem(item);
+					break;
+				}
+			}
+		}
+		setStatus("Editing “" + nameField->text() + "”. Choose a layer on the right or click a preview, arrange it, then Save look. Live output is unchanged.");
 	});
 	connect(actionList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
 		if (!item) return;
@@ -1837,7 +1861,8 @@ void PulseMotionEngine::loadActionIntoEditor(const QJsonObject &action)
 	refreshSummary();
 	syncVisualCanvas();
 	refreshPreviewChoices();
-	setStatus(action.value("draft").toBool() ? "Imported draft: review the targets and press Save Action before running it." : "Editing does not change the live output.");
+	setStatus(action.value("draft").toBool() ? "Imported draft: review the layers and Save look before running it."
+		: "Editing “" + nameField->text() + "”. Choose a layer or click a preview, arrange it, then Save look. Live output is unchanged.");
 	draftDirty = false;
 	if (saveButton) saveButton->setText("Save look");
 }
