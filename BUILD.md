@@ -1,6 +1,10 @@
-# Build Pulse Weaver 1.12.15 on Windows
+# Build Pulse Weaver 1.14 development source on Windows
 
-This source snapshot corresponds to the Windows private/beta 1.12.15 release. It contains no personal configuration, account tokens or bundled Google registration file. Use `packaging/PulseWeaver.PrivateSetup` for this release.
+This branch contains the 1.14 unstable source plus local work under review. It contains no personal configuration, account tokens or bundled Google registration file. A local build does not publish a release or change an installed application.
+
+The current channel packager is `packaging/Build-ChannelRelease.ps1`, with `release`, `alpha` and `unstable` channels, an explicitly selected version/revision, a native `RuntimeRoot` and an authorised `YouTubeDesktopClientJson`. It stages a clean payload, checks required runtime components, builds the chat helper and packages `PulseWeaver.PrivateSetup`. Do not reuse an existing release tag or run a packager as part of a local-only patch. Current offline installer policies are documented in [the update/storage audit](docs/AUDIT-UPDATES-STORAGE-2026-09-29.md).
+
+## Historical 1.12.15 packaging
 
 After the native build below, supply an authorised Google Desktop app registration JSON and create the clean runtime ZIP with `packaging/Build-PrivateV126.ps1 -Version 1.12.15 -YouTubeDesktopClientJson <path>`, then publish the self-contained installer:
 

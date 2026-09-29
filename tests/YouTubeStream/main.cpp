@@ -35,8 +35,8 @@ int main(int argc, char **argv)
     QElapsedTimer clock; clock.start();
     check(run(executable, {{"chatId", "hang"}}, [&] { return clock.elapsed() > 300; }, collect).reason == "cancelled", "idle stream cancellation");
     check(clock.elapsed() < 4000, "cancellation bounded");
-    check(!fallbackEligible("quotaExceeded") && !fallbackEligible("unauthenticated") && !fallbackEligible("rateLimitExceeded"), "no fallback around quota or auth");
-    check(fallbackEligible("streamUnsupported") && fallbackEligible("streamUnavailable"), "transport fallback allowed");
+    check(terminal("streamUnsupported") && terminal("invalidArgument"), "unsupported requests stop without REST fallback");
+    check(!terminal("streamUnavailable") && !terminal("deadlineExceeded"), "transient transport errors permit delayed streaming retry");
     check(eventType("TEXT_MESSAGE_EVENT") == "textMessageEvent" && eventType("SUPER_CHAT_EVENT") == "superChatEvent", "protobuf enum normalization");
     check(eventType("textMessageEvent") == "textMessageEvent", "REST event normalization");
     PulseYouTubeChat::Sessions sessions{{"vertical", {"v", "shared"}}, {"horizontal", {"h", "shared"}}};

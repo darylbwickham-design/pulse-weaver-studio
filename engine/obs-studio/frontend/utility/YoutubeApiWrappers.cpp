@@ -3,6 +3,8 @@
 #include "../../shared/qt/PulseChatProtocol.hpp"
 #include "../../shared/qt/PulseBroadcastFlow.hpp"
 #include "../../shared/qt/PulseYouTubeQuota.hpp"
+#include "../../shared/qt/PulseYouTubeReusableStream.hpp"
+#include "../../shared/qt/PulseYouTubeBroadcast.hpp"
 #include <QCryptographicHash>
 #include <QJsonDocument>
 #include "YoutubeApiWrappers.hpp"
@@ -113,7 +115,7 @@ bool YoutubeApiWrappers::TryInsertCommand(const char *url, const char *content_t
     const QSet<QString> safePaths{"/youtube/v3/liveBroadcasts", "/youtube/v3/liveBroadcasts/bind",
         "/youtube/v3/liveBroadcasts/transition", "/youtube/v3/liveStreams", "/youtube/v3/liveChat/messages",
         "/youtube/v3/liveChat/bans", "/youtube/v3/channels", "/youtube/v3/videos",
-        "/youtube/v3/thumbnails/set", "/token"};
+		"/upload/youtube/v3/thumbnails/set", "/youtube/v3/videoCategories", "/token"};
     const QByteArray operation = safePaths.contains(path) ? path.toUtf8() : QByteArray("other");
     const char *method = request_type == "DELETE" ? "DELETE" : request_type == "PUT" ? "PUT" :
         request_type == "PATCH" ? "PATCH" : (data || request_type == "POST") ? "POST" : "GET";
@@ -169,7 +171,12 @@ bool YoutubeApiWrappers::UpdateAccessToken()
 	}
 	token = json_out["access_token"].string_value();
 	expire_time = uint64_t(QDateTime::currentSecsSinceEpoch()) + std::max(60, json_out["expires_in"].int_value());
-	return token.empty() ? false : true;
+	if (token.empty()) return false;
+	QMetaObject::invokeMethod(this, [this] {
+		std::lock_guard<std::mutex> lock(youtubeApiRequestMutex);
+		SavePulseWeaverAccount();
+	}, Qt::QueuedConnection);
+	return true;
 }
 
 bool YoutubeApiWrappers::InsertCommand(const char *url, const char *content_type, std::string request_type,
@@ -186,6 +193,7 @@ bool YoutubeApiWrappers::InsertCommand(const char *url, const char *content_type
 		lastErrorMessage = PulseYouTubeQuota::message(paused);
 		return false;
 	}
+	if (TokenExpired() && !UpdateAccessToken()) return false;
 	bool success = TryInsertCommand(url, content_type, request_type, data, json_out, &error_code, data_size);
 
 	if (error_code == 401) {
@@ -223,7 +231,7 @@ bool YoutubeApiWrappers::GetChannelDescription(ChannelDescription &channel_descr
 	lastErrorReason.clear();
 
 	const std::string url =
-		std::string(youtubeLiveChannelUrl) + "?part=snippet,contentDetails,statistics&mine=true";
+		std::string(youtubeLiveChannelUrl) + "?part=snippet&mine=true";
 	Json json_out;
 	if (!InsertCommand(url.c_str(), "application/json", "", nullptr, json_out)) {
 		return false;
@@ -235,6 +243,7 @@ bool YoutubeApiWrappers::GetChannelDescription(ChannelDescription &channel_descr
 	}
 
 	channel_description.id = QString(json_out["items"][0]["id"].string_value().c_str());
+	connectedChannelId = channel_description.id;
 	channel_description.title = QString(json_out["items"][0]["snippet"]["title"].string_value().c_str());
 	return channel_description.id.isEmpty() ? false : true;
 }
@@ -276,6 +285,7 @@ bool YoutubeApiWrappers::InsertBroadcast(BroadcastDescription &broadcast)
 		return false;
 	}
 	broadcast.id = QString(json_out["id"].string_value().c_str());
+	broadcast.liveChatId = QString::fromStdString(json_out["snippet"]["liveChatId"].string_value());
 	return broadcast.id.isEmpty() ? false : true;
 }
 
@@ -295,7 +305,7 @@ bool YoutubeApiWrappers::InsertStream(StreamDescription &stream)
 			 {"ingestionType", "rtmp"},
 			 {"resolution", "variable"},
 		 }},
-		{"contentDetails", Json::object{{"isReusable", false}}},
+		{"contentDetails", Json::object{{"isReusable", stream.reusable}}},
 	};
 	Json json_out;
 	if (!InsertCommand(url.c_str(), "application/json", "", data.dump().c_str(), json_out)) {
@@ -304,6 +314,41 @@ bool YoutubeApiWrappers::InsertStream(StreamDescription &stream)
 	stream.id = QString(json_out["id"].string_value().c_str());
 	stream.name = QString(json_out["cdn"]["ingestionInfo"]["streamName"].string_value().c_str());
 	return stream.id.isEmpty() ? false : true;
+}
+
+bool YoutubeApiWrappers::GetReusableStream(const QString &route, StreamDescription &stream)
+{
+	if (route != "horizontal" && route != "vertical") return false;
+	if (connectedChannelId.isEmpty()) {
+		ChannelDescription channel;
+		if (!GetChannelDescription(channel)) return false;
+	}
+	// Cache only identifiers. Ingestion keys are read from YouTube for each preparation.
+	const auto account = QString::fromLatin1(QCryptographicHash::hash(
+		(PulseYouTubeRegistration::current().clientId + "|" + connectedChannelId).toUtf8(), QCryptographicHash::Sha256).toHex());
+	QSettings cache(QFileInfo(PulseAppCredentials::path()).absolutePath() + "/youtube-streams.ini", QSettings::IniFormat);
+	const QString key = account + '/' + route;
+	const QString id = cache.value(key).toString();
+	if (!id.isEmpty()) {
+		Json response;
+		const auto url = QString::fromUtf8(youtubeLiveStreamUrl.data()) +
+			"?part=id,snippet,cdn,status,contentDetails&id=" + QString::fromLatin1(QUrl::toPercentEncoding(id));
+		// A rejected lookup must not cause repeated resource creation.
+		if (!InsertCommand(QT_TO_UTF8(url), "application/json", "", nullptr, response)) return false;
+		const auto candidate = QJsonDocument::fromJson(QByteArray::fromStdString(response["items"][0].dump())).object();
+		if (PulseYouTubeReusableStream::compatible(candidate, id, connectedChannelId)) {
+			stream.id = id;
+			stream.name = candidate.value("cdn").toObject().value("ingestionInfo").toObject().value("streamName").toString();
+			blog(LOG_INFO, "[YouTube setup] Reusing inactive ingestion stream for %s", route.toUtf8().constData());
+			return true;
+		}
+	}
+	stream.reusable = true;
+	if (!InsertStream(stream) || stream.name.isEmpty()) return false;
+	cache.setValue(key, stream.id);
+	cache.sync();
+	blog(LOG_INFO, "[YouTube setup] Created reusable ingestion stream for %s", route.toUtf8().constData());
+	return true;
 }
 
 bool YoutubeApiWrappers::BindStream(const QString broadcast_id, const QString stream_id)
@@ -498,16 +543,22 @@ bool YoutubeApiWrappers::FinishBroadcast(const QString &broadcast_id)
 	lastErrorMessage.clear();
 	lastErrorReason.clear();
 	Json json_out;
-	if (!FindBroadcast(broadcast_id, json_out) || json_out["items"].array_items().empty())
-		return false;
+	if (!FindBroadcast(broadcast_id, json_out))
+		return lastErrorReason == "broadcastNotFound";
 	const std::string status = json_out["items"][0]["status"]["lifeCycleStatus"].string_value();
-	if (status == "complete")
+	switch (PulseYouTubeBroadcast::cleanup(status)) {
+	case PulseYouTubeBroadcast::Cleanup::Keep:
 		return true;
-	if (status == "live" || status == "liveStarting" || status == "testing" || status == "testStarting")
+	case PulseYouTubeBroadcast::Cleanup::Complete:
 		return StopBroadcast(broadcast_id);
-	/* A broadcast which never reached a live lifecycle has no replay to
-	 * preserve. Remove it so it cannot remain as a phantom Upcoming event. */
-	return DeleteBroadcast(broadcast_id);
+	case PulseYouTubeBroadcast::Cleanup::DeleteUnused:
+		return DeleteBroadcast(broadcast_id);
+	case PulseYouTubeBroadcast::Cleanup::Unknown:
+		lastErrorReason = "unknownBroadcastStatus";
+		lastErrorMessage = "YouTube returned an unrecognized broadcast state. The broadcast has been preserved.";
+		return false;
+	}
+	return false;
 }
 
 bool YoutubeApiWrappers::StopLatestBroadcast()
@@ -572,30 +623,33 @@ bool YoutubeApiWrappers::GetLiveChatMessages(const QString &chat_id, QString &pa
 
 PulseYouTubeStream::Result YoutubeApiWrappers::StreamLiveChatMessages(const QString &chatId,
 	const QString &page, const std::function<bool()> &cancelled,
-	const std::function<void(const QString &, const QVector<YoutubeChatEvent> &)> &batch)
+	const std::function<void(const QString &, const QVector<YoutubeChatEvent> &)> &batch, bool saveQuota)
 {
 	QString cursor = page;
 	bool received = false;
-	for (int attempt = 0; attempt < 2; ++attempt) {
+	PulseYouTubeStream::AuthRetry authRetry;
+	bool refreshRequired = false;
+	QString previousAccess;
+	for (;;) {
 		if (cancelled()) return {"cancelled", received};
 		QString access;
 		{
 			std::lock_guard<std::mutex> lock(youtubeApiRequestMutex);
 			const auto pause = quotaPause();
 			if (pause.until) return {pause.reason, received};
-			if (attempt || TokenExpired()) {
+			if (TokenExpired() || (refreshRequired && previousAccess == QString::fromStdString(token))) {
 				if (!UpdateAccessToken()) return {"unauthenticated", received};
-				QMetaObject::invokeMethod(this, [this] { SavePulseWeaverAccount(); }, Qt::QueuedConnection);
 			}
 			access = QString::fromStdString(token);
 		}
 		if (access.isEmpty()) return {"unauthenticated", received};
+		previousAccess = access;
 		const QString executable = QCoreApplication::applicationDirPath() + "/youtube-chat/PulseWeaver.YouTubeChat.exe";
 		static std::atomic<unsigned long long> streamSequence{0};
         const auto sequence = ++streamSequence;
-        blog(LOG_INFO, "[YouTube requests] streamList attempt=%llu started", sequence);
+        blog(LOG_INFO, "[YouTube requests] chat session=%llu started", sequence);
 		auto result = PulseYouTubeStream::run(executable,
-			{{"token", access}, {"chatId", chatId}, {"pageToken", cursor}}, cancelled,
+			{{"token", access}, {"chatId", chatId}, {"pageToken", cursor}, {"persistent", true}, {"saveQuota", saveQuota}}, cancelled,
 			[&](const QJsonObject &object) {
 				std::string error;
 				const auto json = Json::parse(QJsonDocument(object).toJson(QJsonDocument::Compact).toStdString(), error);
@@ -604,17 +658,24 @@ PulseYouTubeStream::Result YoutubeApiWrappers::StreamLiveChatMessages(const QStr
 				const QString next = object.value("nextPageToken").toString();
 				if (!next.isEmpty()) cursor = next;
 				batch(cursor, events);
+			}, [sequence](const QJsonObject &diagnostic) {
+				if (diagnostic.value("_pulse").toString() == "rpcStarted")
+					blog(LOG_INFO, "[YouTube requests] session=%llu rpc=%d started", sequence, diagnostic.value("attempt").toInt());
+				else
+					blog(LOG_INFO, "[YouTube requests] session=%llu rpc=%d duration_ms=%lld batches=%d messages=%d grpc_status=%d next_delay_ms=%d",
+						sequence, diagnostic.value("attempt").toInt(), static_cast<long long>(diagnostic.value("durationMs").toDouble()),
+						diagnostic.value("batches").toInt(), diagnostic.value("messages").toInt(),
+						diagnostic.value("grpcStatus").toInt(-1), diagnostic.value("delayMs").toInt());
 			});
-		blog(LOG_INFO, "[YouTube requests] streamList attempt=%llu duration_ms=%lld batches=%d grpc_status=%d outcome=%s",
+		blog(LOG_INFO, "[YouTube requests] chat session=%llu duration_ms=%lld batches=%d grpc_status=%d outcome=%s",
             sequence, static_cast<long long>(result.durationMs), result.batches, result.grpcStatus,
             result.reason.isEmpty() ? "completed" : result.reason.toUtf8().constData());
 		received = received || result.received;
-		if (result.reason == "unauthenticated" && !attempt) continue;
+		if (authRetry.allow(result)) { refreshRequired = true; continue; }
 		PulseYouTubeQuota::record(quotaFile(), quotaKey(), result.reason, 0, QDateTime::currentMSecsSinceEpoch());
 		result.received = received;
 		return result;
 	}
-	return {"unauthenticated", received};
 }
 
 bool YoutubeApiWrappers::DeleteLiveChatMessage(const QString &message_id)
@@ -719,6 +780,8 @@ bool YoutubeApiWrappers::FindBroadcast(const QString &id, json11::Json &json_out
 	auto items = json_out["items"].array_items();
 	if (items.size() != 1) {
 		lastErrorMessage = QTStr("YouTube.Actions.Error.BroadcastNotFound");
+		lastErrorReason = items.empty() && json_out["items"].is_array() ?
+			"broadcastNotFound" : "invalidBroadcastResponse";
 		return false;
 	}
 

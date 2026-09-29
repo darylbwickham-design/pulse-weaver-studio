@@ -44,6 +44,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPointer>
+#include <QPersistentModelIndex>
 #include <QPixmap>
 #include <QScrollBar>
 #include <QProgressBar>
@@ -82,6 +83,7 @@
 #include <algorithm>
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -329,7 +331,8 @@ public:
 		settings.remove("twitch/client_id");
 		accessToken = unprotectCredential(settings.value("twitch/access_token").toString());
 		refreshToken = unprotectCredential(settings.value("twitch/refresh_token").toString());
-		pollTimer.setSingleShot(false);
+		// Wait for the previous reply before scheduling another device poll.
+		pollTimer.setSingleShot(true);
 		connect(&pollTimer, &QTimer::timeout, this, [this] { pollDeviceToken(); });
 		retryTimer.setSingleShot(true);
 		connect(&retryTimer, &QTimer::timeout, this, [this] { validateToken(); });
@@ -409,6 +412,7 @@ public:
 	void beginLogin()
 	{
 		++authGeneration;
+		devicePollInFlight = false;
 		refreshing = false; refreshWaiters.clear();
 		sendingChat = false;
 		pollTimer.stop(); tokenTimer.stop(); retryTimer.stop();
@@ -453,6 +457,7 @@ public:
 	void clearLogin()
 	{
 		++authGeneration;
+		devicePollInFlight = false;
 		refreshing = false; refreshWaiters.clear();
 		sendingChat = false;
 		tokenTimer.stop(); retryTimer.stop();
@@ -540,7 +545,8 @@ public:
 		if (!categoryId.trimmed().isEmpty())
 			body.insert("game_id", categoryId.trimmed());
 		QNetworkReply *reply = network.sendCustomRequest(request, "PATCH", QJsonDocument(body).toJson(QJsonDocument::Compact));
-		connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			const QJsonObject error = QJsonDocument::fromJson(reply->readAll()).object();
 			reply->deleteLater();
@@ -571,7 +577,8 @@ public:
 		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 		QNetworkReply *reply = network.get(request);
 		connect(reply, &QNetworkReply::finished, this,
-			[this, reply, completed = std::move(completed)] {
+			[this, reply, generation = authGeneration, completed = std::move(completed)] {
+				if (generation != authGeneration) { reply->deleteLater(); return; }
 				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 				const QJsonObject response = QJsonDocument::fromJson(reply->readAll()).object();
 				reply->deleteLater();
@@ -591,6 +598,7 @@ private:
 	std::atomic<quint64> socketGeneration{0};
 	bool chatSubscribed = false;
 	bool refreshing = false;
+	bool devicePollInFlight = false;
 	bool sendingChat = false;
 	std::vector<std::function<void(bool)>> refreshWaiters;
 	int retryAttempt = 0;
@@ -837,6 +845,7 @@ private:
 
 	void pollDeviceToken()
 	{
+		if (devicePollInFlight) return;
 		if (deviceCode.isEmpty() || QDateTime::currentDateTimeUtc() >= deviceDeadline) {
 			pollTimer.stop();
 			setStatus("Twitch device login expired. Press Connect to try again.");
@@ -844,10 +853,12 @@ private:
 		}
 		QNetworkRequest request(QUrl("https://id.twitch.tv/oauth2/token"));
 		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+		devicePollInFlight = true;
 		QNetworkReply *reply = network.post(
 			request, formBody({{"client_id", clientId}, {"scopes", "user:read:chat user:write:chat channel:manage:broadcast moderator:read:followers moderator:manage:chat_messages moderator:manage:banned_users moderator:manage:chat_settings channel:read:subscriptions bits:read channel:read:redemptions channel:read:hype_train channel:read:goals channel:read:stream_key"}, {"device_code", deviceCode}, {"grant_type", "urn:ietf:params:oauth:grant-type:device_code"}}));
 		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration] {
 			if (generation != authGeneration) { reply->deleteLater(); return; }
+			devicePollInFlight = false;
 			const QByteArray body = reply->readAll();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			reply->deleteLater();
@@ -859,6 +870,7 @@ private:
 				validateToken();
 			} else if (json.value("message").toString().contains("pending", Qt::CaseInsensitive)) {
 				setStatus("Waiting for Twitch approval — code " + userCode);
+				pollTimer.start(pollInterval * 1000);
 			} else {
 				pollTimer.stop();
 				setStatus("Twitch authorization failed: " + json.value("message").toString("HTTP " + QString::number(code)));
@@ -928,7 +940,8 @@ private:
 			request.setRawHeader("Client-Id", clientId.toUtf8());
 			request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 			QNetworkReply *reply = network.get(request);
-			connect(reply, &QNetworkReply::finished, this, [this, reply, channel] {
+			connect(reply, &QNetworkReply::finished, this, [this, reply, channel, generation = authGeneration] {
+				if (generation != authGeneration) { reply->deleteLater(); return; }
 				const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
 				reply->deleteLater();
 				if (channel) channelChatBadgeUrls = PulseChat::parseBadges(root);
@@ -963,7 +976,8 @@ private:
 		request.setRawHeader("Client-Id", clientId.toUtf8());
 		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 		QNetworkReply *reply = network.get(request);
-		connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const QByteArray body = reply->readAll();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			reply->deleteLater();
@@ -973,6 +987,11 @@ private:
 			if (code < 200 || code >= 300 || streamKey.isEmpty()) {
 				setStatus("Twitch connected, but broadcast setup needs reconnecting with stream-key permission: " +
 					  json.value("message").toString("HTTP " + QString::number(code)));
+				return;
+			}
+			// A stream can start while its asynchronous key lookup is pending.
+			if (obs_frontend_streaming_active()) {
+				setStatus("Twitch connected. End the current stream before Pulse Weaver updates its isolated destination.");
 				return;
 			}
 			obs_data_t *settings = obs_data_create();
@@ -1316,6 +1335,7 @@ public:
 	{
 		QSettings settings(pulseSettingsPath(), QSettings::IniFormat);
 		clientId = PulsePlatformApplicationIds::KickClientId();
+		network.setTransferTimeout(15000);
 		settings.remove("kick/client_id");
 		settings.remove("kick/client_secret");
 		accessToken = unprotectCredential(settings.value("kick/access_token").toString());
@@ -1330,9 +1350,12 @@ public:
 		tokenExpiresAtMs = settings.value("kick/token_expires_at_ms").toLongLong();
 		connect(&callback, &QTcpServer::newConnection, this, [this] { acceptCallback(); });
 		relayPollTimer.setInterval(1500);
+		relayPollTimer.setSingleShot(true);
+		relayRetryTimer.setSingleShot(true);
+		connect(&relayRetryTimer, &QTimer::timeout, this, [this] { connectRelay(); });
 		connect(&relayPollTimer, &QTimer::timeout, this, [this] { pollRelayEvents(); });
 	}
-	~KickRuntime() override { relayPollTimer.stop(); stopOutput(); }
+	~KickRuntime() override { stopRelay(); callback.close(); stopOutput(); }
 
 	void setWidgets(QLineEdit *application, QLabel *account, QLabel *state, QComboBox *route,
 		QPushButton *connectButton, QPushButton *disconnectButton, QLineEdit *chat, QPushButton *send)
@@ -1390,7 +1413,8 @@ public:
 		request.setTransferTimeout(15000);
 		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 		QNetworkReply *reply = network.get(request);
-		connect(reply, &QNetworkReply::finished, this, [this, reply, term, completed, retried] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, term, completed, retried] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			const QByteArray response = reply->readAll();
 			const QString error = PulseKick::safeError(code, response, reply->errorString(),
@@ -1431,7 +1455,8 @@ public:
 			const QByteArray body = QJsonDocument(PulseKick::categoryBody(categoryId)).toJson(QJsonDocument::Compact);
 			QNetworkReply *reply = network.sendCustomRequest(request, "PATCH", body);
 			setCategoryStatus("Updating Kick category…");
-			connect(reply, &QNetworkReply::finished, this, [this, reply, categoryId, categoryName, retried] {
+			connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, categoryId, categoryName, retried] {
+				if (generation != authGeneration) { reply->deleteLater(); return; }
 				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 				const QByteArray response = reply->readAll();
 				const QString error = PulseKick::safeError(code, response, reply->errorString(),
@@ -1479,7 +1504,8 @@ public:
 			const QByteArray body = QJsonDocument(PulseKick::titleBody(title)).toJson(QJsonDocument::Compact);
 			QNetworkReply *reply = network.sendCustomRequest(request, "PATCH", body);
 			setTitleStatus("Updating Kick title…");
-			connect(reply, &QNetworkReply::finished, this, [this, reply, title, retried] {
+			connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, title, retried] {
+				if (generation != authGeneration) { reply->deleteLater(); return; }
 				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 				const QByteArray response = reply->readAll();
 				const QString error = PulseKick::safeError(code, response, reply->errorString(),
@@ -1517,7 +1543,6 @@ public:
 				if (provider && (provider->currentData().toString() == "kick" || provider->currentData().toString() == "all") && shellChatInput) {
 					const bool all = provider->currentData().toString() == "all";
 					sendText((all ? shellChatInput->property("pulseWeaverBroadcastMessage").toString() : shellChatInput->text()).trimmed());
-					if (!all) shellChatInput->clear();
 				}
 			});
 		if (shellChatInput)
@@ -1526,7 +1551,6 @@ public:
 				if (provider && (provider->currentData().toString() == "kick" || provider->currentData().toString() == "all") && shellChatInput) {
 					const bool all = provider->currentData().toString() == "all";
 					sendText((all ? shellChatInput->property("pulseWeaverBroadcastMessage").toString() : shellChatInput->text()).trimmed());
-					if (!all) shellChatInput->clear();
 				}
 			});
 		if (auto *outputControl = mainWindow->findChild<QPushButton *>("PulseWeaverKickOutputControl"))
@@ -1541,6 +1565,12 @@ public:
 
 	void beginLogin()
 	{
+		++authGeneration;
+		refreshInFlight = false; refreshWaiters.clear();
+		channelInFlight = false; sendingChat = false;
+		subscriptionsInFlight = false; subscriptionsReady = false;
+		stopRelay();
+		stateToken.clear(); codeVerifier.clear();
 		clientId = PulsePlatformApplicationIds::KickClientId();
 		if (clientId.isEmpty()) {
 			setStatus("The Pulse Weaver Kick application registration is unavailable in this build.");
@@ -1641,7 +1671,13 @@ public:
 
 	void stopOutput()
 	{
-		if (output) { if (obs_output_active(output)) obs_output_stop(output); obs_output_release(output); output = nullptr; }
+		if (output) {
+			signal_handler_t *outputSignals = obs_output_get_signal_handler(output);
+			signal_handler_disconnect(outputSignals, "start", outputStarted, this);
+			signal_handler_disconnect(outputSignals, "stop", outputStopped, this);
+			if (obs_output_active(output)) obs_output_stop(output);
+			obs_output_release(output); output = nullptr;
+		}
 		if (ownedService) { obs_service_release(ownedService); ownedService = nullptr; }
 		if (ownedVideo) { obs_encoder_release(ownedVideo); ownedVideo = nullptr; }
 		if (ownedAudio) { obs_encoder_release(ownedAudio); ownedAudio = nullptr; }
@@ -1650,7 +1686,12 @@ public:
 
 private:
 	QNetworkAccessManager network{this}; QTcpServer callback{this}; EventCallback eventCallback;
-	QTimer relayPollTimer{this};
+	QTimer relayPollTimer{this}, relayRetryTimer{this};
+	quint64 authGeneration = 0, relayGeneration = 0;
+	std::vector<std::function<void(bool)>> refreshWaiters;
+	bool channelInFlight = false;
+	bool sendingChat = false;
+	bool subscriptionsInFlight = false, subscriptionsReady = false;
 	QString clientId, accessToken, refreshToken, stateToken, serverUrl, streamKey, accountName, currentTitle, currentCategoryName;
 	QString relaySessionToken;
 	qint64 broadcasterUserId = 0;
@@ -1732,7 +1773,8 @@ private:
 			QNetworkReply *reply = deleting ? network.deleteResource(request) : minutes < 0 ?
 				network.sendCustomRequest(request, "DELETE", body) : network.post(request, body);
 			setStatus("Applying Kick moderation…");
-			connect(reply, &QNetworkReply::finished, this, [this, reply, messageId, target, minutes, deleting, retried] {
+			connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, messageId, target, minutes, deleting, retried] {
+				if (generation != authGeneration) { reply->deleteLater(); return; }
 				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 				const QByteArray response = reply->readAll();
 				const QString error = PulseKick::safeError(code, response, reply->errorString(),
@@ -1767,12 +1809,14 @@ private:
 			url.setPath("/app");
 		return url.toString(QUrl::FullyEncoded);
 	}
-	static void outputStarted(void *data, calldata_t *)
+	static void outputStarted(void *data, calldata_t *parameters)
 	{
 		auto *self = static_cast<KickRuntime *>(data);
+		const std::shared_ptr<obs_output_t> signalled(
+			obs_output_get_ref(static_cast<obs_output_t *>(calldata_ptr(parameters, "output"))), obs_output_release);
 		QPointer<KickRuntime> guard(self);
-		QMetaObject::invokeMethod(self, [guard] {
-			if (!guard)
+		QMetaObject::invokeMethod(self, [guard, signalled] {
+			if (!guard || !signalled || guard->output != signalled.get())
 				return;
 			guard->setStatus("Kick LIVE · " + guard->activeOutputRoute);
 			if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
@@ -1782,13 +1826,15 @@ private:
 	static void outputStopped(void *data, calldata_t *parameters)
 	{
 		auto *self = static_cast<KickRuntime *>(data);
+		const std::shared_ptr<obs_output_t> signalled(
+			obs_output_get_ref(static_cast<obs_output_t *>(calldata_ptr(parameters, "output"))), obs_output_release);
 		const int code = int(calldata_int(parameters, "code"));
-		const char *lastError = self->output ? obs_output_get_last_error(self->output) : nullptr;
+		const char *lastError = calldata_string(parameters, "last_error");
 		const QString detail = lastError && *lastError ? QString::fromUtf8(lastError) :
 			QString("output code %1").arg(code);
 		QPointer<KickRuntime> guard(self);
-		QMetaObject::invokeMethod(self, [guard, code, detail] {
-			if (!guard)
+		QMetaObject::invokeMethod(self, [guard, signalled, code, detail] {
+			if (!guard || !signalled || guard->output != signalled.get())
 				return;
 			if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
 				mainWindow->setProperty("pulseWeaverKickLive", false);
@@ -1851,8 +1897,9 @@ private:
 		request.setRawHeader("Authorization", "Bearer " + inspectedToken.toUtf8());
 		request.setTransferTimeout(12000);
 		QNetworkReply *reply = network.post(request, QByteArray());
-		connect(reply, &QNetworkReply::finished, this, [this, reply, inspectedToken, retried,
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, inspectedToken, retried,
 								completed = std::move(completed)]() mutable {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const QByteArray response = reply->readAll();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			const QString error = PulseKick::safeError(code, response, reply->errorString(),
@@ -1894,6 +1941,8 @@ private:
 	}
 	void stopRelay()
 	{
+		++relayGeneration;
+		relayRetryTimer.stop();
 		relayPollTimer.stop(); relaySessionToken.clear(); relayCursor = 0;
 		relaySessionInFlight = false; relayPollInFlight = false; relayFailures = 0;
 		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
@@ -1901,7 +1950,7 @@ private:
 	}
 	void connectRelay(bool retried = false)
 	{
-		if (relaySessionInFlight || accessToken.isEmpty() || broadcasterUserId <= 0)
+		if (relaySessionInFlight || !relaySessionToken.isEmpty() || accessToken.isEmpty() || broadcasterUserId <= 0)
 			return;
 		if (tokenExpired() && !refreshToken.isEmpty() && !retried) {
 			refreshAccessToken([this](bool ok) { if (ok) connectRelay(true); });
@@ -1913,7 +1962,8 @@ private:
 		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 		request.setTransferTimeout(12000);
 		QNetworkReply *reply = network.post(request, QByteArray("{}"));
-		connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, relay = relayGeneration] {
+			if (generation != authGeneration || relay != relayGeneration) { reply->deleteLater(); return; }
 			const QByteArray body = reply->readAll();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			const QString networkError = reply->errorString(); reply->deleteLater();
@@ -1924,12 +1974,12 @@ private:
 				stopRelay();
 				setStatus("Kick output is connected, but incoming chat could not connect: " +
 					json.value("error").toString(code ? "HTTP " + QString::number(code) : networkError));
-				QTimer::singleShot(5000, this, [this] { connectRelay(); });
+				relayRetryTimer.start(5000);
 				return;
 			}
 			relaySessionToken = token;
 			relayCursor = qint64(json.value("cursor").toDouble());
-			relayFailures = 0; relayPollTimer.start();
+			relayFailures = 0; relayRetryTimer.stop();
 			if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
 				mainWindow->setProperty("pulseWeaverKickReceiveReady", true);
 			setStatus("Kick account, output and incoming chat are connected."); updateUi();
@@ -1946,13 +1996,16 @@ private:
 		QNetworkRequest request(url); request.setRawHeader("Authorization", "Bearer " + relaySessionToken.toUtf8());
 		request.setTransferTimeout(10000);
 		QNetworkReply *reply = network.get(request);
-		connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, relay = relayGeneration] {
+			if (generation != authGeneration || relay != relayGeneration) { reply->deleteLater(); return; }
 			const QByteArray body = reply->readAll();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(); reply->deleteLater();
 			relayPollInFlight = false;
 			if (code == 401) { stopRelay(); connectRelay(); return; }
 			if (code < 200 || code >= 300) {
-				if (++relayFailures >= 3) {
+				relayFailures = std::min(relayFailures + 1, 5);
+				relayPollTimer.start(std::min(30000, 1500 * (1 << relayFailures)));
+				if (relayFailures >= 3) {
 					if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
 						mainWindow->setProperty("pulseWeaverKickReceiveReady", false);
 					setStatus("Kick incoming chat is reconnecting…");
@@ -1960,14 +2013,18 @@ private:
 				return;
 			}
 			relayFailures = 0;
+			relayPollTimer.start(1500);
 			if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
 				mainWindow->setProperty("pulseWeaverKickReceiveReady", true);
 			const QJsonObject json = QJsonDocument::fromJson(body).object();
 			for (const QJsonValue &value : json.value("events").toArray()) {
 				const QJsonObject envelope = value.toObject();
+				const qint64 sequence = qint64(envelope.value("sequence").toDouble());
+				if (sequence > 0 && sequence <= relayCursor) continue;
 				const QString type = envelope.value("type").toString();
 				const QJsonObject payload = envelope.value("payload").toObject();
 				if (!type.isEmpty() && eventCallback) eventCallback(type, payload);
+				if (generation != authGeneration || relay != relayGeneration) return;
 				relayCursor = std::max(relayCursor, qint64(envelope.value("sequence").toDouble()));
 			}
 			relayCursor = std::max(relayCursor, qint64(json.value("cursor").toDouble()));
@@ -1987,6 +2044,11 @@ private:
 	}
 	void clearLogin()
 	{
+		++authGeneration;
+		refreshInFlight = false; refreshWaiters.clear();
+		channelInFlight = false; sendingChat = false;
+		subscriptionsInFlight = false; subscriptionsReady = false;
+		callback.close(); stateToken.clear(); codeVerifier.clear();
 		stopRelay(); stopOutput(); accessToken.clear(); refreshToken.clear(); serverUrl.clear(); streamKey.clear(); accountName.clear();
 		broadcasterUserId = 0; tokenExpiresAtMs = 0;
 		moderationScopes.clear(); grantVerified = false;
@@ -1999,18 +2061,35 @@ private:
 	void acceptCallback()
 	{
 		QTcpSocket *socket = callback.nextPendingConnection();
-		connect(socket, &QTcpSocket::readyRead, this, [this, socket] {
-			const QByteArray request = socket->readAll();
-			const QByteArray target = request.split('\n').value(0).split(' ').value(1);
-			const QUrl url("http://localhost" + QString::fromUtf8(target)); const QUrlQuery query(url);
+		if (!socket) return;
+		connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+		socket->setReadBufferSize(PulseRuntimeSafety::maxRequestBytes + 1);
+		QTimer::singleShot(5000, socket, [socket] { socket->abort(); socket->deleteLater(); });
+		connect(socket, &QTcpSocket::readyRead, this, [this, socket, generation = authGeneration] {
+			if (generation != authGeneration || socket->property("pulseCallbackHandled").toBool()) {
+				socket->disconnectFromHost(); return;
+			}
+			const QByteArray request = socket->property("pulseCallbackBuffer").toByteArray() + socket->readAll();
+			const auto frame = PulseRuntimeSafety::httpFrame(request);
+			if (frame == PulseRuntimeSafety::HttpFrame::Incomplete) {
+				socket->setProperty("pulseCallbackBuffer", request); return;
+			}
+			socket->setProperty("pulseCallbackHandled", true);
+			socket->setProperty("pulseCallbackBuffer", QVariant());
+			const auto first = request.left(request.indexOf("\r\n")).split(' ');
+			const QUrl url = QUrl::fromEncoded(first.value(1)); const QUrlQuery query(url);
 			const QString code = query.queryItemValue("code"); const QString state = query.queryItemValue("state");
-			const bool valid = url.path() == "/auth/callback" && !code.isEmpty() &&
-				!stateToken.isEmpty() && state == stateToken;
+			const bool matched = frame == PulseRuntimeSafety::HttpFrame::Complete && first.value(0) == "GET" &&
+				url.path() == "/auth/callback" && !stateToken.isEmpty() && state == stateToken;
+			const bool valid = matched && !code.isEmpty();
 			const QByteArray page = valid ? "Kick approved. You can return to Pulse Weaver." : "Kick sign-in could not be verified.";
-			socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + QByteArray::number(page.size()) + "\r\n\r\n" + page);
-			socket->disconnectFromHost(); callback.close();
-			stateToken.clear();
-			if (valid) exchangeCode(code); else setStatus("Kick callback state did not match; sign-in was rejected.");
+			socket->write(QByteArray(valid ? "HTTP/1.1 200 OK" : "HTTP/1.1 400 Bad Request") +
+				"\r\nContent-Type: text/plain\r\nConnection: close\r\nContent-Length: " + QByteArray::number(page.size()) + "\r\n\r\n" + page);
+			socket->disconnectFromHost();
+			// A favicon, fragmented request or unrelated local client must not consume the login.
+			if (!matched) return;
+			callback.close(); stateToken.clear();
+			if (valid) exchangeCode(code); else setStatus("Kick sign-in was cancelled or declined. Connect again to retry.");
 		});
 	}
 	void exchangeCode(const QString &code)
@@ -2020,7 +2099,8 @@ private:
 		request.setTransferTimeout(15000);
 		const QJsonObject body{{"grant_type", "authorization_code"}, {"code_verifier", QString::fromLatin1(codeVerifier)}, {"code", code}};
 		QNetworkReply *reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-		connect(reply, &QNetworkReply::finished, this, [this, reply] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const QByteArray response = reply->readAll();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 			const QString error = PulseKick::safeError(code, response, reply->errorString(),
@@ -2041,14 +2121,12 @@ private:
 	}
 	void refreshAccessToken(std::function<void(bool)> completed)
 	{
-		if (refreshInFlight) {
-			setStatus("Kick authorization is already refreshing; try again in a moment.");
-			completed(false);
-			return;
-		}
+		if (completed) refreshWaiters.push_back(std::move(completed));
+		if (refreshInFlight) return;
 		if (refreshToken.isEmpty()) {
 			setStatus("Kick authorization expired. Reconnect Kick in your browser.");
-			completed(false);
+			auto waiters = std::move(refreshWaiters); refreshWaiters.clear();
+			for (auto &waiter : waiters) waiter(false);
 			return;
 		}
 		refreshInFlight = true;
@@ -2058,7 +2136,8 @@ private:
 		request.setTransferTimeout(15000);
 		const QJsonObject body{{"grant_type", "refresh_token"}, {"refresh_token", refreshToken}};
 		QNetworkReply *reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-		connect(reply, &QNetworkReply::finished, this, [this, reply, completed = std::move(completed)]() mutable {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration]() mutable {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const QByteArray responseBody = reply->readAll();
 			const QJsonObject json = QJsonDocument::fromJson(responseBody).object();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -2066,6 +2145,7 @@ private:
 				{accessToken, refreshToken, streamKey});
 			reply->deleteLater();
 			refreshInFlight = false;
+			auto waiters = std::move(refreshWaiters); refreshWaiters.clear();
 			const auto tokens = PulseKick::replacementTokens(json, refreshToken, QDateTime::currentMSecsSinceEpoch());
 			if (code != 200 || !tokens) {
 				if (code == 400 || code == 401) {
@@ -2074,24 +2154,30 @@ private:
 				}
 				setStatus("Kick authorization refresh failed: " + error +
 					". Reauthorise Kick if this persists.");
-				completed(false);
+				for (auto &waiter : waiters) { if (generation == authGeneration) waiter(false); }
 				return;
 			}
 			accessToken = tokens->access; refreshToken = tokens->refresh;
 			tokenExpiresAtMs = tokens->expiresAtMs;
 			grantVerified = false; moderationScopes.clear();
-			save(); updateUi(); completed(true);
+			save(); updateUi();
+			for (auto &waiter : waiters) { if (generation == authGeneration) waiter(true); }
 		});
 	}
 	void fetchChannel(bool retried = false)
 	{
+		if (channelInFlight) return;
 		if ((accessToken.isEmpty() || tokenExpired()) && !refreshToken.isEmpty() && !retried) {
 			refreshAccessToken([this](bool ok) { if (ok) fetchChannel(true); });
 			return;
 		}
+		if (accessToken.isEmpty()) return;
+		channelInFlight = true;
 		QNetworkRequest request(QUrl("https://api.kick.com/public/v1/channels")); request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 		QNetworkReply *reply = network.get(request);
-		connect(reply, &QNetworkReply::finished, this, [this, reply, retried] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, retried] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
+			channelInFlight = false;
 			const QJsonObject json = QJsonDocument::fromJson(reply->readAll()).object(); const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(); reply->deleteLater();
 			if (code == 401 && !retried && !refreshToken.isEmpty()) {
 				refreshAccessToken([this](bool ok) { if (ok) fetchChannel(true); });
@@ -2123,7 +2209,7 @@ private:
 	}
 	void subscribeEvents(bool retried = false)
 	{
-		if (accessToken.isEmpty() || broadcasterUserId <= 0)
+		if (subscriptionsInFlight || subscriptionsReady || accessToken.isEmpty() || broadcasterUserId <= 0)
 			return;
 		const QJsonArray events{
 			QJsonObject{{"name", "chat.message.sent"}, {"version", 1}},
@@ -2140,8 +2226,11 @@ private:
 		QNetworkRequest request(QUrl("https://api.kick.com/public/v1/events/subscriptions"));
 		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 		request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
+		subscriptionsInFlight = true;
 		QNetworkReply *reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-		connect(reply, &QNetworkReply::finished, this, [this, reply, retried] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, retried] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
+			subscriptionsInFlight = false;
 			const QByteArray responseBody = reply->readAll();
 			const QJsonObject json = QJsonDocument::fromJson(responseBody).object();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -2151,6 +2240,7 @@ private:
 				return;
 			}
 			const bool accepted = code >= 200 && code < 300;
+			subscriptionsReady = accepted;
 			if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window()))
 				mainWindow->setProperty("pulseWeaverKickSubscriptionsReady", accepted);
 			setStatus(accepted ? (relaySessionToken.isEmpty() ?
@@ -2162,26 +2252,37 @@ private:
 	}
 	void sendMessage()
 	{
-		const QString text = chatInput ? chatInput->text().trimmed() : QString(); sendText(text); if (chatInput) chatInput->clear();
+		const QString text = chatInput ? chatInput->text().trimmed() : QString(); sendText(text);
 	}
 	void sendText(const QString &text, bool retried = false)
 	{
-		if (text.isEmpty()) return;
+		if (text.isEmpty() || (sendingChat && !retried)) return;
 		if ((accessToken.isEmpty() || tokenExpired()) && !refreshToken.isEmpty() && !retried) {
-			refreshAccessToken([this, text](bool ok) { if (ok) sendText(text, true); });
+			sendingChat = true;
+			refreshAccessToken([this, text](bool ok) { if (ok) sendText(text, true); else sendingChat = false; });
 			return;
 		}
-		if (accessToken.isEmpty()) { setStatus("Kick is not authorized. Reconnect Kick in your browser."); return; }
-		if (broadcasterUserId <= 0) { setStatus("Kick is still loading your channel identity; reconnect if this does not clear."); fetchChannel(); return; }
+		if (accessToken.isEmpty()) { sendingChat = false; setStatus("Kick is not authorized. Reconnect Kick in your browser."); return; }
+		if (broadcasterUserId <= 0) { sendingChat = false; setStatus("Kick is still loading your channel identity; reconnect if this does not clear."); fetchChannel(); return; }
+		sendingChat = true;
 		QNetworkRequest request(QUrl("https://api.kick.com/public/v1/chat")); request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json"); request.setRawHeader("Authorization", "Bearer " + accessToken.toUtf8());
 		const QJsonObject body{{"content",text}, {"type","user"}, {"broadcaster_user_id", double(broadcasterUserId)}};
 		QNetworkReply *reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-		connect(reply, &QNetworkReply::finished, this, [this, reply, text, retried] {
+		connect(reply, &QNetworkReply::finished, this, [this, reply, generation = authGeneration, text, retried] {
+			if (generation != authGeneration) { reply->deleteLater(); return; }
 			const QJsonObject json = QJsonDocument::fromJson(reply->readAll()).object();
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(); reply->deleteLater();
 			if (code == 401 && !retried && !refreshToken.isEmpty()) {
-				refreshAccessToken([this, text](bool ok) { if (ok) sendText(text, true); });
+				refreshAccessToken([this, text](bool ok) { if (ok) sendText(text, true); else sendingChat = false; });
 				return;
+			}
+			sendingChat = false;
+			if (code >= 200 && code < 300) {
+				if (chatInput && chatInput->text().trimmed() == text) chatInput->clear();
+				QWidget *window = static_cast<QWidget *>(obs_frontend_get_main_window());
+				auto *provider = window ? window->findChild<QComboBox *>("PulseWeaverChatProvider") : nullptr;
+				if (provider && provider->currentData().toString() == "kick" && shellChatInput &&
+				    shellChatInput->text().trimmed() == text) shellChatInput->clear();
 			}
 			setStatus(code >= 200 && code < 300 ? "Kick chat message sent." :
 				"Kick chat send failed: " + json.value("message").toString("HTTP " + QString::number(code)));
@@ -2885,12 +2986,13 @@ public:
 			saved.setValue("lights/auth/" + endpoint, protectCredential(authToken->text()));
 			saved.setValue("lights/entity/" + endpoint, entity->text().trimmed());
 			QNetworkReply *reply = actionNetwork->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-			controlStatus->setText("Sending look to " + url.toString() + "…");
-			connect(reply, &QNetworkReply::finished, surface, [reply, controlStatus, item] {
+			controlStatus->setText("Sending look to " + endpoint + "…");
+			const QPersistentModelIndex statusIndex(devices->model()->index(devices->indexOfTopLevelItem(item), 3));
+			connect(reply, &QNetworkReply::finished, surface, [reply, controlStatus, devices, statusIndex] {
 				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 				const bool ok = reply->error() == QNetworkReply::NoError && code >= 200 && code < 300;
 				controlStatus->setText(ok ? "Device accepted the show look." : "Device control failed: HTTP " + QString::number(code) + " — " + reply->errorString());
-				item->setText(3, ok ? "Controlled" : "Error");
+				if (statusIndex.isValid()) devices->model()->setData(statusIndex, ok ? "Controlled" : "Error");
 				reply->deleteLater();
 			});
 		});

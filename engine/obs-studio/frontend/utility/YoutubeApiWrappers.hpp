@@ -16,6 +16,7 @@ struct StreamDescription {
 	QString id;
 	QString name;
 	QString title;
+	bool reusable = false;
 };
 
 struct CategoryDescription {
@@ -37,6 +38,7 @@ struct BroadcastDescription {
 	bool schedul_for_later;
 	QString schedul_date_time;
 	QString projection;
+	QString liveChatId;
 };
 
 struct YoutubeChatEvent {
@@ -70,6 +72,7 @@ public:
 	bool GetChannelDescription(ChannelDescription &channel_description);
 	bool InsertBroadcast(BroadcastDescription &broadcast);
 	bool InsertStream(StreamDescription &stream);
+	bool GetReusableStream(const QString &route, StreamDescription &stream);
 	bool BindStream(const QString broadcast_id, const QString stream_id);
 	bool GetBroadcastsList(json11::Json &json_out, const QString &page, const QString &status);
 	bool GetVideoCategoriesList(QVector<CategoryDescription> &category_list_out);
@@ -88,7 +91,7 @@ public:
 				 int &poll_interval_ms);
 	PulseYouTubeStream::Result StreamLiveChatMessages(const QString &chatId, const QString &page,
 		const std::function<bool()> &cancelled,
-		const std::function<void(const QString &, const QVector<YoutubeChatEvent> &)> &batch);
+		const std::function<void(const QString &, const QVector<YoutubeChatEvent> &)> &batch, bool saveQuota = true);
 	bool DeleteLiveChatMessage(const QString &message_id);
 	bool ModerateLiveChatUser(const QString &chat_id, const QString &channel_id, int duration_seconds);
 	bool SendLiveChatMessage(const QString &chat_id, const QString &message);
@@ -107,6 +110,7 @@ public:
 
 private:
 	QString broadcast_id;
+	QString connectedChannelId;
 
 	int lastError;
 	QString lastErrorMessage;

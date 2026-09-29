@@ -12,7 +12,7 @@
  * but its item transforms still need to follow Camera edits while it is live. */
 class PulseOutputSceneTransformSync {
 	struct ItemIdentity {
-		obs_source_t *source = nullptr;
+		OBSSource source;
 		int64_t id = 0;
 	};
 
@@ -20,9 +20,24 @@ class PulseOutputSceneTransformSync {
 	OBSSource outputScene;
 	QHash<int64_t, int64_t> outputItemIds;
 	QSet<QString> excludedSources;
+	QSet<QString> excludedSourceUuids;
 	OBSSignal transformSignal;
 	OBSSignal reorderSignal;
+	OBSSignal removeSignal;
 	bool tickRegistered = false;
+
+	static OBSSceneItem SceneItemById(obs_scene_t *scene, int64_t id)
+	{
+		struct Search { int64_t id; OBSSceneItem item; } search{id, {}};
+		if (scene)
+			obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
+				auto &search = *static_cast<Search *>(opaque);
+				if (obs_sceneitem_get_id(item) == search.id)
+					search.item = item;
+				return !search.item;
+			}, &search);
+		return search.item;
+	}
 
 	static std::vector<ItemIdentity> SceneItems(obs_scene_t *scene)
 	{
@@ -45,7 +60,7 @@ class PulseOutputSceneTransformSync {
 		if (found == outputItemIds.constEnd())
 			return;
 		obs_scene_t *scene = obs_scene_from_source(outputScene);
-		obs_sceneitem_t *outputItem = scene ? obs_scene_find_sceneitem_by_id(scene, found.value()) : nullptr;
+		OBSSceneItem outputItem = SceneItemById(scene, found.value());
 		if (!outputItem)
 			return;
 
@@ -76,7 +91,9 @@ class PulseOutputSceneTransformSync {
 			obs_sceneitem_set_crop(outputItem, &sourceCrop);
 		obs_source_t *itemSource = obs_sceneitem_get_source(sourceItem);
 		const QString sourceName = itemSource ? QString::fromUtf8(obs_source_get_name(itemSource)) : QString();
-		const bool visible = obs_sceneitem_visible(sourceItem) && !excludedSources.contains(sourceName);
+		const QString sourceUuid = itemSource ? QString::fromUtf8(obs_source_get_uuid(itemSource)) : QString();
+		const bool visible = obs_sceneitem_visible(sourceItem) && !excludedSources.contains(sourceName) &&
+			!excludedSourceUuids.contains(sourceUuid);
 		if (obs_sceneitem_visible(outputItem) != visible)
 			obs_sceneitem_set_visible(outputItem, visible);
 	}
@@ -102,8 +119,8 @@ class PulseOutputSceneTransformSync {
 			const auto mapped = outputItemIds.constFind(identity.id);
 			if (mapped == outputItemIds.constEnd())
 				continue;
-			obs_sceneitem_t *item = obs_scene_find_sceneitem_by_id(output, mapped.value());
-			obs_sceneitem_t *original = obs_scene_find_sceneitem_by_id(source, identity.id);
+			OBSSceneItem item = SceneItemById(output, mapped.value());
+			OBSSceneItem original = SceneItemById(source, identity.id);
 			if (item && original &&
 			    obs_sceneitem_get_order_position(item) != obs_sceneitem_get_order_position(original))
 				obs_sceneitem_set_order_position(item, obs_sceneitem_get_order_position(original));
@@ -124,6 +141,21 @@ class PulseOutputSceneTransformSync {
 			sync->SynchronizeItem(static_cast<obs_sceneitem_t *>(calldata_ptr(params, "item")));
 	}
 
+	static void SourceItemRemoved(void *opaque, calldata_t *params)
+	{
+		auto *sync = static_cast<PulseOutputSceneTransformSync *>(opaque);
+		auto *sourceItem = static_cast<obs_sceneitem_t *>(calldata_ptr(params, "item"));
+		if (!sync || !sourceItem)
+			return;
+		const auto found = sync->outputItemIds.constFind(obs_sceneitem_get_id(sourceItem));
+		if (found == sync->outputItemIds.constEnd())
+			return;
+		obs_scene_t *output = obs_scene_from_source(sync->outputScene);
+		OBSSceneItem item = SceneItemById(output, found.value());
+		if (item)
+			obs_sceneitem_remove(item);
+	}
+
 	static void VideoTick(void *opaque, float)
 	{
 		auto *sync = static_cast<PulseOutputSceneTransformSync *>(opaque);
@@ -140,6 +172,8 @@ public:
 		const auto outputItems = SceneItems(output);
 		std::vector<bool> used(outputItems.size(), false);
 		for (const ItemIdentity &sourceItem : sourceItems) {
+			if (excludedSources.contains(QString::fromUtf8(obs_source_get_name(sourceItem.source))))
+				excludedSourceUuids.insert(QString::fromUtf8(obs_source_get_uuid(sourceItem.source)));
 			for (size_t index = 0; index < outputItems.size(); ++index) {
 				/* A referenced duplicate uses the same child sources. Matching the
 				 * occurrence as well as the pointer handles a source added twice. */
@@ -155,6 +189,8 @@ public:
 						&SourceItemTransformed, this);
 		if (sourceScene && outputScene)
 			reorderSignal.Connect(obs_source_get_signal_handler(sourceScene), "reorder", &SourceReordered, this);
+		if (sourceScene && outputScene)
+			removeSignal.Connect(obs_source_get_signal_handler(sourceScene), "item_remove", &SourceItemRemoved, this);
 		/* Some animation filters update scene-item transforms during their video
 		 * tick without producing an item_transform signal on every frame.  Keep a
 		 * frame-paced reconciliation as a fallback so the live destination copy

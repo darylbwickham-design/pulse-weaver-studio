@@ -12,8 +12,9 @@ internal static class Recovery
     internal sealed record Snapshot(int Schema, string Product, string Version, DateTime CreatedUtc, Entry[] Files);
     sealed record Transaction(int Schema, string Root, string[] Before, string[] After, bool Committed = false);
     const string Index = "pulseweaver-backup.json";
-    internal static string BackupDirectory(string root) => Path.GetFullPath(root) + " Backups";
-    internal static string WorkDirectory(string root) => Path.GetFullPath(root) + ".recovery-work";
+    static string CanonicalRoot(string root) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+    internal static string BackupDirectory(string root) => CanonicalRoot(root) + " Backups";
+    internal static string WorkDirectory(string root) => CanonicalRoot(root) + ".recovery-work";
     static bool Excluded(string name) => name.Equals("config-backups", StringComparison.OrdinalIgnoreCase) ||
         name.Equals("Uninstall Pulse Weaver.exe", StringComparison.OrdinalIgnoreCase);
     internal static string InstalledVersion(string root)
@@ -157,7 +158,7 @@ internal static class Recovery
         var journal=Path.Combine(work,"transaction.json");
         if (!File.Exists(journal)) return;
         var state=JsonSerializer.Deserialize<Transaction>(File.ReadAllText(journal)) ?? throw new IOException("Unreadable recovery journal.");
-        if (state.Schema != 1 || !Path.GetFullPath(root).Equals(state.Root,StringComparison.OrdinalIgnoreCase)) throw new IOException("Recovery journal belongs to another installation.");
+        if (state.Schema != 1 || !CanonicalRoot(root).Equals(CanonicalRoot(state.Root),StringComparison.OrdinalIgnoreCase)) throw new IOException("Recovery journal belongs to another installation.");
         foreach(var name in state.Before.Concat(state.After)) {
             SafePath(root,name);
             if (Path.GetFileName(name)!=name || Excluded(name)) throw new IOException("Unsafe recovery journal.");
@@ -183,7 +184,7 @@ internal static class Recovery
         var work=WorkDirectory(root);
         if(Directory.Exists(work)) throw new IOException("Recovery work directory already exists; preserve it for inspection.");
         Directory.CreateDirectory(Path.Combine(work,"previous"));
-        var state=new Transaction(1,Path.GetFullPath(root),Top(root).ToArray(),Top(prepared).ToArray());
+        var state=new Transaction(1,CanonicalRoot(root),Top(root).ToArray(),Top(prepared).ToArray());
         Journal(work,state);
         try {
             int step=0;

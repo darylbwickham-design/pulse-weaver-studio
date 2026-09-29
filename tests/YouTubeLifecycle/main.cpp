@@ -1,5 +1,7 @@
 #include "PulseYouTubeStream.hpp"
 #include "PulseYouTubeChatSessions.hpp"
+#include "PulseYouTubeReusableStream.hpp"
+#include "PulseYouTubeBroadcast.hpp"
 #include <iostream>
 #include <stdexcept>
 int main(int argc, char **argv)
@@ -9,6 +11,15 @@ int main(int argc, char **argv)
     auto check = [&](bool ok) { ++checks; if (!ok) throw std::runtime_error("check " + std::to_string(checks)); };
     try {
         check(argc == 2);
+        using Cleanup = PulseYouTubeBroadcast::Cleanup;
+        for (const auto status : {"complete", "revoked"})
+            check(PulseYouTubeBroadcast::cleanup(status) == Cleanup::Keep);
+        for (const auto status : {"live", "liveStarting", "testing", "testStarting"})
+            check(PulseYouTubeBroadcast::cleanup(status) == Cleanup::Complete);
+        for (const auto status : {"created", "ready"})
+            check(PulseYouTubeBroadcast::cleanup(status) == Cleanup::DeleteUnused);
+        for (const auto status : {"", "future-state"})
+            check(PulseYouTubeBroadcast::cleanup(status) == Cleanup::Unknown);
         QStringList cursors;
         auto run = [&](QString mode, int cancelAfter = -1) {
             QElapsedTimer timer; timer.start();
@@ -21,6 +32,9 @@ int main(int argc, char **argv)
         check(result.reason.isEmpty() && result.received && result.batches == 2 && result.grpcStatus == 0);
         check(cursors == QStringList({"one", "two"}));
         check(result.durationMs >= 100);
+        check(result.rpcCount == 1 && result.messages == 0);
+        check(run("silent").reason == "streamUnavailable");
+        check(run("incomplete-second-rpc").reason == "streamUnavailable");
         result = run("empty");
         check(result.reason.isEmpty() && !result.received);
         result = run("error");
@@ -48,6 +62,44 @@ int main(int argc, char **argv)
         check(PulseYouTubeChat::targets(sessions).size() == 1);
         sessions["vertical"].requestPending = true;
         check(PulseYouTubeChat::owner(sessions, "shared") == "vertical");
+        sessions["horizontal"].pageToken = "saved-horizontal";
+        check(PulseYouTubeChat::synchronizeOutputs(sessions, "dual", true, false));
+        check(!sessions["horizontal"].outputPaused && sessions["vertical"].outputPaused);
+        check(PulseYouTubeChat::owner(sessions, "shared") == "horizontal");
+        check(PulseYouTubeChat::pendingTargets(sessions, {}).size() == 1);
+        sessions["vertical"].requestPending = false;
+        check(!PulseYouTubeChat::synchronizeOutputs(sessions, "dual", false, false));
+        check(!PulseYouTubeChat::available(sessions) && PulseYouTubeChat::targets(sessions).isEmpty());
+        check(PulseYouTubeChat::pendingTargets(sessions, {}, {}).isEmpty());
+        check(!PulseYouTubeChat::synchronizeOutputs(sessions, "dual", true, true));
+        check(PulseYouTubeChat::ready(sessions) && sessions["horizontal"].pageToken == "saved-horizontal");
+        auto portrait = PulseYouTubeChat::create("vertical", "portrait");
+        PulseYouTubeChat::synchronizeOutputs(portrait, "vertical", true, false);
+        check(!portrait["vertical"].outputPaused);
+        PulseYouTubeStream::AuthRetry retry;
+        PulseYouTubeStream::Result expired{"unauthenticated"};
+        check(retry.allow(expired));
+        check(!retry.allow(expired));
+        expired.durationMs = 3600000; expired.completedRpcs = 80;
+        check(retry.allow(expired));
+        check(retry.allow(expired));
+        expired.durationMs = 100; expired.completedRpcs = 0;
+        check(!retry.allow(expired));
+        check(!retry.allow({"forbidden"}));
+        QJsonObject stream{{"id", "stream"}, {"snippet", QJsonObject{{"channelId", "owner"}}},
+            {"contentDetails", QJsonObject{{"isReusable", true}}},
+            {"status", QJsonObject{{"streamStatus", "inactive"}}},
+            {"cdn", QJsonObject{{"ingestionType", "rtmp"}, {"resolution", "variable"}, {"frameRate", "variable"},
+                {"ingestionInfo", QJsonObject{{"streamName", "fake-key"}}}}}};
+        check(PulseYouTubeReusableStream::compatible(stream, "stream", "owner"));
+        check(!PulseYouTubeReusableStream::compatible(stream, "stream", "other-account"));
+        check(!PulseYouTubeReusableStream::compatible(stream, "other-stream", "owner"));
+        stream["status"] = QJsonObject{{"streamStatus", "active"}};
+        check(!PulseYouTubeReusableStream::compatible(stream, "stream", "owner"));
+        stream["status"] = QJsonObject{{"streamStatus", "inactive"}};
+        stream["contentDetails"] = QJsonObject{{"isReusable", false}};
+        check(!PulseYouTubeReusableStream::compatible(stream, "stream", "owner"));
+        check(!PulseYouTubeReusableStream::compatible({}, "stream", "owner"));
         std::cout << "PASS: " << checks << " lifecycle checks\n";
     } catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

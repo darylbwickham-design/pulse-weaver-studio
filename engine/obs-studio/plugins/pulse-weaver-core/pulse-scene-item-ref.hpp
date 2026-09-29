@@ -33,4 +33,20 @@ inline OBSSceneItem findSceneItem(obs_scene_t *scene, const char *name)
     return search.result;
 }
 
+inline OBSSceneItem findSceneItemByUuid(obs_scene_t *scene, const char *uuid, bool recursive = true)
+{
+    if (!scene || !uuid || !*uuid)
+        return {};
+    struct Search { const char *uuid; bool recursive; OBSSceneItem result; } search{uuid, recursive, {}};
+    obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *data) {
+        auto &search = *static_cast<Search *>(data);
+        if (std::strcmp(obs_source_get_uuid(obs_sceneitem_get_source(item)), search.uuid) == 0)
+            search.result = item;
+        else if (search.recursive && obs_sceneitem_is_group(item))
+            search.result = findSceneItemByUuid(obs_sceneitem_group_get_scene(item), search.uuid, true);
+        return !search.result;
+    }, &search);
+    return search.result;
+}
+
 } // namespace PulseRuntimeSafety

@@ -17,6 +17,7 @@ struct Session {
 	int failures = 0;
 	QString lastError;
 	bool suspended = false;
+	bool outputPaused = false;
 	qint64 pollIntervalMs = 5000;
 	int emptyCompletions = 0;
 };
@@ -44,6 +45,20 @@ inline void completed(Session &session, bool receivedBatch, qint64 now)
 
 using Sessions = QHash<QString, Session>;
 
+// Called on the UI thread before scheduling any work. If an inactive route
+// still has a worker, the caller cancels and drains workers before resuming.
+inline bool synchronizeOutputs(Sessions &sessions, const QString &mode, bool primaryActive, bool secondaryActive)
+{
+	bool cancel = false;
+	for (auto it = sessions.begin(); it != sessions.end(); ++it) {
+		const bool active = it.key() == "horizontal" ? mode != "vertical" && primaryActive :
+			mode == "vertical" ? primaryActive : mode == "dual" && secondaryActive;
+		it->outputPaused = !active;
+		cancel = cancel || (!active && it->requestPending);
+	}
+	return cancel;
+}
+
 inline Sessions create(const QString &mode, const QString &primaryBroadcastId,
 			       const QString &secondaryBroadcastId = {})
 {
@@ -59,10 +74,10 @@ inline Sessions create(const QString &mode, const QString &primaryBroadcastId,
 inline QString owner(const Sessions &sessions, const QString &chatId)
 {
 	for (auto it = sessions.cbegin(); it != sessions.cend(); ++it)
-		if (it->liveChatId == chatId && it->requestPending) return it.key();
+		if (!it->outputPaused && it->liveChatId == chatId && it->requestPending) return it.key();
 	QString route;
 	for (auto it = sessions.cbegin(); it != sessions.cend(); ++it)
-		if (it->liveChatId == chatId && (route.isEmpty() || it.key() < route)) route = it.key();
+		if (!it->outputPaused && it->liveChatId == chatId && (route.isEmpty() || it.key() < route)) route = it.key();
 	return route;
 }
 
@@ -71,7 +86,7 @@ inline bool ready(const Sessions &sessions)
 	if (sessions.isEmpty())
 		return false;
 	for (const Session &session : sessions) {
-		if (session.suspended || session.liveChatId.isEmpty())
+		if (session.outputPaused || session.suspended || session.liveChatId.isEmpty())
 			return false;
 	}
 	return true;
@@ -80,7 +95,7 @@ inline bool ready(const Sessions &sessions)
 inline bool available(const Sessions &sessions)
 {
 	for (const Session &session : sessions) {
-		if (!session.suspended && !session.liveChatId.isEmpty())
+		if (!session.outputPaused && !session.suspended && !session.liveChatId.isEmpty())
 			return true;
 	}
 	return false;
@@ -90,7 +105,7 @@ inline QStringList targets(const Sessions &sessions)
 {
 	QStringList result;
 	for (const Session &session : sessions) {
-		if (!session.suspended && !session.liveChatId.isEmpty() && !result.contains(session.liveChatId))
+		if (!session.outputPaused && !session.suspended && !session.liveChatId.isEmpty() && !result.contains(session.liveChatId))
 			result.push_back(session.liveChatId);
 	}
 	return result;
@@ -100,7 +115,7 @@ inline QHash<QString, QString> pendingTargets(const Sessions &sessions, const QS
 {
 	QHash<QString, QString> result;
 	for (auto session = sessions.cbegin(); session != sessions.cend(); ++session) {
-		if (!session->suspended && !session->liveChatId.isEmpty() && !deliveredRoutes.contains(session.key()))
+		if (!session->outputPaused && !session->suspended && !session->liveChatId.isEmpty() && !deliveredRoutes.contains(session.key()))
 			result.insert(session.key(), session->liveChatId);
 	}
 	return result;
@@ -121,7 +136,7 @@ inline QHash<QString, QString> pendingTargets(const Sessions &sessions, const QS
 {
 	QHash<QString, QString> result;
 	for (auto session = sessions.cbegin(); session != sessions.cend(); ++session) {
-		if (!session->suspended && !session->liveChatId.isEmpty() && !deliveredRoutes.contains(session.key()) &&
+		if (!session->outputPaused && !session->suspended && !session->liveChatId.isEmpty() && !deliveredRoutes.contains(session.key()) &&
 		    !blockedRoutes.contains(session.key()))
 			result.insert(session.key(), session->liveChatId);
 	}

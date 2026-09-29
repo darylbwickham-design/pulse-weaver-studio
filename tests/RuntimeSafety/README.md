@@ -18,7 +18,7 @@ Configure with the Visual Studio compiler/SDK described in `BUILD.md`:
 ```powershell
 cmake -S tests/RuntimeSafety -B tests/RuntimeSafety/build -G "Visual Studio 17 2022" -A "x64,version=10.0.22621.0" -DCMAKE_PREFIX_PATH="engine/obs-studio/.deps/obs-deps-qt6-2026-07-15-x64"
 cmake --build tests/RuntimeSafety/build --config Release
-$testRuntime = (Resolve-Path 'engine/obs-studio/build_pw_vs1714_sdk22621/rundir/RelWithDebInfo').Path
+$testRuntime = (Resolve-Path 'engine/obs-studio/build_unstable/rundir/RelWithDebInfo').Path
 $env:PATH = "$testRuntime/bin/64bit;" + $env:PATH
 $env:QT_QPA_PLATFORM = 'minimal'
 $env:QT_PLUGIN_PATH = (Resolve-Path 'engine/obs-studio/.deps/obs-deps-qt6-2026-07-15-x64/plugins').Path

@@ -1,6 +1,6 @@
-# Pulse Weaver for Lumia Stream — 1.4.0
+# Pulse Weaver for Lumia Stream — 1.4.1
 
-Version 1.4.0 updates the existing Pulse Weaver Lumia plugin for both release and alpha. It keeps the `pulseweavercontrol` ID, action IDs and field keys so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.4.0.lumiaplugin` over the existing regular plugin. Keep your existing port and credentials; in-place alpha upgrades use the same installation and connection. Motion controls are available when the connected build supports them.
+Version 1.4.1 updates the existing Pulse Weaver Lumia plugin for release, alpha and unstable. It cancels queued controls and ignores late state/event replies after unload or connection-setting changes. It keeps the `pulseweavercontrol` ID, action IDs and field keys so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.4.1.lumiaplugin` over the existing regular plugin. Keep your existing port and credentials; in-place alpha upgrades use the same installation and connection. Motion controls are available when the connected build supports them.
 
 The motion catalogue includes named stage looks such as Game, Chatting, Printer and BRB. Run Stage Look / Motion Action triggers each look from Lumia reactions or LumiCon buttons. Restore Original Scenes returns the protected source state and original on-air scene even after repeated look changes or an app restart. The existing Stop + Restore and Restore Last controls remain available.
 

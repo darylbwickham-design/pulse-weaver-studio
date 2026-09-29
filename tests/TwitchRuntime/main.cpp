@@ -13,7 +13,9 @@
 static QWidget *testWindow;
 static QString settingsFile;
 static void *obs_frontend_get_main_window() { return testWindow; }
-static bool obs_frontend_streaming_active() { return false; }
+static bool streamActive = false;
+static int savedDestinations = 0;
+static bool obs_frontend_streaming_active() { return streamActive; }
 struct obs_data_t {};
 struct obs_service_t {};
 static obs_data_t *obs_data_create() { return nullptr; }
@@ -25,7 +27,7 @@ static void obs_service_update(obs_service_t *, obs_data_t *) {}
 static obs_service_t *obs_service_create(const char *, const char *, obs_data_t *, void *) { return nullptr; }
 static void obs_frontend_set_streaming_service(obs_service_t *) {}
 static void obs_service_release(obs_service_t *) {}
-static void obs_frontend_save_streaming_service() {}
+static void obs_frontend_save_streaming_service() { ++savedDestinations; }
 static constexpr int LOG_WARNING = 1;
 static void blog(int, const char *, ...) {}
 static QString pulseSettingsPath() { return settingsFile; }
@@ -72,7 +74,8 @@ public:
  }
 };
 #include "runtime-under-test.hpp"
-static void check(bool ok,const char *message){if(!ok)throw std::runtime_error(message);}
+static int checks=0;
+static void check(bool ok,const char *message){++checks;if(!ok)throw std::runtime_error(message);}
 static void drain(){for(int i=0;i<12;++i)QCoreApplication::processEvents();}
 int main(int argc,char **argv){
  qputenv("QT_QPA_PLATFORM","minimal"); QApplication app(argc,argv); QTemporaryDir temp;
@@ -126,7 +129,29 @@ int main(int argc,char **argv){
   for(int i=0;i<12;++i)runtime.network.responses.enqueue({202,"{}"});
   runtime.subscribeEvents("test-session"); drain();
   check(!runtime.chatSubscribed&&status.text().contains("grant chat access"),"Other subscriptions masked chat failure");
-  std::cout<<"PASS: readiness, reconnect/backoff, send failure/success/new drafts, transient auth failures, disconnect race, revocation and event deduplication\n";
+  runtime.network.responses.clear();
+  runtime.deviceCode="test-device"; runtime.deviceDeadline=QDateTime::currentDateTimeUtc().addSecs(90);
+  check(runtime.pollTimer.isSingleShot(),"Device polling timer can overlap slow requests");
+  const int beforeDevice=runtime.network.requests;
+  runtime.network.responses.enqueue({400,"{\"message\":\"authorization_pending\"}"});
+  runtime.pollDeviceToken(); runtime.pollDeviceToken(); drain();
+  check(runtime.network.requests==beforeDevice+1&&runtime.pollTimer.isActive(),"Device polling overlapped or failed to reschedule after pending reply");
+  runtime.pollTimer.stop();
+  runtime.network.responses.enqueue({400,"{\"message\":\"authorization_pending\"}"});
+  runtime.pollDeviceToken(); runtime.clearLogin(); drain();
+  check(!runtime.pollTimer.isActive()&&!runtime.devicePollInFlight,"Late device reply restarted disconnected login");
+  runtime.accessToken="test-access"; runtime.userId="42";
+  runtime.network.responses.enqueue({200,"{\"data\":[{\"stream_key\":\"fake-key\"}]}"});
+  runtime.configureBroadcastDestination(); runtime.clearLogin(); drain();
+  check(savedDestinations==0,"Disconnected stream-key reply changed broadcast destination");
+  runtime.accessToken="test-access"; runtime.userId="42";
+  runtime.network.responses.enqueue({200,"{\"data\":[{\"stream_key\":\"fake-key\"}]}"});
+  runtime.configureBroadcastDestination(); streamActive=true; drain();
+  check(savedDestinations==0,"Delayed stream-key reply changed an active broadcast"); streamActive=false;
+  runtime.network.responses.enqueue({200,"{\"data\":[{\"stream_key\":\"fake-key\"}]}"});
+  runtime.configureBroadcastDestination(); drain();
+  check(savedDestinations==1,"Idle authorized broadcast setup no longer works");
+  std::cout<<"PASS: "<<checks<<" Twitch runtime checks (fake HTTP/socket; device-poll and broadcast-key lifecycle included)\n";
  }catch(const std::exception &e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}
  return 0;
 }

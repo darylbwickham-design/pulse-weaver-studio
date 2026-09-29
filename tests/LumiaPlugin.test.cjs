@@ -51,7 +51,7 @@ async function fixture() {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.0');
+ assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.1');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
  assert.equal(manifest.config.actions.length,18);assert.equal(manifest.config.alerts.length,36);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
@@ -196,5 +196,39 @@ test('End Show cleanup cannot run after a newer show command supersedes it',asyn
  assert.equal((await starting).shouldStop,false);
  assert.equal(f.plugin.outputStatus('kick'),'live');
  assert.ok(!f.requests.some(p=>p.endsWith('/end-stream')));
+ }finally{await f.close();}
+});
+
+test('Queued controls cannot run after unload or a settings reload',async()=>{
+ const f=await fixture();try{
+  let release;f.plugin.actionQueue=new Promise(resolve=>{release=resolve;});
+  const queued=f.plugin.actions({actions:[{type:'start_platform',value:{platform:'kick'}}]});
+  await f.plugin.onunload();
+  f.plugin.enabled=true; // A newly loaded plugin must not inherit the old queued command.
+  const before=f.requests.length;release();
+  const result=await queued;
+  assert.equal(result.shouldStop,true);assert.match(result.newlyPassedVariables.pulseweavercontrol_result,/cancelled/);
+  assert.equal(f.requests.length,before);
+ }finally{await f.close();}
+});
+
+test('Late HTTP completion cannot restore state after the plugin unloads',async()=>{
+ let finish;
+ const response=new Promise(resolve=>{finish=resolve;});
+ const plugin=load({updateConnection:async()=>{},setVariable:async()=>{}},19755,{fetch:()=>response});
+ plugin.enabled=true;
+ const pending=plugin.ensureState(true);
+ await plugin.onunload();
+ finish({ok:true,json:async()=>({operatorApi:2,activeStage:'stale'})});
+ await assert.rejects(pending,/cancelled/);assert.equal(plugin.state,null);
+});
+
+test('An event suspended during unload cannot trigger a late alert',async()=>{
+ const f=await fixture();try{
+  let finish;const barrier=new Promise(resolve=>{finish=resolve;});
+  f.plugin.updateVariables=()=>barrier;
+  const pending=f.plugin.consume({kind:'event',event:'source_hidden',source:'Camera'});
+  await f.plugin.onunload();finish();await pending;
+  assert.equal(f.alerts.length,0);
  }finally{await f.close();}
 });

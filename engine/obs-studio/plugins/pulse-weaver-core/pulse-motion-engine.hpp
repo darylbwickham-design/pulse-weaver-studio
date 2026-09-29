@@ -50,6 +50,7 @@ public:
 	void refreshEditor();
 
 private:
+	friend struct PulseMotionEngineTestAccess;
 	struct Transform {
 		vec2 pos{};
 		vec2 scale{1.0f, 1.0f};
@@ -107,6 +108,7 @@ private:
 	QJsonArray actions;
 	QJsonArray originals;
 	QJsonObject originalScenes;
+	QJsonObject storageRoot;
 	bool originalStoreValid = true;
 	std::unique_ptr<Execution> active;
 	std::vector<Track> lastRestore;

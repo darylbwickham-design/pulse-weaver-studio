@@ -277,29 +277,17 @@ internal static class Program
         return backup;
     }
     static bool IsProtectedConfiguration(string root, string target)
-    {
-        foreach (var name in new[] { "config", "config-backups" })
-        {
-            var protectedRoot = Path.GetFullPath(Path.Combine(root, name));
-            if (target.Equals(protectedRoot, StringComparison.OrdinalIgnoreCase) ||
-                target.StartsWith(protectedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return true;
-        }
-        return false;
-    }
+        => PayloadPolicy.IsProtectedConfiguration(root, target);
     static void ExtractPayload(string? destination = null)
     {
         destination ??= InstallDirectory;
-        var root = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
         using var input = Assembly.GetExecutingAssembly().GetManifestResourceStream("PulseWeaver.Payload.zip") ?? throw new InvalidOperationException("Installer payload is incomplete.");
         using var archive = new ZipArchive(input, ZipArchiveMode.Read);
+        PayloadPolicy.Validate(archive, destination);
         foreach (var entry in archive.Entries)
         {
-            var relative = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
-            if (string.IsNullOrWhiteSpace(relative)) continue;
-            var target = Path.GetFullPath(Path.Combine(destination, relative));
-            if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Unsafe installer entry was rejected.");
-            if (IsProtectedConfiguration(destination, target)) throw new InvalidOperationException("Installer payload must not contain user configuration.");
-            if (string.IsNullOrEmpty(entry.Name)) { Directory.CreateDirectory(target); continue; }
+            var target = PayloadPolicy.Target(destination, entry);
+            if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\')) { Directory.CreateDirectory(target); continue; }
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             entry.ExtractToFile(target, true);
         }
@@ -308,16 +296,7 @@ internal static class Program
     {
         using var input = Assembly.GetExecutingAssembly().GetManifestResourceStream("PulseWeaver.Payload.zip") ?? throw new InvalidOperationException("Installer payload is incomplete.");
         using var archive = new ZipArchive(input, ZipArchiveMode.Read);
-        var root = Path.GetFullPath(InstallDirectory) + Path.DirectorySeparatorChar;
-        foreach (var entry in archive.Entries)
-        {
-            var target = Path.GetFullPath(Path.Combine(root, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
-            if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase) || IsProtectedConfiguration(root, target))
-                throw new InvalidOperationException("Installer payload contains an unsafe or protected configuration path.");
-        }
-        return archive.Entries.Where(entry => !string.IsNullOrEmpty(entry.Name))
-            .Select(entry => entry.FullName.Replace('/', Path.DirectorySeparatorChar))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return PayloadPolicy.Validate(archive, InstallDirectory);
     }
     static void CleanInstalledPayload(string installDirectory, HashSet<string> newPayloadFiles)
     {
@@ -327,8 +306,7 @@ internal static class Program
         {
             foreach (var relative in File.ReadLines(manifest).Where(path => !newPayloadFiles.Contains(path)))
             {
-                var target = Path.GetFullPath(Path.Combine(installDirectory, relative));
-                if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Unsafe installed-file manifest entry was rejected.");
+                var target = Recovery.SafePath(installDirectory, relative);
                 if (IsProtectedConfiguration(installDirectory, target)) continue;
                 if (File.Exists(target)) File.Delete(target);
             }

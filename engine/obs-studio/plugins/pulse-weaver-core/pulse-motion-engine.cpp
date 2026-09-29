@@ -671,10 +671,21 @@ void PulseMotionEngine::load()
 	const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
 	if (error.error != QJsonParseError::NoError || !document.isObject()) { originalStoreValid = false; return; }
 	const QJsonObject root = document.object();
+	// An unknown schema or malformed authoritative array must never become an
+	// apparently empty catalogue that the next editor action overwrites.
+	if (root.value("version").toDouble(-1) != 1 || !root.value("actions").isArray() ||
+		(root.contains("originals") && !root.value("originals").isArray()) ||
+		(root.contains("originalScenes") && !root.value("originalScenes").isObject())) {
+		originalStoreValid = false;
+		return;
+	}
+	for (const QJsonValue &action : root.value("actions").toArray()) {
+		if (!action.isObject()) { originalStoreValid = false; return; }
+	}
+	storageRoot = root;
 	originals = root.value("originals").toArray();
 	originalScenes = root.value("originalScenes").toObject();
-	if (root.value("version").toInt() == 1 && root.value("actions").isArray())
-		actions = root.value("actions").toArray();
+	actions = root.value("actions").toArray();
 }
 
 bool PulseMotionEngine::save()
@@ -686,12 +697,18 @@ bool PulseMotionEngine::save()
 		setStatus("Could not save motion actions: " + file.errorString(), true);
 		return false;
 	}
-	const QByteArray data = QJsonDocument(QJsonObject{{"version", 1}, {"actions", actions}, {"originals", originals}, {"originalScenes", originalScenes}}).toJson(QJsonDocument::Indented);
+	QJsonObject next = storageRoot;
+	next.insert("version", 1);
+	next.insert("actions", actions);
+	next.insert("originals", originals);
+	next.insert("originalScenes", originalScenes);
+	const QByteArray data = QJsonDocument(next).toJson(QJsonDocument::Indented);
 	if (file.write(data) != data.size()) { file.cancelWriting(); setStatus("Motion storage write failed.", true); return false; }
 	if (!file.commit()) {
 		setStatus("Could not finish saving motion actions.", true);
 		return false;
 	}
+	storageRoot = next;
 	syncHotkeys();
 	return true;
 }
@@ -1988,14 +2005,15 @@ void PulseMotionEngine::saveEditorAction()
 void PulseMotionEngine::deleteEditorAction()
 {
 	if (editingId.isEmpty()) return;
+	const QJsonArray before = actions;
 	for (int index = 0; index < actions.size(); ++index) {
 		if (actions[index].toObject().value("id") == editingId) {
 			actions.removeAt(index);
 			break;
 		}
 	}
+	if (!save()) { actions = before; return; }
 	editingId.clear();
-	save();
 	refreshEditor();
 	setStatus("Action deleted. Existing external bindings will report that it no longer exists.");
 	emitEvent("motion_catalogue_changed");
@@ -2663,6 +2681,9 @@ QJsonArray PulseMotionEngine::draftSnapshot() const
 		if (!item) continue;
 		result.append(QJsonObject{{"itemId", QString::number(it.key())}, {"container", draftContainer},
 			{"source", QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(item)))},
+			{"sourceUuid", QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item)))},
+			{"sourceWidth", int(obs_source_get_width(obs_sceneitem_get_source(item)))},
+			{"sourceHeight", int(obs_source_get_height(obs_sceneitem_get_source(item)))},
 			{"transform", serialize(capture(item))}});
 	}
 	return result;
@@ -2677,7 +2698,7 @@ void PulseMotionEngine::applyDraftSnapshot(const QJsonArray &snapshot)
 		OBSSceneItem item = draftItem(row.value("itemId").toString().toLongLong());
 		if (item && (row.value("sourceUuid").toString().isEmpty() ||
 			QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item))) == row.value("sourceUuid").toString()))
-			states.emplace_back(item, deserialize(row.value("transform").toObject()));
+			states.emplace_back(item, savedTransformForSource(row, obs_sceneitem_get_source(item)));
 	}
 	std::sort(states.begin(), states.end(), [](const auto &a, const auto &b) { return a.second.order < b.second.order; });
 	for (auto &[item, transform] : states) apply(item, transform, true);
@@ -4302,13 +4323,7 @@ OBSSceneItem PulseMotionEngine::resolveItem(const QString &container, qint64 ite
 	if (item && !sourceUuid.isEmpty() && QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item))) != sourceUuid)
 		item = nullptr;
 	if (!item && !sourceUuid.isEmpty()) {
-		struct Search { QByteArray uuid; OBSSceneItem result; } search{sourceUuid.toUtf8(), {}};
-		obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *candidate, void *data) {
-			auto &search = *static_cast<Search *>(data);
-			if (search.uuid == obs_source_get_uuid(obs_sceneitem_get_source(candidate))) search.result = candidate;
-			return !search.result;
-		}, &search);
-		item = search.result;
+		item = PulseRuntimeSafety::findSceneItemByUuid(scene, sourceUuid.toUtf8().constData(), recursive);
 	}
 	if (item) return item;
 	if (!item && !sourceName.isEmpty()) {
@@ -4989,6 +5004,37 @@ void PulseMotionEngine::cancelForManualStageChange()
 
 void PulseMotionEngine::frontendEvent(obs_frontend_event event)
 {
+	if (event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING || event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP) {
+		// Timers and held scene references belong to the collection being left.
+		// Restore a temporary move before the old collection is saved; cleanup
+		// itself must only release references, never modify removed sources.
+		animationTimer.stop();
+		stageTimer.stop();
+		previewTimer.stop();
+		if (active && event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING)
+			for (Track &track : active->tracks)
+				if (track.item) apply(track.item, track.baseline, true);
+		active.reset();
+		lastRestore.clear();
+		requestResults.clear();
+		expectedStageIndex = -1;
+		previewScene = nullptr;
+		pairedPreviews.clear();
+		draftScene = nullptr;
+		parkedDrafts.clear();
+		draftIds.clear();
+		previewIds.clear();
+		undoStates.clear();
+		redoStates.clear();
+		draftContainer.clear();
+		mainContainer.clear();
+		pairedContainer.clear();
+		loadedTargets = {};
+		pairedSwapState = 0;
+		draftDirty = false;
+		syncVisualCanvas();
+		return;
+	}
 	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING || event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED) {
 		QTimer::singleShot(0, this, [this] { refreshEditor(); });
 		return;
@@ -5151,8 +5197,13 @@ QJsonObject PulseMotionEngine::importDocument(const QJsonObject &document, const
 		for (const QJsonValue &value : lumia) imported.append(value);
 		for (const QJsonValue &value : move) imported.append(value);
 	}
+	const QJsonArray before = actions;
 	for (const QJsonValue &value : imported) actions.append(value);
-	if (!imported.isEmpty()) save();
+	if (!imported.isEmpty() && !save()) {
+		actions = before;
+		return {{"ok", false}, {"imported", 0}, {"issues", issues},
+			{"message", "Could not save imported actions. The existing catalogue is unchanged."}};
+	}
 	refreshEditor();
 	if (!imported.isEmpty()) {
 		editingId = imported.first().toObject().value("id").toString();

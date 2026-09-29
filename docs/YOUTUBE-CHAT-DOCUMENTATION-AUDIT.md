@@ -1,5 +1,7 @@
 # YouTube chat documentation audit — 29 September 2026
 
+Later application-wide findings and the local-only correction are recorded in [the request audit](PULSE-WEAVER-REQUEST-AUDIT-2026-09-29.md). The sections below preserve the sequence of earlier investigations and their evidence at the time.
+
 Scope: compare unstable 9 (source commit 16f2b40) with Google's current streaming-chat guide, API references, and the installed-build investigation. This document changes no application behavior.
 
 ## Documented behavior
@@ -63,3 +65,42 @@ Experimental alpha 3 / unstable 10 removes the under-60-second failure classific
 Diagnostics record application-level REST attempts by allowlisted operation and streaming attempts with duration, batch count, numeric status, and normalized result. These counters are not claimed to equal billed Google quota. No real YouTube request was made for these tests.
 
 Validation passed: 14 helper protocol checks, 16 native/helper lifecycle checks, and the changed frontend build against existing unchanged dependencies. Experimental packages support the next live verification; they do not constitute measured proof that the original live connection issue or daily quota total is resolved.
+
+## Live reference comparison — 29 September, approximately 22:20 local
+
+The user explicitly authorised a bounded comparison while streaming to YouTube.
+`tests/YouTubeReference/probe.py` uses Python gRPC and Google's documented demo
+request/response loop on a retained channel. Three calls used the exact demo
+fields, and three used Pulse Weaver's fields. All six completed with gRPC OK
+after 10.344–10.625 seconds, returning one empty response with an advancing
+cursor. No call reached the diagnostic's local cancellation limit. Two distinct
+active chats were discovered; one was used for both comparison arms.
+
+The reference probe reproduces the short successful completions independently
+of the Pulse Weaver helper and UI. It rules out helper teardown or the selected
+request fields as necessary causes of the observed behaviour. It does not prove
+Google's internal reason for ending the calls or guarantee the same behaviour
+for busy chats. Pulse Weaver was receiving chat concurrently during the probe.
+
+One actual implementation difference remains: Pulse Weaver starts a new helper
+and gRPC channel for each RPC; Google's example retains its channel across RPCs.
+Reusing the channel would reduce process/connection overhead, but the comparison
+does not support claiming it will reduce the API request count. The current
+empty-completion guard counts response batches, not messages: an empty server
+batch resets that guard. A longer delay for empty messages would reduce calls
+with a chat-latency tradeoff; it must not be sold as equivalent live behaviour.
+
+The current Dual implementation creates two independent broadcasts, ingestion
+streams, and chats. YouTube's current help describes a dual-format workflow with
+one shared chat and a selectable second encoder feed:
+https://support.google.com/youtube/answer/2474026?hl=en . The reviewed public
+liveBroadcasts/bind reference still documents one bound video stream and does
+not document configuring this second feed. Therefore a shared-chat migration
+requires a verified supported integration or user configuration in Studio;
+neither a guessed API field nor dropping one existing chat is acceptable.
+
+The broad assumption that switching to StreamList guarantees almost no ongoing
+requests was unsupported. The latest installed test removed REST fallback but
+has not demonstrated the intended quota saving. A release should not claim that
+the overall quota issue is solved on the basis of offline tests or successful
+RPC statuses alone. See the reference test README for exact traffic and limits.

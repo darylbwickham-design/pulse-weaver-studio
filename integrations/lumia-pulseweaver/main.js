@@ -10,7 +10,7 @@ class PulseWeaverPlugin extends Plugin {
     super(manifest, context);
     this.token = ''; this.state = null; this.enabled = false;
     this.stream = null; this.retryTimer = null; this.retry = 0;
-    this.generation = 0; this.values = new Map(); this.options = new Map();
+    this.generation = 0; this.lifecycle = 0; this.values = new Map(); this.options = new Map();
     this.changes = new EventEmitter(); this.controllers = new Set();
     this.eventQueue = Promise.resolve(); this.pendingEvents = 0;
     this.actionQueue = Promise.resolve();
@@ -18,7 +18,8 @@ class PulseWeaverPlugin extends Plugin {
   }
   async onload() { this.enabled = true; this.connect(); }
   async onunload() {
-    this.enabled = false; ++this.generation;
+    this.enabled = false; ++this.generation; ++this.lifecycle; ++this.showAttempt;
+    this.operations.clear();
     clearTimeout(this.retryTimer); this.stream?.destroy(); this.stream = null;
     for (const controller of this.controllers) controller.abort();
     this.state = null; this.changes.emit('state');
@@ -62,11 +63,14 @@ class PulseWeaverPlugin extends Plugin {
   }
   headers() { return { Authorization: `Bearer ${this.connectionToken()}`, 'X-Pulse-Weaver-Client': 'lumia-plugin' }; }
   async request(route, method = 'GET') {
+    if (!this.enabled) throw new Error('Pulse Weaver plugin is disabled.');
+    const lifecycle = this.lifecycle;
     const controller = new AbortController(); this.controllers.add(controller);
     const timeout = setTimeout(() => controller.abort(), 30000);
     try {
       const response = await fetch(this.endpoint(route), { method, headers: this.headers(), signal: controller.signal, redirect: 'error' });
       const payload = await response.json();
+      if (!this.enabled || lifecycle !== this.lifecycle) throw new Error('Pulse Weaver connection settings changed; operation cancelled.');
       if (!response.ok || payload.ok === false) throw new Error(payload.message || payload.error || `HTTP ${response.status}`);
       return payload;
     } finally { clearTimeout(timeout); this.controllers.delete(controller); }
@@ -112,7 +116,7 @@ class PulseWeaverPlugin extends Plugin {
             try { payload = JSON.parse(line.slice(6)); } catch { disconnect(new Error('Invalid event data.')); return; }
             if (++this.pendingEvents > 256) { --this.pendingEvents; disconnect(new Error('Event consumer fell behind; reconnecting.')); return; }
             this.eventQueue = this.eventQueue.then(async () => {
-              if (generation === this.generation && !ended) await this.consume(payload);
+              if (generation === this.generation && !ended) await this.consume(payload, generation);
             }).catch(disconnect).finally(() => { --this.pendingEvents; });
           }
         });
@@ -191,20 +195,29 @@ class PulseWeaverPlugin extends Plugin {
     const definition = this.dynamicOptions(actionType);
     return this.setOptions(actionType, definition.fieldKey, definition.options, true);
   }
-  async consume(payload) {
+  async consume(payload, generation = this.generation) {
+    const current = () => this.enabled && generation === this.generation;
+    if (!current()) return;
     if (payload.kind === 'snapshot' || payload.kind === 'catalogue') {
       if (payload.state?.operatorApi < 2 || !payload.state?.operatorApi) throw new Error('Pulse Weaver 1.11.42 or newer is required.');
       this.state = payload.state; this.retry = 0;
       await this.lumia.updateConnection(true);
-      await this.updateVariables(); await this.refreshOptions(); this.changes.emit('state');
+      if (!current()) return;
+      await this.updateVariables();
+      if (!current()) return;
+      await this.refreshOptions();
+      if (current()) this.changes.emit('state');
       return; // A snapshot never replays old alerts on reconnect.
     }
     if (payload.kind !== 'event' || !this.state) return;
     let alert = payload.event;
     if (alert === 'stage_changed') this.state.activeStage = payload.stage || '';
     if (alert === 'motion_catalogue_changed') {
-      this.state = await this.request('/state');
+      const state = await this.request('/state');
+      if (!current()) return;
+      this.state = state;
       await this.refreshOptions(true);
+      if (!current()) return;
     }
     if (alert === 'motion_state') {
       this.state.motion ||= {};
@@ -216,7 +229,9 @@ class PulseWeaverPlugin extends Plugin {
       this.state.outputs[payload.output || payload.platform] = payload;
       alert = payload.platform === 'recording' ? `recording_${payload.state}` : `${payload.platform}_${payload.state}`;
     }
-    await this.updateVariables(); this.changes.emit('state');
+    await this.updateVariables();
+    if (!current()) return;
+    this.changes.emit('state');
     const known = new Set((this.manifest.config.alerts || []).map(value => value.key));
     if (known.has(alert)) await this.lumia.triggerAlert({ alert, showInEventList: false, extraSettings: {
       platform: payload.platform || '', output: payload.output || '', state: payload.state || '',
@@ -346,10 +361,14 @@ class PulseWeaverPlugin extends Plugin {
     }
   }
   async actions(config) {
+    const lifecycle = this.lifecycle;
     const execute = async () => {
       try {
         let last;
-        for (const action of config.actions || []) last = await this.runAction(action);
+        for (const action of config.actions || []) {
+          if (!this.enabled || lifecycle !== this.lifecycle) throw new Error('Pulse Weaver connection settings changed; queued operation cancelled.');
+          last = await this.runAction(action);
+        }
         const message = last?.message || 'Operation completed.';
         await this.updateVariables(); await this.setVariable('last_result', message);
         return { newlyPassedVariables: { [`${this.manifest.id}_result`]: message, [`${this.manifest.id}_active_stage`]: this.state?.activeStage || '' }, shouldStop: false };

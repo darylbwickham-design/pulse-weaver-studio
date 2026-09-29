@@ -1,7 +1,7 @@
 {
   "id": "pulseweavercontrol",
   "name": "Pulse Weaver",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "author": "Pulse Weaver",
   "description": "Operate your Pulse Weaver show, Stages, native motion actions, sources, audio and media from Lumia Stream or LumiCon.",
   "lumiaVersion": "^9.0.0",

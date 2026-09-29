@@ -5,8 +5,10 @@
 #include <QActionGroup>
 #include "../../shared/qt/PulseLumiaOutput.hpp"
 #include "../../shared/qt/PulseStageExclusions.hpp"
+#include "../../shared/qt/PulseStageStorage.hpp"
 #include "../../shared/qt/PulseOutputSceneSync.hpp"
 #include "../../shared/qt/PulseOutputBitrates.hpp"
+#include "../../shared/qt/PulseOutputActivity.hpp"
 #include "../../shared/qt/PulseGitHubUpdater.hpp"
 #include <obs-output-timing.h>
 /******************************************************************************
@@ -322,6 +324,8 @@ struct PulseStageCache {
 	QString path;
 	QJsonArray stages;
 	bool valid = false;
+	QString loggedFailure;
+	QString notifiedFailure;
 	QFileSystemWatcher watcher;
 	PulseStageCache()
 	{
@@ -338,12 +342,67 @@ PulseStageCache &pulseStageCache()
 	return cache;
 }
 
+void reportPulseStageSaveFailure(const QString &path, const QString &error, bool notify)
+{
+	auto &cache = pulseStageCache();
+	const QString key = path + '\n' + error;
+	if (cache.loggedFailure != key) {
+		cache.loggedFailure = key;
+		blog(LOG_WARNING, "[Pulse Weaver] Stage save failed: %s", error.toUtf8().constData());
+	}
+	if (notify && cache.notifiedFailure != key) {
+		cache.notifiedFailure = key;
+		QMessageBox::warning(nullptr, "Stages were not saved", error + "\n\nCheck the settings folder and available disk space before trying again.");
+	}
+}
+
+void clearPulseStageSaveFailure()
+{
+	pulseStageCache().loggedFailure.clear();
+	pulseStageCache().notifiedFailure.clear();
+}
+
+QString pulseStageSourceUuid(const QString &name, const QString &canvas)
+{
+	obs_source_t *source = obs_get_source_by_name(name.toUtf8().constData());
+	if (!source && canvas == "vertical") {
+		obs_canvas_t *vertical = PulseWeaverGetVerticalCanvas();
+		source = vertical ? obs_canvas_get_source_by_name(vertical, name.toUtf8().constData()) : nullptr;
+		obs_canvas_release(vertical);
+	}
+	const QString uuid = source ? QString::fromUtf8(obs_source_get_uuid(source)) : QString();
+	obs_source_release(source);
+	return uuid;
+}
+
+QString pulseStageSourceName(const QString &uuid, const QString &)
+{
+	obs_source_t *source = obs_get_source_by_uuid(uuid.toUtf8().constData());
+	const QString name = source ? QString::fromUtf8(obs_source_get_name(source)) : QString();
+	obs_source_release(source);
+	return name;
+}
+
+QJsonArray resolvedPulseWeaverStages(PulseStageCache &cache)
+{
+	const auto stored = PulseStageStorage::normalize(cache.stages, pulseStageSourceUuid, pulseStageSourceName, true);
+	if (stored != cache.stages) {
+		QString error;
+		if (!PulseStageStorage::write(cache.path, stored, error))
+			reportPulseStageSaveFailure(cache.path, error, false);
+		else
+			clearPulseStageSaveFailure();
+		cache.stages = stored;
+	}
+	return PulseStageStorage::normalize(cache.stages, pulseStageSourceUuid, pulseStageSourceName);
+}
+
 QJsonArray loadPulseWeaverStages()
 {
 	auto &cache = pulseStageCache();
 	const QString path = pulseWeaverStagePath();
 	if (cache.valid && cache.path == path)
-		return cache.stages;
+		return resolvedPulseWeaverStages(cache);
 	if (cache.path != path) {
 		if (!cache.watcher.files().isEmpty()) cache.watcher.removePaths(cache.watcher.files());
 		if (!cache.watcher.directories().isEmpty()) cache.watcher.removePaths(cache.watcher.directories());
@@ -359,23 +418,26 @@ QJsonArray loadPulseWeaverStages()
 		if (document.isArray()) {
 			cache.stages = document.array();
 			cache.valid = true;
-			return cache.stages;
+			file.close();
+			return resolvedPulseWeaverStages(cache);
 		}
 	}
 	cache.valid = false;
 	return {};
 }
 
-void savePulseWeaverStages(const QJsonArray &stages)
+bool savePulseWeaverStages(const QJsonArray &stages)
 {
 	pulseStageCache().valid = false;
 	const QString path = pulseWeaverStagePath();
-	QDir().mkpath(QFileInfo(path).absolutePath());
-	QSaveFile file(path);
-	if (file.open(QIODevice::WriteOnly)) {
-		file.write(QJsonDocument(stages).toJson(QJsonDocument::Indented));
-		file.commit();
+	QString error;
+	const auto stored = PulseStageStorage::normalize(stages, pulseStageSourceUuid, pulseStageSourceName, true);
+	if (!PulseStageStorage::write(path, stored, error)) {
+		reportPulseStageSaveFailure(path, error, true);
+		return false;
 	}
+	clearPulseStageSaveFailure();
+	return true;
 }
 
 QString pulseWeaverUiSettingsPath()
@@ -392,13 +454,13 @@ QJsonObject pulseStageAssignment(const QJsonObject &stage, const QString &provid
 	if (!requestedCanvas.isEmpty()) {
 		const QString routedKey = provider + "_" + requestedCanvas;
 		if (assignments.contains(routedKey))
-			return assignments.value(routedKey).toObject();
+			return PulseStageStorage::normalizeAssignment(assignments.value(routedKey).toObject(), pulseStageSourceUuid, pulseStageSourceName);
 	}
 	if (assignments.contains(provider))
 	{
 		const QJsonObject legacy = assignments.value(provider).toObject();
 		if (requestedCanvas.isEmpty() || legacy.value("canvas").toString() == requestedCanvas)
-			return legacy;
+			return PulseStageStorage::normalizeAssignment(legacy, pulseStageSourceUuid, pulseStageSourceName);
 	}
 	QString canvas;
 	if (provider == "twitch")
@@ -1029,14 +1091,8 @@ void OBSBasic::InitPulseWeaverShell()
 	studioMenuButton->setObjectName("PulseWeaverUtility");
 	pulseIcon(studioMenuButton, "studio");
 	auto *studioMenu = new QMenu(studioMenuButton);
-	new PulseUpdates::Updater(this, studioMenu, [] {
-		bool active = false;
-		obs_enum_outputs([](void *state, obs_output_t *output) {
-			if (obs_output_active(output))
-				*static_cast<bool *>(state) = true;
-			return true;
-		}, &active);
-		return active;
+	new PulseUpdates::Updater(this, studioMenu, [this] {
+		return pulseStreamStart.pending() || PulseHasActiveOutputs();
 	});
 	// These upstream actions would contact OBS's update/repair service.
 	ui->actionCheckForUpdates->setVisible(false);
@@ -1355,6 +1411,25 @@ void OBSBasic::InitPulseWeaverShell()
     });
     chatFilters->addWidget(timestamps);
     chatLayout->addLayout(chatFilters);
+	auto *youtubeChatPolicy = new QComboBox(chatPage);
+	youtubeChatPolicy->setObjectName("PulseWeaverYouTubeChatPolicy");
+	youtubeChatPolicy->setAccessibleName("YouTube chat request policy");
+	youtubeChatPolicy->addItem("YouTube chat · Save quota", true);
+	youtubeChatPolicy->addItem("YouTube chat · Responsive", false);
+	const bool saveChatQuota = !Config() || !config_has_user_value(Config(), "PulseWeaver", "YouTubeChatSaveQuota") ||
+		config_get_bool(Config(), "PulseWeaver", "YouTubeChatSaveQuota");
+	youtubeChatPolicy->setCurrentIndex(saveChatQuota ? 0 : 1);
+	youtubeChatPolicy->setEnabled(Config() != nullptr);
+	youtubeChatPolicy->setToolTip("Save quota waits up to 30 extra seconds after repeated empty responses. "
+		"Messages resume from the saved position. Responsive reconnects after one second. "
+		"Changes apply on the next YouTube chat connection; they do not interrupt a live stream.");
+	connect(youtubeChatPolicy, &QComboBox::currentIndexChanged, this, [this, youtubeChatPolicy] {
+		if (!Config()) return;
+		config_set_bool(Config(), "PulseWeaver", "YouTubeChatSaveQuota", youtubeChatPolicy->currentData().toBool());
+		config_save_safe(Config(), "tmp", nullptr);
+		if (pulseChatStatus) pulseChatStatus->setText("YouTube chat preference saved for the next connection.");
+	});
+	chatLayout->addWidget(youtubeChatPolicy);
 	chatLayout->addWidget(chatFeed, 1);
 	auto *chatToolbar = new QHBoxLayout;
 	chatToolbar->setContentsMargins(0, 0, 0, 0);
@@ -1601,7 +1676,7 @@ void OBSBasic::InitPulseWeaverShell()
 		stage[vertical ? "verticalTransition" : "horizontalTransition"] = selector ? selector->currentData().toString() : QString("fade");
 		stage[vertical ? "verticalDurationMs" : "horizontalDurationMs"] = duration ? duration->value() : 500;
 		stages[row] = stage;
-		savePulseWeaverStages(stages);
+		if (!savePulseWeaverStages(stages)) return;
 		pulseStageSelector->setItemData(row, QString::fromUtf8(QJsonDocument(stage).toJson(QJsonDocument::Compact)));
 		if (duration && selector)
 			duration->setEnabled(selector->currentData().toString() != "cut");
@@ -1856,6 +1931,18 @@ void OBSBasic::InitPulseWeaverShell()
 					pulseDestinationStatus->setText("Stop Twitch before changing between 16:9 and Dual.");
 				return;
 			}
+			if (key == "youtube" && mode != "off" && mode != pulseYouTubePreparedMode &&
+			    (pulseYouTubeOutput || pulseYouTubeSecondOutput)) {
+				const QSignalBlocker blocker(route);
+				route->setCurrentIndex(route->findData(previousMode));
+				if (pulseYouTubeCanvas) {
+					const QSignalBlocker canvasBlocker(pulseYouTubeCanvas);
+					pulseYouTubeCanvas->setCurrentIndex(pulseYouTubeCanvas->findData(previousMode));
+				}
+				if (pulseDestinationStatus)
+					pulseDestinationStatus->setText("Stop YouTube before changing between 16:9, 9:16 and Dual.");
+				return;
+			}
 			route->setProperty("pulseWeaverPreviousMode", mode);
 			QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
 			settings.setValue("destinations/" + key + "_mode", mode);
@@ -1877,11 +1964,21 @@ void OBSBasic::InitPulseWeaverShell()
 			/* Output canvases are provisioned lazily. Re-apply the active Stage
 			 * when a route is enabled so an Off destination consumes no video
 			 * resources while newly enabled routes are immediately ready. */
-			QTimer::singleShot(0, this, [this, key, previousMode, mode] {
+			// Coalesce changes made before the event loop runs. Keep the original
+			// applied mode so a quick Off/On sequence cannot start stale outputs.
+			if (!route->property("pulseWeaverPendingPreviousMode").isValid())
+				route->setProperty("pulseWeaverPendingPreviousMode", previousMode);
+			const quint64 serial = route->property("pulseWeaverChangeSerial").toULongLong() + 1;
+			route->setProperty("pulseWeaverChangeSerial", serial);
+			QTimer::singleShot(0, this, [this, route, key, mode, serial] {
+				if (route->property("pulseWeaverChangeSerial").toULongLong() != serial)
+					return;
+				const QString appliedMode = route->property("pulseWeaverPendingPreviousMode").toString();
+				route->setProperty("pulseWeaverPendingPreviousMode", QVariant());
 				if (pulseStageSelector && pulseStageSelector->currentIndex() >= 0)
 					ApplyPulseWeaverStage(pulseStageSelector->currentIndex(), false);
 				if (property("pulseWeaverGoLiveSession").toBool())
-					ApplyPulseWeaverLiveDestinationChange(key, previousMode, mode);
+					ApplyPulseWeaverLiveDestinationChange(key, appliedMode, mode);
 			});
 		});
 		destinations->addWidget(route);
@@ -2603,8 +2700,8 @@ void OBSBasic::InitPulseWeaverShell()
 		if (!Config()) { bitrateStatus->setText("Wait for the profile to finish loading."); return; }
 		for (auto it = bitrateFields.cbegin(); it != bitrateFields.cend(); ++it)
 			config_set_int(Config(), PulseOutputBitrates::Section, PulseOutputBitrates::Keys[it.key()], it.value()->value());
-		config_save_safe(Config(), "tmp", nullptr);
-		bitrateStatus->setText("Saved for the next output start.");
+		bitrateStatus->setText(config_save_safe(Config(), "tmp", nullptr) == CONFIG_SUCCESS ?
+			"Saved for the next output start." : "Could not save the active profile. Check its folder permissions.");
 	});
 
 	auto *soundSection = section("Sound and recording", "Review the mixer, recording location and provider source exclusions before a broadcast.");
@@ -2664,7 +2761,7 @@ void OBSBasic::InitPulseWeaverShell()
 	connect(settings, &QPushButton::clicked, deviceCard->parentWidget(), loadAudioDevices);
 	action(deviceCard, "Refresh available devices", "Detect devices connected since opening Settings", loadAudioDevices);
 	action(deviceCard, "Save audio devices", "Apply and save these scene collection devices", [this, audioDevices, deviceStatus] {
-		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+		if (pulseStreamStart.pending() || PulseHasActiveOutputs()) {
 			deviceStatus->setText("Stop streaming and recording before changing audio devices."); return;
 		}
 		for (auto it = audioDevices.cbegin(); it != audioDevices.cend(); ++it) {
@@ -2721,10 +2818,15 @@ void OBSBasic::InitPulseWeaverShell()
 			it.value()->setValue(PulseOutputBitrates::Read(Config(), it.key()));
 	};
 	auto *profileReadyTimer = new QTimer(recordPath);
-	connect(profileReadyTimer, &QTimer::timeout, recordPath, [this, refreshProfileSettings, activeProfile = static_cast<config_t *>(nullptr)]() mutable {
+	connect(profileReadyTimer, &QTimer::timeout, recordPath, [this, refreshProfileSettings, youtubeChatPolicy, activeProfile = static_cast<config_t *>(nullptr)]() mutable {
 		if (!Config() || Config() == activeProfile) return;
 		activeProfile = Config();
 		refreshProfileSettings();
+		const QSignalBlocker chatPolicyBlocker(youtubeChatPolicy);
+		const bool saveQuota = !config_has_user_value(Config(), "PulseWeaver", "YouTubeChatSaveQuota") ||
+			config_get_bool(Config(), "PulseWeaver", "YouTubeChatSaveQuota");
+		youtubeChatPolicy->setCurrentIndex(saveQuota ? 0 : 1);
+		youtubeChatPolicy->setEnabled(true);
 	});
 	profileReadyTimer->start(500);
 	connect(settings, &QPushButton::clicked, recordPath, refreshProfileSettings);
@@ -2815,7 +2917,7 @@ void OBSBasic::InitPulseWeaverShell()
 	connect(settings, &QPushButton::clicked, trackCard->parentWidget(), refreshTrackNames);
 	action(trackCard, "Save track names", "Save audio track labels to this profile", [this, trackNames, trackStatus] {
 		if (!Config()) { trackStatus->setText("Wait for the profile to finish loading."); return; }
-		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+		if (pulseStreamStart.pending() || PulseHasActiveOutputs()) {
 			trackStatus->setText("Stop streaming and recording before changing audio track names."); return;
 		}
 		for (int index = 0; index < 6; ++index) {
@@ -2867,7 +2969,7 @@ void OBSBasic::InitPulseWeaverShell()
 		if (!Config() || !monitorDevice->isEnabled() || monitorDevice->currentIndex() < 0) {
 			monitorStatus->setText("Open Settings and choose an available monitoring device first."); return;
 		}
-		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+		if (pulseStreamStart.pending() || PulseHasActiveOutputs()) {
 			monitorStatus->setText("Stop streaming and recording before changing the monitoring device."); return;
 		}
 		const QByteArray id = monitorDevice->currentData().toString().toUtf8();
@@ -2928,7 +3030,7 @@ void OBSBasic::InitPulseWeaverShell()
 	connect(settings, &QPushButton::clicked, mixCard->parentWidget(), refreshMix);
 	action(mixCard, "Refresh audio sources", "Reload source names and their current track assignments", refreshMix);
 	action(mixCard, "Save audio source routing", "Apply these track and monitoring choices to the active scene collection", [this, mixTable, mixStatus] {
-		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+		if (pulseStreamStart.pending() || PulseHasActiveOutputs()) {
 			mixStatus->setText("Stop streaming and recording before changing audio source routing."); return;
 		}
 		if (!mixTable->rowCount()) { mixStatus->setText("Refresh audio sources after adding an audio device."); return; }
@@ -3018,7 +3120,7 @@ void OBSBasic::InitPulseWeaverShell()
 	connect(settings, &QPushButton::clicked, videoCard->parentWidget(), refreshVideo);
 	action(videoCard, "Save canvas and frame rate", "Save video settings for the next app start", [this, baseWidth, baseHeight, outputWidth, outputHeight, frameRate, videoStatus] {
 		if (!Config()) { videoStatus->setText("Wait for the profile to finish loading."); return; }
-		if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+		if (pulseStreamStart.pending() || PulseHasActiveOutputs()) {
 			videoStatus->setText("Stop outputs before changing video settings."); return;
 		}
 		const int bw = baseWidth->value(), bh = baseHeight->value();
@@ -3936,7 +4038,7 @@ void OBSBasic::RefreshPulseWeaverStages()
 		obs_source_release(horizontal);
 		obs_source_release(vertical);
 		obs_canvas_release(canvas);
-		savePulseWeaverStages(stages);
+		if (!savePulseWeaverStages(stages)) return;
 	}
 	/* Prepare the private portrait Stingers after the scene collection and
 	 * transition sources are available. Their media decoders need a chance to
@@ -4469,7 +4571,7 @@ void OBSBasic::FinalizePulseWeaverStageTransitions(quint64 serial, const QString
 	if (!verticalScene.isEmpty()) {
 		obs_canvas_t *canvas = PulseWeaverGetVerticalCanvas();
 		obs_source_t *current = canvas ? obs_canvas_get_channel(canvas, 0) : nullptr;
-		active = current && obs_transition_is_active(current);
+		active = active || (current && obs_transition_is_active(current));
 		obs_source_release(current);
 		obs_canvas_release(canvas);
 	}
@@ -4524,6 +4626,9 @@ void OBSBasic::RestorePulseWeaverAudioRouting()
 
 void OBSBasic::ConfigurePulseWeaverAudioRouting(const QJsonObject &stage)
 {
+	// The shell and its queued stage actions can exist before profile loading.
+	if (!Config())
+		return;
 	const char *modeText = Config() ? config_get_string(Config(), "Output", "Mode") : nullptr;
 	const bool advanced = modeText && strcmp(modeText, "Advanced") == 0;
 	const int streamMix = std::clamp(advanced ? int(config_get_int(Config(), "AdvOut", "TrackIndex")) - 1 : 0, 0, 5);
@@ -4661,7 +4766,7 @@ void OBSBasic::CapturePulseWeaverStage()
 	obs_source_release(horizontal);
 	obs_source_release(vertical);
 	obs_canvas_release(canvas);
-	savePulseWeaverStages(stages);
+	if (!savePulseWeaverStages(stages)) return;
 	RefreshPulseWeaverStages();
 	const int index = pulseStageSelector ? pulseStageSelector->findData(name, Qt::UserRole + 1) : -1;
 	if (index >= 0)
@@ -4743,6 +4848,15 @@ void OBSBasic::ManagePulseWeaverStages()
 			for (const QString &name : exclude ? exclude->property("excluded").toStringList() : QStringList{})
 				excluded.append(name);
 			assignment.insert("excluded", excluded);
+			if (exclude) {
+				assignment.insert("excludedIdentities", QJsonArray::fromVariantList(exclude->property("excludedIdentities").toList()));
+				assignment = PulseStageStorage::normalizeAssignment(assignment, pulseStageSourceUuid, pulseStageSourceName);
+				// Keep the editor's metadata in step with explicit checkbox removals.
+				exclude->setProperty("excludedIdentities", assignment.value("excludedIdentities").toArray().toVariantList());
+				QStringList resolvedNames;
+				for (const auto &value : assignment.value("excluded").toArray()) resolvedNames << value.toString();
+				exclude->setProperty("excluded", resolvedNames);
+			}
 		}
 		return assignment;
 	};
@@ -4778,7 +4892,7 @@ void OBSBasic::ManagePulseWeaverStages()
 					{"verticalDurationMs", verticalDuration ? verticalDuration->value() : 500}});
 			}
 		}
-		savePulseWeaverStages(stages);
+		return savePulseWeaverStages(stages);
 	};
 	auto addRow = [table, horizontalNames, verticalNames, transitionOptions, saveTable](const QJsonObject &stage) {
 		const int row = table->rowCount();
@@ -4807,6 +4921,7 @@ void OBSBasic::ManagePulseWeaverStages()
 				QStringList excluded;
 				for (const QJsonValue &value : assignment.value("excluded").toArray()) excluded << value.toString();
 				exclude->setProperty("excluded", excluded);
+				exclude->setProperty("excludedIdentities", assignment.value("excludedIdentities").toArray().toVariantList());
 				auto refreshExclude = [exclude] {
 					const int count = exclude->property("excluded").toStringList().size();
 					exclude->setText(count ? QString("EXCLUDE %1").arg(count) : "EXCLUDE");
@@ -4838,6 +4953,14 @@ void OBSBasic::ManagePulseWeaverStages()
 				explanation->setWordWrap(true);
 				pickerLayout->addWidget(explanation);
 				auto *list = new QListWidget(&picker);
+				const auto resolved = PulseStageStorage::normalizeAssignment(QJsonObject{{"canvas", canvas},
+					{"excluded", QJsonArray::fromStringList(exclude->property("excluded").toStringList())},
+					{"excludedIdentities", QJsonArray::fromVariantList(exclude->property("excludedIdentities").toList())}},
+					pulseStageSourceUuid, pulseStageSourceName);
+				QStringList resolvedNames;
+				for (const auto &value : resolved.value("excluded").toArray()) resolvedNames << value.toString();
+				exclude->setProperty("excluded", resolvedNames);
+				exclude->setProperty("excludedIdentities", resolved.value("excludedIdentities").toArray().toVariantList());
 				const QStringList currentExcluded = exclude->property("excluded").toStringList();
 				const QSet<QString> selectedNames(currentExcluded.cbegin(), currentExcluded.cend());
 				for (auto source = sources.cbegin(); source != sources.cend(); ++source) {
@@ -4846,6 +4969,20 @@ void OBSBasic::ManagePulseWeaverStages()
 					item->setData(Qt::UserRole, name);
 					item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
 					item->setCheckState(selectedNames.contains(name) ? Qt::Checked : Qt::Unchecked);
+				}
+				// Keep unavailable exclusions visible and removable without matching a new source that reuses their name.
+				for (const QString &name : currentExcluded) {
+					if (sources.contains(name)) continue;
+					QString label = name;
+					for (const auto &value : QJsonArray::fromVariantList(exclude->property("excludedIdentities").toList())) {
+						const auto identity = value.toObject();
+						if (PulseStageStorage::missingName(identity.value("uuid").toString()) == name)
+							label = identity.value("name").toString();
+					}
+					auto *item = new QListWidgetItem(label + " (unavailable)", list);
+					item->setData(Qt::UserRole, name);
+					item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+					item->setCheckState(Qt::Checked);
 				}
 				pickerLayout->addWidget(list, 1);
 				auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &picker);
@@ -4992,7 +5129,7 @@ void OBSBasic::ManagePulseWeaverStages()
 		const int row = table->currentRow();
 		if (row < 0)
 			return;
-		saveTable();
+		if (!saveTable()) return;
 		const QJsonArray stages = loadPulseWeaverStages();
 		if (row >= stages.size())
 			return;
@@ -5404,7 +5541,7 @@ void OBSBasic::PreparePulseWeaverYouTube()
 		if (broadcastId.isEmpty())
 			return true;
 		std::lock_guard<std::mutex> chatRequestLock(pulseYouTubeChatRequestMutex);
-		if (!pulseYouTubeAuth->DeleteBroadcast(broadcastId)) {
+		if (!pulseYouTubeAuth->FinishBroadcast(broadcastId)) {
 			youtubePrepareError = pulseYouTubeAuth->GetLastError();
 			return false;
 		}
@@ -5421,13 +5558,14 @@ void OBSBasic::PreparePulseWeaverYouTube()
 	pulseYouTubeStreamKey.clear();
 	pulseYouTubeSecondStreamKey.clear();
 	if (pulseDestinationStatus)
-		pulseDestinationStatus->setText(mode == "dual" ? "Preparing private YouTube 16:9 and 9:16 broadcasts…" :
-			"Preparing a private YouTube broadcast…");
-	auto prepareRoute = [this, &youtubePrepareError](const QString &route, QString &streamKey, QString &broadcastId) {
+		pulseDestinationStatus->setText(mode == "dual" ? "Preparing unlisted YouTube 16:9 and 9:16 broadcasts…" :
+			"Preparing an unlisted YouTube broadcast…");
+	PulseYouTubeChat::Sessions preparedSessions;
+	auto prepareRoute = [this, &youtubePrepareError, &preparedSessions](const QString &route, QString &streamKey, QString &broadcastId) {
 		std::lock_guard<std::mutex> chatRequestLock(pulseYouTubeChatRequestMutex);
 		StreamDescription stream;
 		stream.title = "Pulse Weaver " + (route == "vertical" ? QString("9:16") : QString("16:9"));
-		if (!pulseYouTubeAuth->InsertStream(stream)) {
+		if (!pulseYouTubeAuth->GetReusableStream(route, stream)) {
 			youtubePrepareError = pulseYouTubeAuth->GetLastError();
 			return false;
 		}
@@ -5458,6 +5596,8 @@ void OBSBasic::PreparePulseWeaverYouTube()
 			return false;
 		}
 		streamKey = stream.name;
+		preparedSessions.insert(route, {broadcast.id, broadcast.liveChatId});
+		preparedSessions[route].outputPaused = true;
 		return true;
 	};
 	const QString firstRoute = mode == "vertical" ? "vertical" : "horizontal";
@@ -5473,13 +5613,9 @@ void OBSBasic::PreparePulseWeaverYouTube()
 		return;
 	}
 	pulseYouTubePreparedMode = mode;
-	pulseYouTubeChatSessions = PulseYouTubeChat::create(mode, pulseYouTubeBroadcastId,
-		pulseYouTubeSecondBroadcastId);
-	if (pulseYouTubeChatTimer) {
-		pulseYouTubeChatTimer->setInterval(1000);
-		pulseYouTubeChatTimer->start();
-	}
-	QTimer::singleShot(0, this, &OBSBasic::PollPulseWeaverYouTubeChat);
+	pulseYouTubeChatSessions = preparedSessions;
+	// Preparing a broadcast does not start chat. Start the timer only when
+	// StartPulseWeaverSecondaryOutputs starts the actual YouTube outputs.
 	if (pulseDestinationStatus)
 		pulseDestinationStatus->setText(QStringLiteral("YouTube ready · unlisted · ") +
 			(mode == "dual" ? "16:9 + 9:16" : mode == "vertical" ? "9:16" : "16:9"));
@@ -5551,7 +5687,10 @@ void OBSBasic::StartPulseWeaverSecondaryOutputs()
 	if (mode == "dual") {
 		if (pulseDestinationStatus)
 			pulseDestinationStatus->setText("YouTube connecting · 16:9, then 9:16…");
-		QTimer::singleShot(1500, this, [this, startRoute] {
+		const quint64 startGeneration = pulseYouTubeChatGeneration;
+		QTimer::singleShot(1500, this, [this, startRoute, startGeneration] {
+			if (pulseYouTubeChatGeneration != startGeneration || pulseYouTubePreparedMode != "dual" ||
+			    pulseYouTubeSecondOutput) return;
 			if (!pulseYouTubeOutput || !obs_output_active(pulseYouTubeOutput)) {
 				if (pulseDestinationStatus)
 					pulseDestinationStatus->setText("YouTube 16:9 did not connect; 9:16 was not started.");
@@ -5836,7 +5975,7 @@ void OBSBasic::RefreshPulseWeaverChatComposer()
 			youtubeReady ? "YouTube live chat connected." :
 			youtubeAvailable ? "YouTube chat connected · another active broadcast is still connecting…" :
 			!pulseYouTubeChatSessions.isEmpty() ? "YouTube live chat is connecting…" :
-			"YouTube connected · chat opens when its broadcast is prepared.";
+			"YouTube connected · chat opens when its output starts.";
 	}
 	if (!youtubePause.isEmpty() && (provider == "all" || provider == "youtube"))
 		status = youtubePause;
@@ -5872,6 +6011,16 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 	}
 	if (!pulseYouTubeAuth || pulseYouTubeChatSessions.isEmpty())
 		return;
+	const bool primaryActive = pulseYouTubeOutput && obs_output_active(pulseYouTubeOutput);
+	const bool secondaryActive = pulseYouTubeSecondOutput && obs_output_active(pulseYouTubeSecondOutput);
+	if (PulseYouTubeChat::synchronizeOutputs(pulseYouTubeChatSessions, pulseYouTubePreparedMode,
+		primaryActive, secondaryActive)) {
+		pulseYouTubeChatCancellation->fetch_add(1, std::memory_order_acq_rel);
+		++pulseYouTubeChatGeneration;
+		pulseYouTubeChatWorkers->waitUntilIdle();
+		for (auto &session : pulseYouTubeChatSessions) session.requestPending = false;
+	}
+	if (!primaryActive && !secondaryActive) return;
 	const qint64 now = QDateTime::currentMSecsSinceEpoch();
 	const bool paused = pulseYouTubeAuth->ApiBlockedUntil() > now;
 	if (paused || property("pulseYouTubeQuotaPaused").toBool()) {
@@ -5889,7 +6038,7 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 	const QStringList routes = pulseYouTubeChatSessions.keys();
 	for (const QString &route : routes) {
 		auto sessionIt = pulseYouTubeChatSessions.find(route);
-		if (sessionIt == pulseYouTubeChatSessions.end() || sessionIt->suspended || sessionIt->requestPending ||
+		if (sessionIt == pulseYouTubeChatSessions.end() || sessionIt->outputPaused || sessionIt->suspended || sessionIt->requestPending ||
 		    sessionIt->nextRequestMs > now)
 			continue;
 		if (!sessionIt->liveChatId.isEmpty() &&
@@ -5955,8 +6104,10 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 			continue;
 		}
 
+		const bool saveChatQuota = !config_has_user_value(Config(), "PulseWeaver", "YouTubeChatSaveQuota") ||
+			config_get_bool(Config(), "PulseWeaver", "YouTubeChatSaveQuota");
 		const bool started = pulseStartYouTubeChatWorker(pulseYouTubeChatWorkers,
-			[guard, auth, route, broadcastId, chatId, page, generation, cancellation, requestEpoch] {
+			[guard, auth, route, broadcastId, chatId, page, generation, cancellation, requestEpoch, saveChatQuota] {
 			auto cancelled = [auth, cancellation, requestEpoch] {
 				return cancellation->load(std::memory_order_acquire) != requestEpoch ||
 				       auth->ApiBlockedUntil() > QDateTime::currentMSecsSinceEpoch();
@@ -6049,7 +6200,7 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
             const auto result = auth->StreamLiveChatMessages(chatId, page, cancelled,
                 [&](const QString &next, const QVector<YoutubeChatEvent> &events) {
                     deliver(next, events, false, {}, lifetime.elapsed());
-                });
+                }, saveChatQuota);
             deliver({}, {}, true, result.reason,
                 result.durationMs, result.received);
 

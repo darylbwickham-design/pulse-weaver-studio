@@ -76,6 +76,12 @@ internal static class Program
             request.Part.Add(new[] { "id", "snippet", "authorDetails" });
             if (root.TryGetProperty("pageToken", out var cursor) && !string.IsNullOrEmpty(cursor.GetString())) request.PageToken = cursor.GetString();
             var headers = new Metadata { { "authorization", "Bearer " + token } };
+            if (root.TryGetProperty("persistent", out var persistent) && persistent.GetBoolean())
+            {
+                var saveQuota = !root.TryGetProperty("saveQuota", out var policy) || policy.GetBoolean();
+                await ChatSession.Run(client, request, headers, saveQuota, Console.WriteLine, stop.Token);
+                return 0;
+            }
             // Keep healthy connections open; the parent refreshes expired credentials on reconnect.
             using var call = OpenStream(client, request, headers, stop.Token);
             await foreach (var response in call.ResponseStream.ReadAllAsync(stop.Token))
@@ -83,6 +89,7 @@ internal static class Program
                 Console.WriteLine(JsonFormatter.Default.Format(response));
                 if (!string.IsNullOrEmpty(response.OfflineAt)) return 0;
             }
+            Console.WriteLine(JsonSerializer.Serialize(new { _pulse = "rpcCompleted", grpcStatus = (int)call.GetStatus().StatusCode }));
             return 0;
         }
         catch (RpcException error) { Error(Reason(error), (int)error.StatusCode); return 0; }

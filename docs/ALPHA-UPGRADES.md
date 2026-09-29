@@ -16,7 +16,7 @@ Backups include private account data. Keep them on the same Windows account: enc
 
 ## Lumia Stream
 
-Install **Pulse Weaver 1.4.0** into Lumia as an update to the existing regular plugin. Its manifest ID is still `pulseweavercontrol`; existing action IDs, field keys, variables and port settings remain compatible. It adds the Motion controls and reconnects while Pulse Weaver is being upgraded or restored. Keep your current port and token settings. The separate `pulseweavermotionpreview` plugin is for the isolated preview only.
+Install **Pulse Weaver 1.4.1** into Lumia as an update to the existing regular plugin. Its manifest ID is still `pulseweavercontrol`; existing action IDs, field keys, variables and port settings remain compatible. It adds the Motion controls, reconnects while Pulse Weaver is being upgraded or restored, and discards queued work after unload or connection changes. Keep your current port and token settings. The separate `pulseweavermotionpreview` plugin is for the isolated preview only.
 
 ## Build
 

@@ -1,0 +1,31 @@
+cmake_minimum_required(VERSION 3.28)
+project(PulseKickRuntimeTests LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+set(runtime "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/obs-studio/plugins/pulse-weaver-core/pulse-weaver-core.cpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${runtime}")
+file(READ "${runtime}" source)
+string(FIND "${source}" "class KickRuntime final" begin)
+string(FIND "${source}" "\nstruct Rule {" end)
+math(EXPR length "${end} - ${begin}")
+string(SUBSTRING "${source}" ${begin} ${length} runtime_class)
+# Compile production request, authentication and relay code unchanged. Only the
+# libobs encoder/output methods and browser launch are replaced by test doubles.
+string(FIND "${runtime_class}" "\tvoid startOutput()" begin)
+string(FIND "${runtime_class}" "\nprivate:" end)
+string(SUBSTRING "${runtime_class}" 0 ${begin} head)
+string(SUBSTRING "${runtime_class}" ${end} -1 tail)
+set(runtime_class "${head}\tvoid startOutput() {}\n\tvoid stopOutput() {}\n${tail}")
+string(REPLACE "private:" "public:" runtime_class "${runtime_class}")
+string(REPLACE "QNetworkAccessManager network{this}" "FakeNetwork network{this}" runtime_class "${runtime_class}")
+string(REPLACE "QDesktopServices::openUrl(url);" "(void)url;" runtime_class "${runtime_class}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/runtime-under-test.hpp" "${runtime_class}")
+add_executable(PulseKickRuntimeTests main.cpp)
+target_include_directories(PulseKickRuntimeTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(PulseKickRuntimeTests PRIVATE Qt6::Widgets Qt6::Network)
+add_custom_command(TARGET PulseKickRuntimeTests POST_BUILD
+ COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:Qt6::Core>" "$<TARGET_FILE:Qt6::Gui>" "$<TARGET_FILE:Qt6::Widgets>" "$<TARGET_FILE:Qt6::Network>" "$<TARGET_FILE_DIR:PulseKickRuntimeTests>"
+ COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:PulseKickRuntimeTests>/platforms"
+ COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:Qt6::QMinimalIntegrationPlugin>" "$<TARGET_FILE_DIR:PulseKickRuntimeTests>/platforms")
+enable_testing()
+add_test(NAME PulseKickRuntimeTests COMMAND PulseKickRuntimeTests)

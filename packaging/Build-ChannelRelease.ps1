@@ -8,15 +8,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'YouTubeDesktopRegistration.ps1')
+. (Join-Path $PSScriptRoot 'RuntimePayloadPolicy.ps1')
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $runtime = (Resolve-Path -LiteralPath $RuntimeRoot).Path
 $tag = if ($Channel -eq 'alpha') { "v$Version-alpha.$AlphaRevision" } elseif ($Channel -eq 'unstable') { "v$Version-unstable.$AlphaRevision" } else { "v$Version" }
 $output = Join-Path $projectRoot "artifacts/channel-$tag"
 if (Test-Path -LiteralPath $output) { throw "Output already exists: $output" }
 $registration = Get-YouTubeDesktopRegistration -Path $YouTubeDesktopClientJson
-foreach ($file in @('bin/64bit/PulseWeaverCore.exe','obs-plugins/64bit/pulse-weaver-core.dll')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $runtime $file))) { throw "Missing runtime component: $file" }
-}
+Assert-PulseWeaverRuntimeComponents -Root $runtime
+foreach ($folder in @('bin','data','obs-plugins')) { Assert-PulseWeaverRuntimeTree -Root (Join-Path $runtime $folder) }
 $payload = Join-Path $output 'payload'
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
 foreach ($folder in @('bin','data','obs-plugins')) {
@@ -28,10 +28,7 @@ Get-ChildItem -LiteralPath $payload -Recurse -File -Filter '*.pdb' | ForEach-Obj
     if (-not $_.FullName.StartsWith($payloadPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid staged path' }
     Remove-Item -LiteralPath $_.FullName
 }
-$privateFiles = Get-ChildItem -LiteralPath $payload -Recurse -File | Where-Object {
-    $_.Name -in @('app-credentials.ini','pulse-weaver.ini','pulseweaver-motion-actions.json') -or $_.Extension -eq '.log'
-}
-if ($privateFiles) { throw 'Private state was found in the runtime payload.' }
+Assert-PulseWeaverRuntimeTree -Root $payload
 $regDir = Join-Path $payload 'data/pulse-weaver'
 New-Item -ItemType Directory -Path $regDir -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $regDir 'youtube-desktop-client.json'),$registration)
@@ -48,6 +45,8 @@ foreach ($doc in @('ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md')) {
 if ($LASTEXITCODE -ne 0) { throw 'YouTube streaming transport publish failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/youtube-chat-stream/LICENSE-proto.txt') -Destination (Join-Path $payload 'bin/64bit/youtube-chat/LICENSE-proto.txt')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/youtube-chat-stream/README.md') -Destination (Join-Path $payload 'bin/64bit/youtube-chat/README.md')
+Assert-PulseWeaverRuntimeComponents -Root $payload -IncludeChat
+Assert-PulseWeaverRuntimeTree -Root $payload
 $archive = Join-Path $output 'payload.zip'
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive -CompressionLevel Optimal
 $suffix = if ($Channel -eq 'alpha') {'ALPHA'} elseif ($Channel -eq 'unstable') {'UNSTABLE'} else {'RELEASE'}

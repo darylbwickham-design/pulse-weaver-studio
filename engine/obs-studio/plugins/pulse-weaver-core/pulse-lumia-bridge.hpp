@@ -208,6 +208,7 @@ public:
 	}
 	void deliver(QJsonObject payload)
 	{
+		if (shuttingDown.load()) return;
 		const QString event = payload.value("event").toString();
 		if (event == "destination_state" || event == "recording_state") {
 			const QString key = payload.value("output").toString(payload.value("platform").toString());

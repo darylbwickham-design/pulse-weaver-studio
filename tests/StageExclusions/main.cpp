@@ -115,6 +115,41 @@ int main(int argc, char **argv)
 		      "frame sync repairs a stale 16:9 output transform without a Stage change");
 	}
 	obs_scene_release(landscapeCopy);
+	{
+		OBSSceneAutoRelease changingScene = obs_scene_create_private("Changing stage fixture");
+		OBSSceneItem first = obs_scene_add(changingScene, visual);
+		OBSSceneItem second = obs_scene_add(changingScene, visual);
+		OBSSceneAutoRelease changingCopy = obs_scene_duplicate(changingScene, "Changing stage copy", OBS_SCENE_DUP_PRIVATE_REFS);
+		std::vector<OBSSceneItem> copies;
+		obs_scene_enum_items(changingCopy, [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
+			static_cast<std::vector<OBSSceneItem> *>(opaque)->emplace_back(item);
+			return true;
+		}, &copies);
+		check(copies.size() == 2, "duplicate source occurrences copied separately");
+		PulseOutputSceneTransformSync transformSync(changingScene, changingCopy, {"Camera"});
+		transformSync.Synchronize();
+		check(!obs_sceneitem_visible(copies[0]) && !obs_sceneitem_visible(copies[1]), "both excluded occurrences stay hidden");
+		obs_source_set_name(visual, "Renamed camera");
+		transformSync.Synchronize();
+		check(!obs_sceneitem_visible(copies[0]) && !obs_sceneitem_visible(copies[1]),
+			"renaming an excluded source cannot reveal it in a live destination copy");
+		check(obs_sceneitem_visible(first) && obs_sceneitem_visible(second), "rename exclusion does not hide the original scene");
+		obs_sceneitem_remove(first);
+		transformSync.Synchronize();
+		unsigned remaining = 0;
+		obs_scene_enum_items(changingCopy, [](obs_scene_t *, obs_sceneitem_t *, void *opaque) {
+			++*static_cast<unsigned *>(opaque); return true;
+		}, &remaining);
+		check(remaining == 1, "removing a source occurrence removes exactly its active destination copy");
+		check(!obs_sceneitem_visible(copies[1]), "remaining excluded occurrence is still hidden");
+		obs_sceneitem_remove(second);
+		remaining = 0;
+		obs_scene_enum_items(changingCopy, [](obs_scene_t *, obs_sceneitem_t *, void *opaque) {
+			++*static_cast<unsigned *>(opaque); return true;
+		}, &remaining);
+		check(remaining == 0, "removed sources cannot remain on the output copy");
+		obs_source_set_name(visual, "Camera");
+	}
 	videoInfo.base_width = videoInfo.output_width = 1080;
 	videoInfo.base_height = videoInfo.output_height = 1920;
 	obs_canvas_t *portrait = obs_canvas_create("Portrait regression", &videoInfo, ACTIVATE | EPHEMERAL);

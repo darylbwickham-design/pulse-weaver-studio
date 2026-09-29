@@ -16,7 +16,8 @@ if (args.Length == 3 && args[0] == "/handle-child") {
 
 var temp=Path.Combine(Path.GetTempPath(),"PulseWeaver-recovery-tests-"+Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temp);
-void Check(bool ok,string message){if(!ok)throw new Exception(message);}
+int checks=0;
+void Check(bool ok,string message){checks++;if(!ok)throw new Exception(message);}
 void Put(string root,string path,string text){var dest=Path.Combine(root,path);Directory.CreateDirectory(Path.GetDirectoryName(dest)!);File.WriteAllText(dest,text);}
 void Seed(string root,string version){Put(root,"bin/64bit/PulseWeaverCore.exe","synthetic "+version);Put(root,"bin/64bit/pulseweaver-update.json",JsonSerializer.Serialize(new {tag="v"+version}));Put(root,"config/scenes.json","scene UUIDs, transforms, "+version);Put(root,"extra-plugin.dll","keep plugin");}
 try{
@@ -30,6 +31,30 @@ try{
    Check(File.ReadAllText(resultPath)=="CLEAN","installer child inherited an open log handle");
  }
  var root=Path.Combine(temp,"Studio");Seed(root,"1.12.7");
+ Check(Recovery.BackupDirectory(root+Path.DirectorySeparatorChar)==Recovery.BackupDirectory(root),"trailing separator placed backup inside installation");
+ Check(Recovery.WorkDirectory(root+Path.DirectorySeparatorChar)==Recovery.WorkDirectory(root),"trailing separator changed recovery journal location");
+ HashSet<string> ValidatePayload(params string[] paths) {
+   using var bytes=new MemoryStream();
+   using(var zip=new ZipArchive(bytes,ZipArchiveMode.Create,true)) foreach(var path in paths) zip.CreateEntry(path);
+   bytes.Position=0;using var input=new ZipArchive(bytes,ZipArchiveMode.Read);return PayloadPolicy.Validate(input,root);
+ }
+ var payloadFiles=ValidatePayload("bin/","bin/64bit/","bin/64bit/PulseWeaverCore.exe","data/pulse-weaver/youtube-desktop-client.json","portable_mode.txt");
+ Check(payloadFiles.Count==3,"valid payload lost files or included directory entries");
+ foreach(var unsafePath in new[]{"config/profiles.ini","config-backups/scenes.zip","config./profiles.ini","config /profiles.ini","../escape","C:/escape","/absolute","bin/file:stream","bin/NUL.txt","bin/COM1.dll","bin/../config/profiles.ini","bin//file"}) {
+   bool rejected=false;try{ValidatePayload(unsafePath);}catch(IOException){rejected=true;}Check(rejected,"unsafe payload path accepted: "+unsafePath);
+ }
+ foreach(var duplicate in new[]{new[]{"bin/file.dll","bin/FILE.dll"},new[]{"bin/file.dll","bin\\file.dll"},new[]{"bin/","bin"},new[]{"bin/file.dll","bin/file.dll/child"}}) {
+   bool rejected=false;try{ValidatePayload(duplicate);}catch(IOException){rejected=true;}Check(rejected,"duplicate or conflicting payload path accepted");
+ }
+ using(var bytes=new MemoryStream()) {
+   using(var zip=new ZipArchive(bytes,ZipArchiveMode.Create,true)) zip.CreateEntry("bin/linked").ExternalAttributes=0xa000<<16;
+   bytes.Position=0;using var input=new ZipArchive(bytes,ZipArchiveMode.Read);bool rejected=false;
+   try{PayloadPolicy.Validate(input,root);}catch(IOException){rejected=true;}Check(rejected,"symbolic link payload entry accepted");
+ }
+ if(args.Length==2 && args[0]=="/payload") {
+   using var archive=ZipFile.OpenRead(args[1]);
+   Check(PayloadPolicy.Validate(archive,root).Contains(Path.Combine("bin","64bit","PulseWeaverCore.exe")),"existing channel payload failed strict validation");
+ }
  Put(root,"config/obs-studio/logs/current.txt","preserve this log too");
  using(var activeLog=new FileStream(Path.Combine(root,"config/obs-studio/logs/current.txt"),FileMode.Open,FileAccess.Write,FileShare.ReadWrite)) {
    bool refused=false;try{Recovery.Backup(root);}catch(IOException){refused=true;}
@@ -70,7 +95,7 @@ try{
  foreach(var path in new[]{"../escape","C:/escape","/absolute","config/../escape","file:ads","bin/NUL.txt","dir./file"}){bool rejected=false;try{Recovery.SafePath(root,path);}catch(IOException){rejected=true;}Check(rejected,"unsafe path accepted: "+path);}
  var corrupt=Path.Combine(temp,"corrupt.zip");File.Copy(backup,corrupt);using(var zip=ZipFile.Open(corrupt,ZipArchiveMode.Update)){var item=zip.GetEntry("files/config/scenes.json")!;item.Delete();using var writer=new StreamWriter(zip.CreateEntry("files/config/scenes.json").Open());writer.Write("corrupt");}
  bool bad=false;try{Recovery.Restore(root,corrupt,(_,_)=>{});}catch(IOException){bad=true;}Check(bad,"corruption accepted");Check(Recovery.InstalledVersion(root)=="1.12.7","invalid backup changed installation");
- Console.WriteLine("PASS: clean launch excludes inheritable log handles; full backup, verified restore, rollback, config identity, obsolete files, concurrency, failure injection, interrupted recovery, unsafe paths and corruption rejection.");
+ Console.WriteLine($"PASS: {checks} checks: clean launch, full backup, verified restore, rollback, config identity, obsolete files, concurrency, failure injection, interrupted recovery, payload aliases, duplicate entries, unsafe paths and corruption rejection.");
  return 0;
 }catch(Exception ex){Console.Error.WriteLine(ex);return 1;}
 finally{Directory.Delete(temp,true);}
