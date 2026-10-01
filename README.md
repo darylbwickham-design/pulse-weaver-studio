@@ -1,8 +1,10 @@
-# Pulse Weaver Studio — 1.14 development branch
+# Pulse Weaver Studio — 1.14.0
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
-This branch contains the **1.14 unstable showcase** and local refinements under review. Source changes do not imply a new published build. Download published Windows installers from this repository's **Releases** page. Regular, alpha and unstable installers update the **Pulse Weaver** installation with backup and recovery support; the older **Pulse Weaver Public Preview** is a separate legacy installation. See [UPDATES.md](UPDATES.md) for channel behavior.
+**1.14.0** promotes the tested Studio showcase, automatic YouTube chat scanner, API sending/moderation and smooth chat delivery to the regular release. Download the Windows installer from this repository's **Releases** page. The earlier 1.14 alpha/unstable builds are superseded by this release and remain in the history for reference. Regular, alpha and unstable installations can update to 1.14.0 with backup and recovery support; the older **Pulse Weaver Public Preview** is a separate legacy installation. See [UPDATES.md](UPDATES.md) for channel behavior.
+
+Incoming YouTube chat automatically uses the web scanner in the combined chat box. Sending and moderation use the official API. No reader dropdown or API-receive fallback is exposed, and old reader preferences cannot re-enable API reception.
 
 ## Connecting your platforms
 

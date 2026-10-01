@@ -1,5 +1,7 @@
 # Release and alpha updates
 
+**1.14.0 is the regular release and supersedes its alpha and unstable previews.** Existing 1.14 preview installations are offered the final 1.14.0 release. The website presents one current Windows download; historical previews remain available for reference. Incoming YouTube chat always uses the scanner, while sending and moderation use the API, regardless of old reader preferences.
+
 The regular release remains on the release channel by default. Open **Studio → Updates → Include experimental alpha builds** to opt in, then check for updates. **Include unstable showcase builds** is a separate opt-in. Downloading a preview never installs it automatically.
 
 The alpha installer upgrades the regular **Pulse Weaver** installation for the current Windows account. It creates and verifies a full backup before replacement. Scenes, profiles, account credentials, browser state, API tokens and Lumia configuration remain in the same location. Alpha packages contain no personal scenes or settings. The isolated **Motion Preview** installation and its plugin remain separate.

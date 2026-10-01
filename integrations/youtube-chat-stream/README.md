@@ -1,6 +1,6 @@
 # YouTube streaming chat transport
 
-## Default web reader (unstable 12)
+## Incoming chat scanner (1.14.0)
 
 The frontend automatically supplies the new broadcast's video ID with `transport: "web"`. The helper reads the anonymous YouTube Live chat page and its continuations and emits messages into the existing combined chat UI. There is one reader per distinct active broadcast, with cancellation on stop and no automatic Data API receive fallback. It never receives OAuth credentials in this mode. Sending messages, deleting messages, timeouts and bans still use the official authenticated Data API in the native frontend.
 
@@ -8,9 +8,9 @@ Unstable 13 bounds web request delays to 1–2 seconds after nonempty batches an
 
 When broadcast creation omits the API live-chat ID, an independent metadata lookup enables sending and moderation without blocking the web reader or resetting its cursor. It stops after success or three attempts, spaced at least ten seconds apart, and backfills existing rows by their exact broadcast ID. It does not call the API chat-message reader.
 
-This is experimental and depends on YouTube's undocumented web page format. Public/unlisted chats must be anonymously accessible; private/restricted or disabled chats may be unavailable. Web HTTP requests still occur, but they do not call the YouTube Data API. API broadcast operations and user-requested sends/moderation still consume API quota. The API receive modes are explicit alternatives for subsequent broadcasts.
+This is experimental and depends on YouTube's undocumented web page format. Public/unlisted chats must be anonymously accessible; private/restricted or disabled chats may be unavailable. Web HTTP requests still occur, but they do not call the YouTube Data API. API broadcast operations and user-requested sends/moderation still consume API quota. There is no reader dropdown or automatic API receive fallback; legacy profile preferences are ignored.
 
-## Optional official API reader
+## Legacy API transport protocol support (not selected by the app)
 
 Uses Google's documented gRPC `youtube.api.v3.V3DataLiveChatMessageService/StreamList` method over verified TLS. The native frontend starts one process per unique active chat, passes its user access token through stdin, and consumes protobuf responses serialized as NDJSON on stdout. No credentials are written to disk or process arguments. Parent EOF cancels the connection; native cancellation also terminates the process.
 
@@ -20,6 +20,6 @@ Build: `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSin
 
 Offline protocol checks: `PulseWeaver.YouTubeChat.exe --self-test`. This does not contact YouTube or load application credentials.
 
-The native caller sets `persistent: true` so one helper/client/channel handles successive RPCs, retaining the latest cursor. `saveQuota: true` backs off after empty-message completions (5/10/20/30 seconds); false uses one second. An empty response batch is not a message. Actual RPC starts/completions are emitted as `_pulse` control records, separate from API response batches. Terminal errors return to the native controller; there is no REST polling fallback. The native controller refreshes expired credentials with a bounded retry and may start a replacement helper.
+The legacy API transport caller sets `persistent: true` so one helper/client/channel handles successive RPCs, retaining the latest cursor. `saveQuota: true` backs off after empty-message completions (5/10/20/30 seconds); false uses one second. An empty response batch is not a message. Actual RPC starts/completions are emitted as `_pulse` control records, separate from API response batches. Terminal errors return to the native controller; there is no REST polling fallback. The native controller refreshes expired credentials with a bounded retry and may start a replacement helper.
 
 Save quota is a user-visible latency tradeoff. Retaining a channel alone is not claimed to reduce API calls; the live Python reference also completed its quiet RPCs after roughly ten seconds. See `docs/PULSE-WEAVER-REQUEST-AUDIT-2026-09-29.md` for findings and verification limits.

@@ -50,6 +50,7 @@ int main(int argc, char **argv)
         result = run("web-quiet", 500);
         check(result.reason == "cancelled" && result.durationMs < 5000 && result.completedRpcs == 0);
         PulseYouTubeChat::Session session;
+        check(session.transport == "web");
         session.transport = "web";
         check(PulseYouTubeChat::needsControlLookup(session, 1000));
         session.controlLookupPending = true;

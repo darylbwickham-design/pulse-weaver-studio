@@ -31,6 +31,15 @@ int main(int argc, char **argv)
 	const Identity mac{"mac-arm64-preview", "mac-v0.1.0-alpha.1"};
 	const Identity alpha{"windows-alpha", "v1.13.0-alpha.1"};
 	const Identity unstable{"windows-unstable", "v1.14.0-unstable.1"};
+	const QJsonArray promoted{release({"windows-private", "v1.14.0"}),
+		release({"windows-unstable", "v1.14.0-unstable.12"}), release({"windows-alpha", "v1.14.0-alpha.4"})};
+	for (const auto &installed : {Identity{"windows-private", "v1.13.3"},
+		Identity{"windows-alpha", "v1.14.0-alpha.4"}, Identity{"windows-unstable", "v1.14.0-unstable.13"}}) {
+		const auto selected = selectRelease(promoted, installed, true, true);
+		check(selected && selected->identity.tag == "v1.14.0" && selected->identity.channel == "windows-private",
+			"1.14 final supersedes regular and preview installations even with previews enabled");
+	}
+	check(!selectRelease(promoted, {"windows-private", "v1.14.0"}, true, true), "Final stays current with historical previews listed");
 	check(assetName({"windows-private", "v1.13.0"}) == "PulseWeaver-Setup-1.13.0.exe",
 		"Promoted regular release uses its actual plain installer name");
 	check(assetName({"windows-private", "v1.12.17"}) == "PulseWeaver-Setup-1.12.17-BETA.exe",

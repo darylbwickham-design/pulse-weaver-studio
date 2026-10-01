@@ -20,7 +20,7 @@ struct Session {
 	bool outputPaused = false;
 	qint64 pollIntervalMs = 5000;
 	int emptyCompletions = 0;
-	QString transport; // Selected once per broadcast session; web/API cursors must never mix.
+	QString transport = "web"; // Reception always uses the scanner; API is reserved for control actions.
 	bool controlLookupPending = false;
 	int controlLookupAttempts = 0;
 	qint64 controlLookupAfterMs = 0;

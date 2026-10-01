@@ -1413,30 +1413,6 @@ void OBSBasic::InitPulseWeaverShell()
     });
     chatFilters->addWidget(timestamps);
     chatLayout->addLayout(chatFilters);
-	auto *youtubeChatPolicy = new QComboBox(chatPage);
-	youtubeChatPolicy->setObjectName("PulseWeaverYouTubeChatPolicy");
-	youtubeChatPolicy->setAccessibleName("YouTube chat reader");
-	youtubeChatPolicy->addItem("YouTube chat · Web reader (experimental)", "web");
-	youtubeChatPolicy->addItem("YouTube chat · API — Save quota", "api-save");
-	youtubeChatPolicy->addItem("YouTube chat · API — Responsive", "api-responsive");
-	const bool saveChatQuota = !Config() || !config_has_user_value(Config(), "PulseWeaver", "YouTubeChatSaveQuota") ||
-		config_get_bool(Config(), "PulseWeaver", "YouTubeChatSaveQuota");
-	const bool webChat = !Config() || !config_has_user_value(Config(), "PulseWeaver", "YouTubeWebChat") ||
-		config_get_bool(Config(), "PulseWeaver", "YouTubeWebChat");
-	youtubeChatPolicy->setCurrentIndex(webChat ? 0 : saveChatQuota ? 1 : 2);
-	youtubeChatPolicy->setEnabled(Config() != nullptr);
-	youtubeChatPolicy->setToolTip("Web reader automatically merges each broadcast's web chat into this feed without Data API chat reads. "
-		"Sending and moderation still use the API. Private or restricted web chats may be unavailable. "
-		"API Save quota can delay quiet chat by 30 seconds. Changes apply to the next broadcast; no automatic API fallback.");
-	connect(youtubeChatPolicy, &QComboBox::currentIndexChanged, this, [this, youtubeChatPolicy] {
-		if (!Config()) return;
-		const QString choice = youtubeChatPolicy->currentData().toString();
-		config_set_bool(Config(), "PulseWeaver", "YouTubeWebChat", choice == "web");
-		if (choice != "web") config_set_bool(Config(), "PulseWeaver", "YouTubeChatSaveQuota", choice == "api-save");
-		config_save_safe(Config(), "tmp", nullptr);
-		if (pulseChatStatus) pulseChatStatus->setText("YouTube chat reader saved for the next broadcast.");
-	});
-	chatLayout->addWidget(youtubeChatPolicy);
 	chatLayout->addWidget(chatFeed, 1);
 	auto *chatToolbar = new QHBoxLayout;
 	chatToolbar->setContentsMargins(0, 0, 0, 0);
@@ -2825,17 +2801,10 @@ void OBSBasic::InitPulseWeaverShell()
 			it.value()->setValue(PulseOutputBitrates::Read(Config(), it.key()));
 	};
 	auto *profileReadyTimer = new QTimer(recordPath);
-	connect(profileReadyTimer, &QTimer::timeout, recordPath, [this, refreshProfileSettings, youtubeChatPolicy, activeProfile = static_cast<config_t *>(nullptr)]() mutable {
+	connect(profileReadyTimer, &QTimer::timeout, recordPath, [this, refreshProfileSettings, activeProfile = static_cast<config_t *>(nullptr)]() mutable {
 		if (!Config() || Config() == activeProfile) return;
 		activeProfile = Config();
 		refreshProfileSettings();
-		const QSignalBlocker chatPolicyBlocker(youtubeChatPolicy);
-		const bool saveQuota = !config_has_user_value(Config(), "PulseWeaver", "YouTubeChatSaveQuota") ||
-			config_get_bool(Config(), "PulseWeaver", "YouTubeChatSaveQuota");
-		const bool web = !config_has_user_value(Config(), "PulseWeaver", "YouTubeWebChat") ||
-			config_get_bool(Config(), "PulseWeaver", "YouTubeWebChat");
-		youtubeChatPolicy->setCurrentIndex(web ? 0 : saveQuota ? 1 : 2);
-		youtubeChatPolicy->setEnabled(true);
 	});
 	profileReadyTimer->start(500);
 	connect(settings, &QPushButton::clicked, recordPath, refreshProfileSettings);
@@ -5607,8 +5576,7 @@ void OBSBasic::PreparePulseWeaverYouTube()
 		streamKey = stream.name;
 		preparedSessions.insert(route, {broadcast.id, broadcast.liveChatId});
 		preparedSessions[route].outputPaused = true;
-		preparedSessions[route].transport = !config_has_user_value(Config(), "PulseWeaver", "YouTubeWebChat") ||
-			config_get_bool(Config(), "PulseWeaver", "YouTubeWebChat") ? "web" : "api";
+		preparedSessions[route].transport = "web";
 		return true;
 	};
 	const QString firstRoute = mode == "vertical" ? "vertical" : "horizontal";
@@ -6081,9 +6049,7 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 		if (sessionIt == pulseYouTubeChatSessions.end() || sessionIt->outputPaused || sessionIt->suspended || sessionIt->requestPending ||
 		    sessionIt->nextRequestMs > now)
 			continue;
-		const bool webReader = sessionIt->transport == "web";
-		if (paused && !webReader) continue;
-		if (webReader) {
+		{
 			bool owned = false;
 			for (auto other = pulseYouTubeChatSessions.cbegin(); other != pulseYouTubeChatSessions.cend(); ++other)
 				if (other.key() != route && !other->outputPaused && other->broadcastId == sessionIt->broadcastId &&
@@ -6094,99 +6060,39 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 		    PulseYouTubeChat::owner(pulseYouTubeChatSessions, sessionIt->liveChatId) != route) continue;
 		sessionIt->requestPending = true;
 		const QString broadcastId = sessionIt->broadcastId;
-		const QString chatId = sessionIt->liveChatId;
 		const QString page = sessionIt->pageToken;
 		QPointer<OBSBasic> guard(this);
-		if (chatId.isEmpty() && !webReader) {
-			sessionIt->nextRequestMs = now + 2000;
-			const bool started = pulseStartYouTubeChatWorker(pulseYouTubeChatWorkers,
-				[guard, auth, route, broadcastId, generation, cancellation, requestEpoch] {
-				QString resolvedChatId;
-				QString resolveError, resolveReason;
-				bool found = false;
-				{
-					std::lock_guard<std::mutex> chatRequestLock(pulseYouTubeChatRequestMutex);
-					if (cancellation->load(std::memory_order_acquire) != requestEpoch)
-						return;
-					found = auth->GetLiveChatId(broadcastId, resolvedChatId);
-					if (!found) {
-						resolveError = auth->GetLastError();
-						resolveReason = auth->GetLastErrorReason();
-					}
-				}
-				if (!guard)
-					return;
-				QMetaObject::invokeMethod(guard, [guard, route, broadcastId, generation, found, resolvedChatId,
-						resolveError, resolveReason, auth] {
-					if (!guard || guard->pulseYouTubeChatGeneration != generation)
-						return;
-					auto current = guard->pulseYouTubeChatSessions.find(route);
-					if (current == guard->pulseYouTubeChatSessions.end() || current->broadcastId != broadcastId)
-						return;
-					current->requestPending = false;
-					if (!found || resolvedChatId.isEmpty()) {
-						PulseYouTubeChat::failed(*current, resolveReason, resolveError,
-							QDateTime::currentMSecsSinceEpoch(), auth->ApiBlockedUntil());
-						if (guard->pulseChatStatus) {
-							const QString routeName = route == "vertical" ? "9:16" : "16:9";
-							guard->pulseChatStatus->setText(resolveError.isEmpty() ?
-								"YouTube " + routeName + " chat is not available yet; retrying with increasing delays." :
-								"YouTube " + routeName + (current->suspended ? " chat unavailable: " : " chat retry delayed: ") + resolveError);
-						}
-						return;
-					}
-					current->liveChatId = resolvedChatId;
-					current->pageToken.clear();
-					current->nextRequestMs = 0;
-					current->failures = 0;
-					current->lastError.clear();
-					guard->RefreshPulseWeaverChatComposer();
-					guard->FlushPulseWeaverYouTubeChatQueue();
-				}, Qt::QueuedConnection);
-			});
-			if (!started) {
-				sessionIt->requestPending = false;
-				sessionIt->nextRequestMs = now + 2000;
-				if (pulseChatStatus)
-					pulseChatStatus->setText("YouTube chat worker could not start; retrying.");
-			}
-			continue;
-		}
-
-		const bool saveChatQuota = !config_has_user_value(Config(), "PulseWeaver", "YouTubeChatSaveQuota") ||
-			config_get_bool(Config(), "PulseWeaver", "YouTubeChatSaveQuota");
 		const bool started = pulseStartYouTubeChatWorker(pulseYouTubeChatWorkers,
-			[guard, auth, route, broadcastId, chatId, page, generation, cancellation, requestEpoch, saveChatQuota, webReader] {
-			auto cancelled = [auth, cancellation, requestEpoch, webReader] {
-				return cancellation->load(std::memory_order_acquire) != requestEpoch ||
-				       (!webReader && auth->ApiBlockedUntil() > QDateTime::currentMSecsSinceEpoch());
+			[guard, auth, route, broadcastId, page, generation, cancellation, requestEpoch] {
+			auto cancelled = [cancellation, requestEpoch] {
+				return cancellation->load(std::memory_order_acquire) != requestEpoch;
 			};
-			auto deliver = [guard, auth, route, broadcastId, chatId, generation, webReader]
+			auto deliver = [guard, route, broadcastId, generation]
 				(const QString &next, const QVector<YoutubeChatEvent> &events, bool finished,
 				 const QString &reason, qint64 durationMs, bool receivedBatch = false) {
 				if (!guard) return;
-				QMetaObject::invokeMethod(guard, [guard, auth, route, broadcastId, chatId, generation,
-					next, events, finished, reason, durationMs, receivedBatch, webReader] {
+				QMetaObject::invokeMethod(guard, [guard, route, broadcastId, generation,
+					next, events, finished, reason, durationMs, receivedBatch] {
 					if (!guard || guard->pulseYouTubeChatGeneration != generation) return;
 					auto currentSession = guard->pulseYouTubeChatSessions.find(route);
 					if (currentSession == guard->pulseYouTubeChatSessions.end() ||
-					    currentSession->broadcastId != broadcastId || (!webReader && currentSession->liveChatId != chatId)) return;
+					    currentSession->broadcastId != broadcastId) return;
 					const qint64 now = QDateTime::currentMSecsSinceEpoch();
 					if (finished) currentSession->requestPending = false;
 					if (!next.isEmpty()) {
 						for (auto &session : guard->pulseYouTubeChatSessions)
-							if ((webReader ? session.broadcastId == broadcastId : session.liveChatId == chatId) &&
+							if (session.broadcastId == broadcastId &&
 							    session.transport == currentSession->transport) session.pageToken = next;
 					}
 					if (!reason.isEmpty()) {
                         if (durationMs >= 60000) currentSession->failures = 0;
 						PulseYouTubeChat::failed(*currentSession, reason, "YouTube chat: " + reason,
-							now, webReader ? 0 : auth->ApiBlockedUntil());
+							now, 0);
 						if (PulseYouTubeStream::terminal(reason)) currentSession->suspended = true;
-						if (webReader && currentSession->failures >= 5) currentSession->suspended = true;
-						if (webReader && reason == "webChatRateLimited") currentSession->nextRequestMs = now + 300000;
+						if (currentSession->failures >= 5) currentSession->suspended = true;
+						if (reason == "webChatRateLimited") currentSession->nextRequestMs = now + 300000;
 						for (auto &session : guard->pulseYouTubeChatSessions) {
-							if ((webReader ? session.broadcastId == broadcastId : session.liveChatId == chatId) &&
+							if (session.broadcastId == broadcastId &&
 							    session.transport == currentSession->transport) {
 								session.suspended = currentSession->suspended;
 								session.nextRequestMs = currentSession->nextRequestMs;
@@ -6194,12 +6100,8 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 						}
 						guard->RefreshPulseWeaverChatComposer();
 						if (guard->pulseChatStatus) {
-							const QString pause = webReader ? QString() : auth->ApiPauseMessage();
-							guard->pulseChatStatus->setText(!pause.isEmpty() ? pause :
-								webReader ? "YouTube web chat unavailable (" + reason + "). Retrying is bounded; API reading remains off." :
-								currentSession->suspended ? "YouTube chat unavailable (" + reason +
-								"). Check the connection details in the log." :
-								"YouTube chat connection interrupted; reconnecting with a delay.");
+							guard->pulseChatStatus->setText("YouTube chat scanner unavailable (" + reason +
+								(currentSession->suspended ? "). Scanner stopped; check the connection log." : "). Retrying with a delay."));
 						}
 						return;
 					}
@@ -6255,8 +6157,7 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
             auto receive = [&](const QString &next, const QVector<YoutubeChatEvent> &events) {
                 deliver(next, events, false, {}, lifetime.elapsed());
             };
-            const auto result = webReader ? auth->ReadWebChatMessages(broadcastId, page, cancelled, receive) :
-                auth->StreamLiveChatMessages(chatId, page, cancelled, receive, saveChatQuota);
+            const auto result = auth->ReadWebChatMessages(broadcastId, page, cancelled, receive);
             deliver({}, {}, true, result.reason,
                 result.durationMs, result.received);
 
