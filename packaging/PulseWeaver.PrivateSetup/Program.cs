@@ -261,6 +261,16 @@ internal static class Program
         form.Show();
         Application.DoEvents();
         var result = form.LayoutCheckCode();
+        if (result == 0) result = form.AgreementCheckCode();
+        if (Environment.GetEnvironmentVariable("PULSE_SETUP_PREVIEW") is { Length: > 0 } preview) {
+            using var bitmap = new Bitmap(form.Width, form.Height);
+            form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+            bitmap.Save(preview, System.Drawing.Imaging.ImageFormat.Png);
+        }
+        foreach (var size in new[] { form.MinimumSize, new Size(1040, 880) }) {
+            form.Size = size; Application.DoEvents();
+            if (result == 0) result = form.LayoutCheckCode();
+        }
         form.Hide();
         return result;
     }
@@ -422,16 +432,31 @@ internal sealed record LanguageOption(string Code, string Name)
     public override string ToString() => Name;
 }
 
+internal sealed class SetupButton : Button
+{
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        if (Enabled) return;
+        using var background = new SolidBrush(BackColor);
+        e.Graphics.FillRectangle(background, ClientRectangle);
+        TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, Color.FromArgb(157, 168, 190),
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+    }
+}
+
 internal sealed class SetupForm : Form
 {
     readonly ProgressBar progress = new() { Minimum = 0, Maximum = 100, Height = 12, Dock = DockStyle.Top, Style = ProgressBarStyle.Continuous };
     readonly Label status = new() { Text = "Ready to install", ForeColor = Color.FromArgb(150, 166, 194), AutoSize = true };
-    readonly Button install = new() { Text = "INSTALL " + Program.ProductLabel.ToUpperInvariant(), Width = 260, Height = 44, BackColor = Color.FromArgb(126, 45, 190), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+    readonly Button install = new SetupButton() { Text = "INSTALL " + Program.ProductLabel.ToUpperInvariant(), Width = 260, Height = 44, BackColor = Color.FromArgb(126, 45, 190), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
     readonly Button cancel = new() { Text = "CANCEL", Width = 110, Height = 44, BackColor = Color.FromArgb(30, 38, 58), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
     readonly Button uninstall = new() { Text = "UNINSTALL", Width = 125, Height = 44, BackColor = Color.FromArgb(69, 25, 35), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Visible = false };
     readonly CheckBox desktop = new() { Text = "Create a desktop shortcut", Checked = true, AutoSize = true, ForeColor = Color.FromArgb(220, 226, 240) };
     readonly CheckBox launch = new() { Text = "Launch " + Program.ProductLabel + " after installation", Checked = true, AutoSize = true, ForeColor = Color.FromArgb(220, 226, 240) };
-    readonly ComboBox language = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList };
+    readonly ComboBox language = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.White, ForeColor = Color.FromArgb(25, 32, 45) };
+    readonly CheckBox agreement = new() { Text = "I agree to the Terms of Service and acknowledge the Privacy Policy.", Checked = false, AutoSize = true };
+    readonly LinkLabel policies = new() { Text = "Terms of Service    Privacy Policy", AutoSize = true, LinkColor = Color.FromArgb(103, 215, 238), ActiveLinkColor = Color.White, VisitedLinkColor = Color.FromArgb(103, 215, 238) };
     readonly Button backup = new() { Text = "BACK UP NOW", AutoSize = true, Height = 40 };
     readonly Button restore = new() { Text = "RESTORE BACKUP / ROLL BACK", AutoSize = true, Height = 40 };
     readonly Label recoveryHint = new() { AutoSize = true, MaximumSize = new Size(700, 0), ForeColor = Color.FromArgb(180,195,215) };
@@ -449,39 +474,93 @@ internal sealed class SetupForm : Form
 			uninstall.Visible = true;
 			status.Text = update ? $"{Program.ProductLabel} {installedVersion} is installed — update available" : $"{Program.ProductLabel} {Program.Version} is installed — repair or uninstall";
 		}
-        Text = $"{Program.ProductLabel} {Program.Version} Setup & Recovery"; ClientSize = new Size(780, 760); MinimumSize = new Size(800, 800); StartPosition = FormStartPosition.CenterScreen; BackColor = Color.FromArgb(8, 11, 20); ForeColor = Color.White; Font = new Font("Segoe UI", 10); AutoScaleMode = AutoScaleMode.Dpi; FormBorderStyle = FormBorderStyle.Sizable; MaximizeBox = true;
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(30), RowCount = 7, ColumnCount = 1, BackColor = BackColor }; root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 102)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 88)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 110)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 125)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70)); root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var brand = new Panel { Dock = DockStyle.Fill };
+        Text = $"{Program.ProductLabel} {Program.Version} Setup";
+        ClientSize = new Size(760, 720); MinimumSize = new Size(680, 620);
+        StartPosition = FormStartPosition.CenterScreen; BackColor = Color.FromArgb(15, 19, 29);
+        ForeColor = Color.FromArgb(230, 235, 244); Font = new Font("Segoe UI", 10); AutoScaleMode = AutoScaleMode.Dpi;
+        var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        var root = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 0, Padding = new Padding(28, 24, 28, 12) };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        void Add(Control control) {
+            var row = root.RowCount++; root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            control.Margin = new Padding(0, 0, 0, 16); control.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+            root.Controls.Add(control, 0, row);
+        }
+        var brand = new Panel { Height = 68 };
         var logo = Icon.ExtractAssociatedIcon(Application.ExecutablePath)?.ToBitmap();
-        brand.Controls.Add(new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(56, 56), Location = new Point(0, 4) });
-        brand.Controls.Add(new Label { Text = "PULSE WEAVER", Font = new Font("Segoe UI", 18, FontStyle.Bold), ForeColor = Color.White, AutoSize = true, Location = new Point(72, 6) });
-        brand.Controls.Add(new Label { Text = $"{Program.InstallerSubtitle}  ·  {Program.Version}", Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Color.FromArgb(251, 146, 60), AutoSize = true, Location = new Point(74, 40) });
-        root.Controls.Add(brand);
-        var heading = new Panel { Dock = DockStyle.Fill }; heading.Controls.Add(new Label { Text = "Everything your show needs. Together.", Font = new Font("Segoe UI", 23, FontStyle.Bold), ForeColor = Color.White, AutoSize = true, Location = new Point(0, 4) }); heading.Controls.Add(new Label { Text = "Install the performer-first Lights, Camera and Action studio for this Windows account.", Font = new Font("Segoe UI", 10), ForeColor = Color.FromArgb(160, 175, 200), AutoSize = true, Location = new Point(2, 50) }); root.Controls.Add(heading);
-        var destination = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(17, 23, 39), Padding = new Padding(14) }; destination.Controls.Add(new Label { Text = "INSTALL LOCATION", Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Color.FromArgb(34, 211, 238), AutoSize = true, Location = new Point(14, 12) }); destination.Controls.Add(new Label { Text = Program.InstallDirectory, ForeColor = Color.FromArgb(215, 224, 240), AutoEllipsis = true, Size = new Size(555, 25), Location = new Point(14, 38) }); root.Controls.Add(destination);
+        brand.Controls.Add(new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(48, 48), Location = new Point(0, 4) });
+        brand.Controls.Add(new Label { Text = "Pulse Weaver", Font = new Font("Segoe UI", 20, FontStyle.Bold), AutoSize = true, Location = new Point(64, 0) });
+        brand.Controls.Add(new Label { Text = $"{Program.InstallerSubtitle}  ·  {Program.Version}", Font = new Font("Segoe UI", 9), ForeColor = Color.FromArgb(155, 171, 194), AutoSize = true, Location = new Point(66, 38) });
+        Add(brand);
+        Add(new Label { Text = existingInstall ? "Update your studio" : "Set up your studio", Font = new Font("Segoe UI", 18, FontStyle.Bold), AutoSize = true });
+        var destination = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Padding = new Padding(16), BackColor = Color.FromArgb(24, 31, 44) };
+        destination.Controls.Add(new Label { Text = "INSTALL LOCATION", Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Color.FromArgb(103, 215, 238), AutoSize = true, Margin = new Padding(0, 0, 0, 8) });
+        destination.Controls.Add(new Label { Text = Program.InstallDirectory, Dock = DockStyle.Top, AutoSize = false, Height = 26, AutoEllipsis = true, Margin = Padding.Empty }); Add(destination);
         foreach (var item in Program.AvailableLanguages()) language.Items.Add(item);
+        language.DrawMode = DrawMode.OwnerDrawFixed;
+        language.DrawItem += (_, e) => {
+            e.DrawBackground();
+            var selected = e.Index >= 0 ? language.Items[e.Index] : language.SelectedItem;
+            TextRenderer.DrawText(e.Graphics, selected?.ToString() ?? "English", e.Font, e.Bounds,
+                (e.State & DrawItemState.Selected) != 0 ? SystemColors.HighlightText : language.ForeColor,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            e.DrawFocusRectangle();
+        };
         var configuredLanguage = Program.ConfiguredLanguage();
         language.SelectedItem = language.Items.Cast<LanguageOption>().FirstOrDefault(item => item.Code.Equals(configuredLanguage, StringComparison.OrdinalIgnoreCase)) ?? language.Items.Cast<LanguageOption>().First(item => item.Code.Equals("en-US", StringComparison.OrdinalIgnoreCase));
-        var languageRow = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
-        languageRow.Controls.Add(new Label { Text = "Interface language", AutoSize = true, ForeColor = Color.FromArgb(220, 226, 240), Margin = new Padding(0, 5, 12, 0) }); languageRow.Controls.Add(language);
-        var options = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(0, 8, 0, 0) }; options.Controls.Add(languageRow); options.Controls.Add(desktop); options.Controls.Add(launch); root.Controls.Add(options);
-        recoveryHint.Text="Updates automatically back up app files, scenes, overlays and settings. Restore replaces app + settings together. Backups contain private account data: keep them private on this Windows account.\nSaved outside the install folder: " + Recovery.BackupDirectory(Program.InstallDirectory);
-        var recoveryPanel=new FlowLayoutPanel { Dock=DockStyle.Fill, FlowDirection=FlowDirection.TopDown, WrapContents=false };
-        var recoveryButtons=new FlowLayoutPanel { AutoSize=true, WrapContents=false }; recoveryButtons.Controls.Add(backup); recoveryButtons.Controls.Add(restore);
-        recoveryPanel.Controls.Add(recoveryButtons); recoveryPanel.Controls.Add(recoveryHint); root.Controls.Add(recoveryPanel);
-        backup.Enabled=existingInstall; backup.Click+=async (_,_)=>await MaintenanceAsync("backup"); restore.Click+=async (_,_)=>await RestoreAsync();
-        status.AutoSize=false; status.Size=new Size(710,45); status.AutoEllipsis=true;
-        if(Recovery.Pending(Program.InstallDirectory)) {install.Text="RECOVER INTERRUPTED SETUP";status.Text="An interrupted operation must be recovered before continuing.";}
-        else if(downgrade) status.Text="A newer version is installed. Select its pre-upgrade backup to roll back safely.";
-        FormClosing+=(_,e)=>{ if(busy)e.Cancel=true; };
-        var progressPanel = new Panel { Dock = DockStyle.Fill }; progressPanel.Controls.Add(progress); status.Location = new Point(0, 18); progressPanel.Controls.Add(status); root.Controls.Add(progressPanel);
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft }; install.FlatAppearance.BorderColor = Color.FromArgb(244, 114, 182); cancel.FlatAppearance.BorderColor = Color.FromArgb(62, 75, 105); uninstall.FlatAppearance.BorderColor = Color.FromArgb(248, 113, 113); install.Click += async (_, _) => await InstallAsync(); cancel.Click += (_, _) => Close(); uninstall.Click += (_, _) => { if (Program.Uninstall() == 0) Close(); }; actions.Controls.Add(install); actions.Controls.Add(uninstall); actions.Controls.Add(cancel); root.Controls.Add(actions); Controls.Add(root);
+        var options = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        var languageRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 0, 10) };
+        languageRow.Controls.Add(new Label { Text = "Interface language", AutoSize = true, Margin = new Padding(0, 5, 16, 0) });
+        languageRow.Controls.Add(language); options.Controls.Add(languageRow); options.Controls.Add(desktop); options.Controls.Add(launch); Add(options);
+        var legal = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(16), BackColor = Color.FromArgb(24, 31, 44) };
+        agreement.Margin = new Padding(0, 0, 0, 8); legal.Controls.Add(agreement);
+        policies.Links.Add(0, 16, "https://www.lumi-con.com/pulse-weaver/terms/");
+        policies.Links.Add(20, 14, "https://www.lumi-con.com/pulse-weaver/privacy/");
+        policies.LinkClicked += (_, e) => {
+            try { Process.Start(new ProcessStartInfo((string)e.Link!.LinkData!) { UseShellExecute = true }); }
+            catch (Exception ex) { MessageBox.Show(this, "Could not open the policy link. " + ex.Message, "Policy link", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+        };
+        legal.Controls.Add(policies); Add(legal); agreement.CheckedChanged += (_, _) => RefreshInstallEnabled();
+        legal.SizeChanged += (_, _) => agreement.MaximumSize = new Size(Math.Max(200, legal.ClientSize.Width - legal.Padding.Horizontal), 0);
+        var recoveryPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        recoveryPanel.Controls.Add(new Label { Text = "Backup & recovery", Font = new Font("Segoe UI", 10, FontStyle.Bold), AutoSize = true });
+        var recoveryButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = true };
+        backup.Text = "Back up now"; restore.Text = "Restore backup…"; recoveryButtons.Controls.Add(backup); recoveryButtons.Controls.Add(restore);
+        recoveryPanel.Controls.Add(recoveryButtons); recoveryHint.Text = "Updates back up your app and settings automatically. Keep recovery backups private.";
+        recoveryPanel.Controls.Add(recoveryHint); Add(recoveryPanel);
+        backup.Enabled = existingInstall; backup.Click += async (_, _) => await MaintenanceAsync("backup"); restore.Click += async (_, _) => await RestoreAsync();
+        scroll.Controls.Add(root); shell.Controls.Add(scroll, 0, 0);
+        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(28, 8, 28, 14), BackColor = Color.FromArgb(20, 26, 38) };
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 8)); footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 32)); footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        progress.Height = 4; progress.Dock = DockStyle.Fill; footer.Controls.Add(progress, 0, 0);
+        var progressPanel = new Panel { Dock = DockStyle.Fill }; status.AutoSize = false; status.Dock = DockStyle.Fill; status.AutoEllipsis = true;
+        progressPanel.Controls.Add(status); footer.Controls.Add(progressPanel, 0, 1);
+        if (Recovery.Pending(Program.InstallDirectory)) { install.Text = "Recover setup"; status.Text = "Recover the interrupted operation before continuing."; }
+        else if (downgrade) status.Text = "A newer version is installed. Restore its pre-upgrade backup to roll back.";
+        else if (!existingInstall) status.Text = "Review the policies and tick the agreement box to install.";
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        install.Text = existingInstall ? install.Text.Replace("UPDATE TO", "Update to").Replace("REPAIR", "Repair") : "Install Pulse Weaver";
+        install.Width = 220; cancel.Text = "Cancel"; uninstall.Text = "Uninstall";
+        foreach (var button in new[] { install, cancel, uninstall, backup, restore }) {
+            button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderSize = 1; button.FlatAppearance.BorderColor = Color.FromArgb(57, 69, 89);
+            button.BackColor = Color.FromArgb(29, 38, 54); button.ForeColor = ForeColor; button.Cursor = Cursors.Hand; button.Padding = new Padding(8, 0, 8, 0);
+        }
+        install.BackColor = Color.FromArgb(100, 65, 194); install.FlatAppearance.BorderColor = install.BackColor;
+        install.Click += async (_, _) => await InstallAsync(); cancel.Click += (_, _) => Close(); uninstall.Click += (_, _) => { if (Program.Uninstall() == 0) Close(); };
+        actions.Controls.Add(install); actions.Controls.Add(cancel); actions.Controls.Add(uninstall); footer.Controls.Add(actions, 0, 2);
+        shell.Controls.Add(footer, 0, 1); Controls.Add(shell); FormClosing += (_, e) => { if (busy) e.Cancel = true; };
+        AcceptButton = install; CancelButton = cancel; RefreshInstallEnabled();
     }
 
     async Task InstallAsync()
     {
         if(Recovery.Pending(Program.InstallDirectory)) {await MaintenanceAsync("recover");return;}
         if(downgrade) {await RestoreAsync();return;}
+        if (!agreement.Checked) { agreement.Focus(); return; }
         var selectedLanguage=(language.SelectedItem as LanguageOption)?.Code ?? "en-US";
         var createDesktop=desktop.Checked; var launchAfter=launch.Checked;
         await RunAsync(()=>Program.Install(createDesktop,launchAfter,selectedLanguage,Report),"Installation complete. Your recovery backups are in:\n"+Recovery.BackupDirectory(Program.InstallDirectory));
@@ -511,7 +590,26 @@ internal sealed class SetupForm : Form
         catch(Exception ex){status.Text="Operation stopped. Backups and recovery data were retained.";MessageBox.Show(this,ex.Message,"Pulse Weaver maintenance",MessageBoxButtons.OK,MessageBoxIcon.Error);}
         finally {if(!IsDisposed)SetBusy(false);}
     }
-    void SetBusy(bool value) {busy=value;install.Enabled=cancel.Enabled=uninstall.Enabled=restore.Enabled=language.Enabled=desktop.Enabled=launch.Enabled=!value;backup.Enabled=!value&&File.Exists(Program.AppPath);}
+    void RefreshInstallEnabled()
+    {
+        install.Enabled = !busy && (agreement.Checked || downgrade || Recovery.Pending(Program.InstallDirectory));
+        install.BackColor = install.Enabled ? Color.FromArgb(100, 65, 194) : Color.FromArgb(43, 49, 66);
+        install.FlatAppearance.BorderColor = install.BackColor;
+    }
+    void SetBusy(bool value) {busy=value;cancel.Enabled=uninstall.Enabled=restore.Enabled=language.Enabled=desktop.Enabled=launch.Enabled=agreement.Enabled=policies.Enabled=!value;backup.Enabled=!value&&File.Exists(Program.AppPath);RefreshInstallEnabled();}
+
+    internal int AgreementCheckCode()
+    {
+        if (agreement.Checked || policies.Links.Count != 2) return 47;
+        if (!downgrade && !Recovery.Pending(Program.InstallDirectory)) {
+            if (install.Enabled) return 48;
+            agreement.Checked = true; if (!install.Enabled) return 49;
+            SetBusy(true); if (install.Enabled || agreement.Enabled) return 50;
+            SetBusy(false); if (!install.Enabled) return 54;
+            agreement.Checked = false; if (install.Enabled) return 55;
+        }
+        return 0;
+    }
 
     internal int LayoutCheckCode()
     {
@@ -520,9 +618,11 @@ internal sealed class SetupForm : Form
         if (actionArea is null || progressArea is null) return 41;
         if (actionArea.ClientSize.Height < install.Height) return 42;
         if (actionArea.ClientSize.Height < cancel.Height) return 43;
+        if (actionArea.Controls.Cast<Control>().Any(control => control.Visible && (control.Right > actionArea.ClientSize.Width || control.Bottom > actionArea.ClientSize.Height))) return 56;
         if (progressArea.ClientSize.Height < status.Bottom) return 44;
         if (language.SelectedItem is not LanguageOption || Program.AvailableLanguages().FirstOrDefault()?.Code != "en-US") return 45;
         if(recoveryHint.Parent is null || recoveryHint.Bottom>recoveryHint.Parent.ClientSize.Height) return 46;
+        if (agreement.Parent is null || agreement.Right > agreement.Parent.ClientSize.Width - agreement.Parent.Padding.Right) return 57;
         return 0;
     }
 }
