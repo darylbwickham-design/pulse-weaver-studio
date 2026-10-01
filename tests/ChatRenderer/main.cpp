@@ -79,6 +79,20 @@ int main(int argc, char **argv)
         app.processEvents();
         check(feed.itemAt(QPoint(2, 2)) == anchor && feed.visualItemRect(anchor).top() == anchorOffset, "Paused scrollback jumped");
         check(feed.property("pulseWeaverUnreadCount").toInt() == 1, "Unread count missing");
+        {
+            PulseChat::AppendBatch batch(&feed);
+            for (int i=0; i<25; ++i) PulseChat::append(&feed, "youtube", "Viewer", "Burst " + QString::number(i));
+        }
+        app.processEvents();
+        check(feed.itemAt(QPoint(2, 2)) == anchor && feed.visualItemRect(anchor).top() == anchorOffset, "Batched scrollback jumped");
+        check(feed.property("pulseWeaverUnreadCount").toInt() == 26 && feed.updatesEnabled(), "Batch unread or painting state lost");
+        feed.setProperty("pulseWeaverChatAutoScroll", true); feed.scrollToBottom();
+        {
+            PulseChat::AppendBatch batch(&feed);
+            for (int i=0; i<25; ++i) PulseChat::append(&feed, "youtube", "Viewer", "Follow burst " + QString::number(i));
+        }
+        app.processEvents();
+        check(PulseChat::atBottom(&feed) && feed.property("pulseWeaverUnreadCount").toInt() == 26, "Batch auto-follow lost");
         for (int i = 0; i < 510; ++i) PulseChat::append(&feed, "twitch", "Viewer", "Bounded history " + QString::number(i));
         std::cerr << "History fixture ready\n";
         check(feed.count() == 500, "History limit exceeded");

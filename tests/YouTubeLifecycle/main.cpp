@@ -50,6 +50,16 @@ int main(int argc, char **argv)
         result = run("web-quiet", 500);
         check(result.reason == "cancelled" && result.durationMs < 5000 && result.completedRpcs == 0);
         PulseYouTubeChat::Session session;
+        session.transport = "web";
+        check(PulseYouTubeChat::needsControlLookup(session, 1000));
+        session.controlLookupPending = true;
+        check(!PulseYouTubeChat::needsControlLookup(session, 1000));
+        session.controlLookupPending = false; session.controlLookupAttempts = 3;
+        check(!PulseYouTubeChat::needsControlLookup(session, 1000));
+        session.controlLookupAttempts = 0; session.controlLookupAfterMs = 2000;
+        check(!PulseYouTubeChat::needsControlLookup(session, 1000));
+        session.liveChatId = "resolved";
+        check(!PulseYouTubeChat::needsControlLookup(session, 3000));
         session.pageToken = "saved";
         session.failures = 2;
         PulseYouTubeChat::completed(session, true, 1000);

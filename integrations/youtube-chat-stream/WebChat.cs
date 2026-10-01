@@ -194,6 +194,28 @@ internal static class WebChat
         }
         return Encoding.UTF8.GetString(bytes.ToArray());
     }
+    internal static int RequestDelay(Batch batch) => Math.Min(batch.DelayMs, batch.Items.Count > 0 ? 2000 : 5000);
+
+    // Drain one bounded response before requesting another. The cursor is committed only
+    // after its final chunk, so cancellation cannot skip messages still in this buffer.
+    internal static async Task<int> EmitSmoothed(Batch batch, Action<string> emit,
+        Func<int, CancellationToken, Task> delay, CancellationToken stop)
+    {
+        int size = Math.Max(1, (batch.Items.Count + 15) / 16);
+        int elapsed = 0;
+        for (int offset = 0; offset < Math.Max(1, batch.Items.Count); offset += size) {
+            stop.ThrowIfCancellationRequested();
+            if (offset > 0) { await delay(40, stop); elapsed += 40; }
+            stop.ThrowIfCancellationRequested();
+            var items = new JsonArray();
+            for (int i = offset; i < Math.Min(offset + size, batch.Items.Count); ++i)
+                items.Add(batch.Items[i]?.DeepClone());
+            var output = new JsonObject { ["items"] = items };
+            if (offset + size >= batch.Items.Count) output["nextPageToken"] = batch.Continuation;
+            emit(output.ToJsonString());
+        }
+        return elapsed;
+    }
     internal static async Task Run(string videoId, string resume, Action<string> emit, CancellationToken stop,
         HttpMessageHandler? handler = null, Func<int, CancellationToken, Task>? delay = null, int maximumCalls = int.MaxValue)
     {
@@ -221,11 +243,12 @@ internal static class WebChat
             var raw = await Read(http, request, stop);
             if (raw.StartsWith(")]}'", StringComparison.Ordinal)) raw = raw[(raw.IndexOf('\n') + 1)..];
             var batch = Parse(JsonNode.Parse(raw) as JsonObject ?? throw new Failure("webChatChanged"));
-            emit(JsonSerializer.Serialize(new { _pulse = "webRequestCompleted", attempt, messages = batch.Items.Count, delayMs = batch.DelayMs }));
-            emit(new JsonObject { ["nextPageToken"] = batch.Continuation, ["items"] = batch.Items }.ToJsonString());
+            int requestDelay = RequestDelay(batch);
+            emit(JsonSerializer.Serialize(new { _pulse = "webRequestCompleted", attempt, messages = batch.Items.Count, delayMs = requestDelay, serverDelayMs = batch.DelayMs }));
+            int drainedMs = await EmitSmoothed(batch, emit, delay, stop);
             if (batch.Continuation.Length == 0) throw new Failure("liveChatEnded");
             cursor = batch.Continuation;
-            if (attempt < maximumCalls) await delay(batch.DelayMs, stop);
+            if (attempt < maximumCalls) await delay(Math.Max(0, requestDelay - drainedMs), stop);
         }
     }
 }

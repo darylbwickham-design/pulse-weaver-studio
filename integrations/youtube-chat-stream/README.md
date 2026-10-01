@@ -2,7 +2,11 @@
 
 ## Default web reader (unstable 12)
 
-The frontend automatically supplies the new broadcast's video ID with `transport: "web"`. The helper reads the anonymous YouTube Live chat page and its continuations, respects the server's delay, and emits messages into the existing combined chat UI. There is one reader per distinct active broadcast, with cancellation on stop and no automatic Data API receive fallback. It never receives OAuth credentials in this mode. Sending messages, deleting messages, timeouts and bans still use the official authenticated Data API in the native frontend.
+The frontend automatically supplies the new broadcast's video ID with `transport: "web"`. The helper reads the anonymous YouTube Live chat page and its continuations and emits messages into the existing combined chat UI. There is one reader per distinct active broadcast, with cancellation on stop and no automatic Data API receive fallback. It never receives OAuth credentials in this mode. Sending messages, deleting messages, timeouts and bans still use the official authenticated Data API in the native frontend.
+
+Unstable 13 bounds web request delays to 1–2 seconds after nonempty batches and 1–5 seconds after empty batches (using smaller server hints within those bounds). Responses are drained in at most 16 chunks, 40 ms apart, adding at most 600 ms of intentional smoothing. That delay is subtracted from the next request wait, and each batch drains before the next request, preventing a growing buffer. Resume cursors advance only after the final chunk. HTTP 429 still triggers the existing five-minute cooldown.
+
+When broadcast creation omits the API live-chat ID, an independent metadata lookup enables sending and moderation without blocking the web reader or resetting its cursor. It stops after success or three attempts, spaced at least ten seconds apart, and backfills existing rows by their exact broadcast ID. It does not call the API chat-message reader.
 
 This is experimental and depends on YouTube's undocumented web page format. Public/unlisted chats must be anonymously accessible; private/restricted or disabled chats may be unavailable. Web HTTP requests still occur, but they do not call the YouTube Data API. API broadcast operations and user-requested sends/moderation still consume API quota. The API receive modes are explicit alternatives for subsequent broadcasts.
 

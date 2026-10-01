@@ -224,6 +224,7 @@ enum PulseChatDataRole {
 };
 
 constexpr int PulseChatLiveChatIdRole = Qt::UserRole + 180;
+constexpr int PulseChatBroadcastIdRole = Qt::UserRole + 181;
 
 static QColor pulseChatColour(const QString &platform, const QString &requested)
 {
@@ -263,11 +264,12 @@ static void pulseApplyChatFilter(QListWidget *feed, const QString &filter)
 static void pulseAppendUnifiedChat(QListWidget *feed, const QString &platform, const QString &user,
     const QString &message, const QString &colour = {}, const QStringList &badges = {},
     const QString &userId = {}, const QString &messageId = {}, bool own = false,
-    const QString &liveChatId = {}, const QString &route = {})
+    const QString &liveChatId = {}, const QString &route = {}, const QString &broadcastId = {})
 {
     auto *item = PulseChat::append(feed, platform, user, message, colour, badges, {}, userId, messageId, own, {}, route);
 	if (item && !liveChatId.isEmpty())
 		item->setData(PulseChatLiveChatIdRole, liveChatId);
+	if (item && !broadcastId.isEmpty()) item->setData(PulseChatBroadcastIdRole, broadcastId);
 }
 bool pulseEncoderAvailable(const char *requestedId)
 {
@@ -6027,7 +6029,7 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 		pulseYouTubeChatCancellation->fetch_add(1, std::memory_order_acq_rel);
 		++pulseYouTubeChatGeneration;
 		pulseYouTubeChatWorkers->waitUntilIdle();
-		for (auto &session : pulseYouTubeChatSessions) session.requestPending = false;
+		for (auto &session : pulseYouTubeChatSessions) { session.requestPending = false; session.controlLookupPending = false; }
 	}
 	if (!primaryActive && !secondaryActive) return;
 	const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -6043,6 +6045,39 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 	const QStringList routes = pulseYouTubeChatSessions.keys();
 	for (const QString &route : routes) {
 		auto sessionIt = pulseYouTubeChatSessions.find(route);
+		if (sessionIt != pulseYouTubeChatSessions.end() && !paused && PulseYouTubeChat::needsControlLookup(*sessionIt, now)) {
+			const QString broadcast = sessionIt->broadcastId;
+			sessionIt->controlLookupPending = true;
+			++sessionIt->controlLookupAttempts;
+			QPointer<OBSBasic> lookupGuard(this);
+			const bool lookupStarted = pulseStartYouTubeChatWorker(pulseYouTubeChatWorkers,
+				[lookupGuard, auth, route, broadcast, generation, cancellation, requestEpoch] {
+					QString resolved;
+					{
+						std::lock_guard<std::mutex> lock(pulseYouTubeChatRequestMutex);
+						if (cancellation->load(std::memory_order_acquire) != requestEpoch) return;
+						auth->GetLiveChatId(broadcast, resolved);
+					}
+					if (!lookupGuard) return;
+					QMetaObject::invokeMethod(lookupGuard, [lookupGuard, route, broadcast, generation, resolved] {
+						if (!lookupGuard || lookupGuard->pulseYouTubeChatGeneration != generation) return;
+						auto current = lookupGuard->pulseYouTubeChatSessions.find(route);
+						if (current == lookupGuard->pulseYouTubeChatSessions.end() || current->broadcastId != broadcast) return;
+						current->controlLookupPending = false;
+						current->controlLookupAfterMs = QDateTime::currentMSecsSinceEpoch() + 10000;
+						if (resolved.isEmpty()) return;
+						current->liveChatId = resolved;
+						if (lookupGuard->pulseChatFeed) for (int i = 0; i < lookupGuard->pulseChatFeed->count(); ++i) {
+							auto *row = lookupGuard->pulseChatFeed->item(i);
+							if (row->data(PulseChatBroadcastIdRole).toString() == broadcast)
+								row->setData(PulseChatLiveChatIdRole, resolved);
+						}
+						lookupGuard->RefreshPulseWeaverChatComposer();
+						lookupGuard->FlushPulseWeaverYouTubeChatQueue();
+					}, Qt::QueuedConnection);
+				});
+			if (!lookupStarted) { sessionIt->controlLookupPending = false; sessionIt->controlLookupAfterMs = now + 10000; }
+		}
 		if (sessionIt == pulseYouTubeChatSessions.end() || sessionIt->outputPaused || sessionIt->suspended || sessionIt->requestPending ||
 		    sessionIt->nextRequestMs > now)
 			continue;
@@ -6135,7 +6170,7 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 					if (!guard || guard->pulseYouTubeChatGeneration != generation) return;
 					auto currentSession = guard->pulseYouTubeChatSessions.find(route);
 					if (currentSession == guard->pulseYouTubeChatSessions.end() ||
-					    currentSession->broadcastId != broadcastId || currentSession->liveChatId != chatId) return;
+					    currentSession->broadcastId != broadcastId || (!webReader && currentSession->liveChatId != chatId)) return;
 					const qint64 now = QDateTime::currentMSecsSinceEpoch();
 					if (finished) currentSession->requestPending = false;
 					if (!next.isEmpty()) {
@@ -6176,6 +6211,7 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 						if (recovered) guard->RefreshPulseWeaverChatComposer();
 					}
 					if (finished) PulseYouTubeChat::completed(*currentSession, receivedBatch, now);
+					PulseChat::AppendBatch appendBatch(events.isEmpty() ? nullptr : guard->pulseChatFeed.data());
 					for (const YoutubeChatEvent &event : events) {
 						if (event.type == "tombstone") {
 							if (!event.id.isEmpty()) PulseChat::markDeleted(guard->pulseChatFeed, "youtube", event.id);
@@ -6207,7 +6243,7 @@ void OBSBasic::PollPulseWeaverYouTubeChat()
 							PulseChat::markDeleted(guard->pulseChatFeed, "youtube", {}, event.banned_user_id);
 						if (guard->pulseChatFeed && (event.type == "textMessageEvent" || event.web_display))
 							pulseAppendUnifiedChat(guard->pulseChatFeed, "youtube", event.user, event.message,
-								event.user_colour, event.badges, event.user_id, event.id, false, chatId, route);
+								event.user_colour, event.badges, event.user_id, event.id, false, currentSession->liveChatId, route, broadcastId);
 					}
 					if (guard->pulseYouTubeSeenMessageIds.size() > 4000)
 						guard->pulseYouTubeSeenMessageIds.clear();

@@ -13,6 +13,7 @@
 #include <QNetworkReply>
 #include <QPainter>
 #include <QPointer>
+#include <QPersistentModelIndex>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSet>
@@ -256,6 +257,44 @@ public:
     }
 };
 
+// One layout per delivered chunk, preserving scrollback and unread accounting.
+class AppendBatch {
+    QPointer<QListWidget> feed;
+    QPersistentModelIndex anchor;
+    int offset = 0;
+    bool follow = false, updates = false, outer = false;
+public:
+    explicit AppendBatch(QListWidget *value) : feed(value) {
+        if (!feed) return;
+        const int depth = feed->property("pulseChatBatchDepth").toInt();
+        feed->setProperty("pulseChatBatchDepth", depth + 1);
+        outer = depth == 0;
+        if (!outer) return;
+        follow = feed->property("pulseWeaverChatAutoScroll").toBool() && atBottom(feed);
+        feed->setProperty("pulseChatBatchFollow", follow);
+        if (auto *item = feed->itemAt(QPoint(2, 2))) {
+            anchor = feed->model()->index(feed->row(item), 0);
+            offset = feed->visualItemRect(item).top();
+        }
+        updates = feed->updatesEnabled();
+        feed->setUpdatesEnabled(false);
+    }
+    AppendBatch(const AppendBatch &) = delete;
+    AppendBatch &operator=(const AppendBatch &) = delete;
+    ~AppendBatch() {
+        if (!feed) return;
+        feed->setProperty("pulseChatBatchDepth", feed->property("pulseChatBatchDepth").toInt() - 1);
+        if (!outer) return;
+        feed->doItemsLayout();
+        if (follow) feed->scrollToBottom();
+        else if (anchor.isValid()) {
+            feed->scrollToItem(feed->item(anchor.row()), QAbstractItemView::PositionAtTop);
+            feed->verticalScrollBar()->setValue(feed->verticalScrollBar()->value() - offset);
+        }
+        feed->setUpdatesEnabled(updates);
+    }
+};
+
 inline QListWidgetItem *append(QListWidget *feed, const QString &platform, const QString &user, const QString &message,
     const QString &colour = {}, const QStringList &badges = {}, const QHash<QString, QUrl> &urls = {},
     const QString &userId = {}, const QString &messageId = {}, bool own = false, const QJsonArray &fragments = {},
@@ -265,8 +304,10 @@ inline QListWidgetItem *append(QListWidget *feed, const QString &platform, const
     if (!feed || message.trimmed().isEmpty()) return nullptr;
     if (!messageId.isEmpty()) for (int i = feed->count() - 1; i >= 0; --i)
         if (feed->item(i)->data(Platform).toString() == platform && feed->item(i)->data(MessageId).toString() == messageId) return nullptr;
-    const bool follow = feed->property("pulseWeaverChatAutoScroll").toBool() && atBottom(feed);
-    auto *anchor = feed->itemAt(QPoint(2, 2));
+    const bool batching = feed->property("pulseChatBatchDepth").toInt() > 0;
+    const bool follow = batching ? feed->property("pulseChatBatchFollow").toBool() :
+        feed->property("pulseWeaverChatAutoScroll").toBool() && atBottom(feed);
+    auto *anchor = batching ? nullptr : feed->itemAt(QPoint(2, 2));
     const int offset = anchor ? feed->visualItemRect(anchor).top() : 0;
     auto *item = new QListWidgetItem;
     item->setData(Platform, platform); item->setData(User, user); item->setData(UserId, userId);
@@ -288,8 +329,8 @@ inline QListWidgetItem *append(QListWidget *feed, const QString &platform, const
         if (anchor == feed->item(0)) anchor = feed->item(1);
         delete feed->takeItem(0);
     }
-    feed->doItemsLayout();
-    if (follow) feed->scrollToBottom();
+    if (!batching) feed->doItemsLayout();
+    if (follow) { if (!batching) feed->scrollToBottom(); }
     else {
         if (anchor) { feed->scrollToItem(anchor, QAbstractItemView::PositionAtTop); feed->verticalScrollBar()->setValue(feed->verticalScrollBar()->value() - offset); }
         if (!item->isHidden()) {

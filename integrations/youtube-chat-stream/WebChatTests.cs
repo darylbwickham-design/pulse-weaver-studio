@@ -45,9 +45,32 @@ internal static class WebChatTests
             (ms, _) => { delays.Add(ms); return Task.CompletedTask; }, 2);
         Check(fake.Requests == 3 && fake.MaxInFlight == 1);
         Check(fake.Cursors.SequenceEqual(new[] { "all", "next" }));
-        Check(delays.SequenceEqual(new[] {6000}));
+        Check(delays.Count == 9 && delays.Count(x => x == 40) == 8 && delays.Contains(1840));
         Check(output.Count(x => x.Contains("webRequestStarted")) == 3);
         Check(!output.Any(x => x.Contains("rpcStarted")));
+        var chunks = output.Select(x => JsonNode.Parse(x)!).Where(x => x["items"] is not null).ToArray();
+        Check(chunks.Length == 10 && chunks.Count(x => x["nextPageToken"] is not null) == 2);
+        Check(chunks.SelectMany(x => x["items"]!.AsArray()).Take(5).Select(x => WebChat.Str(x?["id"]))
+            .SequenceEqual(parsed.Items.Select(x => WebChat.Str(x?["id"]))));
+        var burst = new JsonArray();
+        for (int i=0; i<1000; ++i) burst.Add(new JsonObject { ["id"] = i.ToString() });
+        var burstOutput = new List<string>();
+        var smoothing = await WebChat.EmitSmoothed(new(burst, "final", 10000), burstOutput.Add,
+            (_, _) => Task.CompletedTask, CancellationToken.None);
+        Check(smoothing == 600 && burstOutput.Count == 16);
+        Check(burstOutput.Sum(x => JsonNode.Parse(x)!["items"]!.AsArray().Count) == 1000);
+        Check(burstOutput.Take(15).All(x => JsonNode.Parse(x)!["nextPageToken"] is null));
+        Check(WebChat.RequestDelay(new(new JsonArray(), "", 10000)) == 5000);
+        Check(WebChat.RequestDelay(new(burst, "", 1000)) == 1000);
+        using var duringBurst = new CancellationTokenSource();
+        var interrupted = new List<string>();
+        try {
+            await WebChat.EmitSmoothed(new(burst, "must-not-commit", 10000), interrupted.Add,
+                (_, _) => { duringBurst.Cancel(); return Task.CompletedTask; }, duringBurst.Token);
+            throw new Exception("Cancelled smoothing continued");
+        } catch (OperationCanceledException) {
+            Check(interrupted.Count == 1 && JsonNode.Parse(interrupted[0])!["nextPageToken"] is null);
+        }
         using var cancelled = new CancellationTokenSource();
         using var stopping = new Server();
         try {

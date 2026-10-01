@@ -21,7 +21,16 @@ struct Session {
 	qint64 pollIntervalMs = 5000;
 	int emptyCompletions = 0;
 	QString transport; // Selected once per broadcast session; web/API cursors must never mix.
+	bool controlLookupPending = false;
+	int controlLookupAttempts = 0;
+	qint64 controlLookupAfterMs = 0;
 };
+
+inline bool needsControlLookup(const Session &session, qint64 now)
+{
+	return session.transport == "web" && !session.outputPaused && session.liveChatId.isEmpty() &&
+		!session.controlLookupPending && session.controlLookupAttempts < 3 && now >= session.controlLookupAfterMs;
+}
 
 inline void failed(Session &session, const QString &reason, const QString &error, qint64 now, qint64 blockedUntil)
 {
