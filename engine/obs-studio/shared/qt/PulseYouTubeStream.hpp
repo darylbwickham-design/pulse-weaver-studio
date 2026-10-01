@@ -25,6 +25,7 @@ struct Result {
     int messages = 0;
     int rpcCount = 0;
     int completedRpcs = 0;
+    int completedWebRequests = 0;
 };
 struct AuthRetry {
     bool used = false;
@@ -40,7 +41,8 @@ struct AuthRetry {
 };
 inline bool terminal(const QString &reason)
 {
-    return reason == "unauthenticated" || reason == "invalidArgument" || reason == "streamUnsupported";
+    return reason == "unauthenticated" || reason == "invalidArgument" || reason == "streamUnsupported" ||
+        reason == "webChatChanged" || reason == "webChatRestricted";
 }
 inline QString eventType(QString type)
 {
@@ -74,7 +76,8 @@ inline Result run(const QString &executable, const QJsonObject &input,
     lifetime.start();
     QByteArray pending;
     const QSet<QString> reasons{"quotaExceeded", "rateLimitExceeded", "unauthenticated", "forbidden",
-        "liveChatEnded", "liveChatNotFound", "streamUnsupported", "invalidArgument", "streamUnavailable", "deadlineExceeded", "cancelled"};
+        "liveChatEnded", "liveChatNotFound", "streamUnsupported", "invalidArgument", "streamUnavailable", "deadlineExceeded", "cancelled",
+        "webChatUnavailable", "webChatChanged", "webChatRestricted", "webChatRateLimited"};
     while (true) {
         if (cancelled()) { result.reason = "cancelled"; break; }
         child.waitForReadyRead(250);
@@ -97,6 +100,10 @@ inline Result run(const QString &executable, const QJsonObject &input,
                 } else if (type == "rpcCompleted" && object.value("grpcStatus").toInt(-1) == 0) {
                     result.grpcStatus = 0;
                     ++result.completedRpcs;
+                } else if (type == "webRequestCompleted" && input.value("transport").toString() == "web") {
+                    ++result.completedWebRequests;
+                } else if (type == "webRequestStarted" && input.value("transport").toString() == "web") {
+                    // Web requests have their own diagnostics; never count them as Data API RPCs.
                 } else {
                     result.reason = "streamUnavailable"; break;
                 }
@@ -131,7 +138,7 @@ inline Result run(const QString &executable, const QJsonObject &input,
     child.closeWriteChannel();
     if (!child.waitForFinished(1000)) { child.kill(); child.waitForFinished(1000); }
     result.durationMs = lifetime.elapsed();
-    if (result.reason.isEmpty() && result.grpcStatus != 0) result.reason = "streamUnavailable";
+    if (result.reason.isEmpty() && result.grpcStatus != 0 && result.completedWebRequests == 0) result.reason = "streamUnavailable";
     return result;
 }
 }

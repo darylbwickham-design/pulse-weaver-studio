@@ -24,7 +24,7 @@ int main(int argc, char **argv)
         auto run = [&](QString mode, int cancelAfter = -1) {
             QElapsedTimer timer; timer.start();
             return PulseYouTubeStream::run(QString::fromLocal8Bit(argv[1]),
-                {{"mode", mode}, {"pageToken", "resume"}},
+                {{"mode", mode}, {"pageToken", "resume"}, {"transport", mode.startsWith("web") ? "web" : "api"}},
                 [&] { return cancelAfter >= 0 && timer.elapsed() >= cancelAfter; },
                 [&](const QJsonObject &batch) { if (batch.contains("nextPageToken")) cursors << batch.value("nextPageToken").toString(); });
         };
@@ -43,6 +43,12 @@ int main(int argc, char **argv)
         check(run("offline").reason == "liveChatEnded");
         result = run("quiet", 1000);
         check(result.reason == "cancelled" && result.batches == 2 && result.durationMs < 5000);
+        result = run("web");
+        check(result.reason.isEmpty() && result.batches == 1 && result.completedWebRequests == 1);
+        check(result.rpcCount == 0 && result.completedRpcs == 0 && result.grpcStatus == -1);
+        check(cursors.last() == "web-next");
+        result = run("web-quiet", 500);
+        check(result.reason == "cancelled" && result.durationMs < 5000 && result.completedRpcs == 0);
         PulseYouTubeChat::Session session;
         session.pageToken = "saved";
         session.failures = 2;

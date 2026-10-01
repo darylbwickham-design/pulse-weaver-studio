@@ -20,6 +20,7 @@ struct Session {
 	bool outputPaused = false;
 	qint64 pollIntervalMs = 5000;
 	int emptyCompletions = 0;
+	QString transport; // Selected once per broadcast session; web/API cursors must never mix.
 };
 
 inline void failed(Session &session, const QString &reason, const QString &error, qint64 now, qint64 blockedUntil)

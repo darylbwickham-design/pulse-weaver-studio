@@ -9,6 +9,13 @@ int main()
     std::getline(std::cin, line);
     auto input = QJsonDocument::fromJson(QByteArray::fromStdString(line)).object();
     auto mode = input.value("mode").toString();
+    if (mode == "web" || mode == "web-quiet") {
+        std::cout << "{\"_pulse\":\"webRequestStarted\",\"attempt\":1}\n"
+            << "{\"_pulse\":\"webRequestCompleted\",\"attempt\":1}\n"
+            << "{\"nextPageToken\":\"web-next\",\"items\":[]}\n" << std::flush;
+        if (mode == "web-quiet") QThread::sleep(30);
+        return 0;
+    }
     if (mode == "silent") return 0;
     if (mode == "incomplete-second-rpc") {
         std::cout << "{\"_pulse\":\"rpcCompleted\",\"grpcStatus\":0}\n"

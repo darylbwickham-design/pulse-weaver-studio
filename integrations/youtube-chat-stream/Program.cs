@@ -59,6 +59,15 @@ internal static class Program
             if (line == null || line.Length > 65536) return 2;
             using var input = JsonDocument.Parse(line);
             var root = input.RootElement;
+            if (root.TryGetProperty("transport", out var transport) && transport.GetString() == "web")
+            {
+                using var webStop = new CancellationTokenSource();
+                _ = Task.Run(async () => { await Console.In.ReadLineAsync(); webStop.Cancel(); });
+                await WebChat.Run(root.GetProperty("broadcastId").GetString() ?? "",
+                    root.TryGetProperty("pageToken", out var webCursor) ? webCursor.GetString() ?? "" : "",
+                    Console.WriteLine, webStop.Token);
+                return 0;
+            }
             var token = root.GetProperty("token").GetString();
             var chat = root.GetProperty("chatId").GetString();
             if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(chat)) return 2;
@@ -92,6 +101,7 @@ internal static class Program
             Console.WriteLine(JsonSerializer.Serialize(new { _pulse = "rpcCompleted", grpcStatus = (int)call.GetStatus().StatusCode }));
             return 0;
         }
+        catch (WebChat.Failure error) { Error(error.Reason); return 0; }
         catch (RpcException error) { Error(Reason(error), (int)error.StatusCode); return 0; }
         catch (OperationCanceledException) { Error("cancelled"); return 0; }
         catch { Error("streamUnavailable"); return 1; }

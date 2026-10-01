@@ -1,5 +1,13 @@
 # YouTube streaming chat transport
 
+## Default web reader (unstable 12)
+
+The frontend automatically supplies the new broadcast's video ID with `transport: "web"`. The helper reads the anonymous YouTube Live chat page and its continuations, respects the server's delay, and emits messages into the existing combined chat UI. There is one reader per distinct active broadcast, with cancellation on stop and no automatic Data API receive fallback. It never receives OAuth credentials in this mode. Sending messages, deleting messages, timeouts and bans still use the official authenticated Data API in the native frontend.
+
+This is experimental and depends on YouTube's undocumented web page format. Public/unlisted chats must be anonymously accessible; private/restricted or disabled chats may be unavailable. Web HTTP requests still occur, but they do not call the YouTube Data API. API broadcast operations and user-requested sends/moderation still consume API quota. The API receive modes are explicit alternatives for subsequent broadcasts.
+
+## Optional official API reader
+
 Uses Google's documented gRPC `youtube.api.v3.V3DataLiveChatMessageService/StreamList` method over verified TLS. The native frontend starts one process per unique active chat, passes its user access token through stdin, and consumes protobuf responses serialized as NDJSON on stdout. No credentials are written to disk or process arguments. Parent EOF cancels the connection; native cancellation also terminates the process.
 
 `stream_list.proto` is from https://developers.google.com/youtube/v3/live/streaming-live-chat (retrieved 2026-09-28). Google's code samples are licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0 . Other files follow the repository license.

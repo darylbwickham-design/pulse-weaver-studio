@@ -595,7 +595,7 @@ static void parseYouTubeChatEvents(const Json &json, QVector<YoutubeChatEvent> &
 			QString::fromStdString(snippet["superChatDetails"]["amountDisplayString"].string_value()),
 			QString::fromStdString(author["channelId"].string_value()), {}, badges,
 			QString::fromStdString(snippet["messageDeletedDetails"]["deletedMessageId"].string_value()),
-			QString::fromStdString(snippet["userBannedDetails"]["bannedUserDetails"]["channelId"].string_value())});
+			QString::fromStdString(snippet["userBannedDetails"]["bannedUserDetails"]["channelId"].string_value()), item["webDisplay"].bool_value()});
 	}
 }
 
@@ -619,6 +619,31 @@ bool YoutubeApiWrappers::GetLiveChatMessages(const QString &chat_id, QString &pa
         return false;
     }
 	return true;
+}
+
+PulseYouTubeStream::Result YoutubeApiWrappers::ReadWebChatMessages(const QString &broadcastId,
+	const QString &page, const std::function<bool()> &cancelled,
+	const std::function<void(const QString &, const QVector<YoutubeChatEvent> &)> &batch)
+{
+	static std::atomic<unsigned long long> sequence{0};
+	const auto session = ++sequence;
+	blog(LOG_INFO, "[YouTube web chat] session=%llu started; Data API chat reader disabled", session);
+	const auto result = PulseYouTubeStream::run(QCoreApplication::applicationDirPath() + "/youtube-chat/PulseWeaver.YouTubeChat.exe",
+		{{"transport", "web"}, {"broadcastId", broadcastId}, {"pageToken", page}}, cancelled,
+		[&](const QJsonObject &object) {
+			std::string error;
+			const auto json = Json::parse(QJsonDocument(object).toJson(QJsonDocument::Compact).toStdString(), error);
+			QVector<YoutubeChatEvent> events;
+			parseYouTubeChatEvents(json, events);
+			batch(object.value("nextPageToken").toString(), events);
+		}, [session](const QJsonObject &diagnostic) {
+			blog(LOG_INFO, "[YouTube web chat] session=%llu event=%s request=%d messages=%d delay_ms=%d", session,
+				diagnostic.value("_pulse").toString().toUtf8().constData(), diagnostic.value("attempt").toInt(),
+				diagnostic.value("messages").toInt(), diagnostic.value("delayMs").toInt());
+		});
+	blog(LOG_INFO, "[YouTube web chat] session=%llu ended outcome=%s", session,
+		result.reason.isEmpty() ? "completed" : result.reason.toUtf8().constData());
+	return result;
 }
 
 PulseYouTubeStream::Result YoutubeApiWrappers::StreamLiveChatMessages(const QString &chatId,

@@ -38,6 +38,7 @@ internal static class SelfTest
         ++checks;
         SessionTest().GetAwaiter().GetResult();
         checks += 8;
+        WebChatTests.Run().GetAwaiter().GetResult();
         Console.WriteLine($"PASS: {checks} streaming protocol checks");
         return 0;
     }

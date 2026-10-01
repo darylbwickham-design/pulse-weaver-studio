@@ -52,6 +52,7 @@ struct YoutubeChatEvent {
 	QStringList badges;
 	QString deleted_message_id;
 	QString banned_user_id;
+	bool web_display = false;
 };
 
 bool IsYouTubeService(const std::string &service);
@@ -92,6 +93,9 @@ public:
 	PulseYouTubeStream::Result StreamLiveChatMessages(const QString &chatId, const QString &page,
 		const std::function<bool()> &cancelled,
 		const std::function<void(const QString &, const QVector<YoutubeChatEvent> &)> &batch, bool saveQuota = true);
+	PulseYouTubeStream::Result ReadWebChatMessages(const QString &broadcastId, const QString &page,
+		const std::function<bool()> &cancelled,
+		const std::function<void(const QString &, const QVector<YoutubeChatEvent> &)> &batch);
 	bool DeleteLiveChatMessage(const QString &message_id);
 	bool ModerateLiveChatUser(const QString &chat_id, const QString &channel_id, int duration_seconds);
 	bool SendLiveChatMessage(const QString &chat_id, const QString &message);
