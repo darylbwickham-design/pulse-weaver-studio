@@ -46,6 +46,8 @@ struct mp_media_info {
 	bool reconnecting;
 	bool request_preload;
 	bool full_decode;
+	/* Share immutable decoded data; each player retains its own clock/cursors. */
+	bool share_cache;
 };
 
 extern media_playback_t *media_playback_create(const struct mp_media_info *info);

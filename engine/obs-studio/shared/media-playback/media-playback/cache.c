@@ -16,6 +16,9 @@
 
 #include <media-io/audio-io.h>
 #include <util/platform.h>
+#include <util/dstr.h>
+#include <sys/stat.h>
+#include <libavutil/hash.h>
 
 #include "media-playback.h"
 #include "cache.h"
@@ -31,6 +34,77 @@ extern bool mp_media_reset(mp_media_t *m);
 static bool mp_cache_reset(mp_cache_t *c);
 
 static int64_t base_sys_ts = 0;
+
+/* Preloaded stingers can have several independent output players. Sharing
+ * their immutable frame data avoids decoding and retaining the entire movie
+ * once per canvas. Entries live only while at least one player owns them. */
+struct mp_shared_cache {
+	struct mp_shared_cache *next;
+	char *key;
+	size_t refs;
+	DARRAY(struct obs_source_frame) video_frames;
+	DARRAY(struct obs_source_audio) audio_segments;
+	int64_t final_v_duration, final_a_duration, start_time, media_duration;
+	bool has_video, has_audio;
+};
+static pthread_mutex_t shared_mutex = PTHREAD_MUTEX_INITIALIZER;
+static struct mp_shared_cache *shared_caches;
+
+static char *shared_cache_key(const struct mp_media_info *info)
+{
+	struct stat file;
+	if (!info->share_cache || !info->is_local_file || !info->path || os_stat(info->path, &file) != 0)
+		return NULL;
+	/* Timestamps can have coarse resolution. Include file content so replacing
+	 * a clip with another of the same size cannot reuse stale decoded frames. */
+	FILE *input = os_fopen(info->path, "rb");
+	struct AVHashContext *hash = NULL;
+	if (!input)
+		return NULL;
+	if (av_hash_alloc(&hash, "sha256") < 0) {
+		fclose(input);
+		return NULL;
+	}
+	av_hash_init(hash);
+	uint8_t buffer[65536], digest[65];
+	size_t bytes;
+	while ((bytes = fread(buffer, 1, sizeof(buffer), input)) != 0)
+		av_hash_update(hash, buffer, bytes);
+	bool read_error = ferror(input) != 0;
+	fclose(input);
+	av_hash_final_hex(hash, digest, sizeof(digest));
+	av_hash_freep(&hash);
+	if (read_error)
+		return NULL;
+	const char *format = info->format ? info->format : "";
+	const char *options = info->ffmpeg_options ? info->ffmpeg_options : "";
+	struct dstr key = {0};
+	dstr_printf(&key, "%zu:%s%zu:%s%zu:%s|%s|%lld|%lld|%lld|%d|%d|%d|%d|%d",
+		strlen(info->path), info->path, strlen(format), format, strlen(options), options,
+		(const char *)digest,
+		(long long)file.st_size, (long long)file.st_mtime, (long long)file.st_ctime,
+		info->speed, info->force_range, info->is_linear_alpha, info->hardware_decoding, info->buffering);
+	return key.array;
+}
+
+static void shared_cache_release(struct mp_shared_cache *shared)
+{
+	pthread_mutex_lock(&shared_mutex);
+	if (--shared->refs == 0) {
+		struct mp_shared_cache **entry = &shared_caches;
+		while (*entry != shared) entry = &(*entry)->next;
+		*entry = shared->next;
+		for (size_t i = 0; i < shared->video_frames.num; i++)
+			obs_source_frame_free(&shared->video_frames.array[i]);
+		for (size_t i = 0; i < shared->audio_segments.num; i++)
+			bfree((void *)shared->audio_segments.array[i].data[0]);
+		da_free(shared->video_frames);
+		da_free(shared->audio_segments);
+		bfree(shared->key);
+		bfree(shared);
+	}
+	pthread_mutex_unlock(&shared_mutex);
+}
 
 #define v_eof(c) (c->cur_v_idx == c->video_frames.num)
 #define a_eof(c) (c->cur_a_idx == c->audio_segments.num)
@@ -138,6 +212,50 @@ bool mp_cache_decode(mp_cache_t *c)
 fail:
 	mp_media_free(m);
 	return success;
+}
+
+static bool mp_cache_decode_shared(mp_cache_t *c)
+{
+	if (!c->shared_key)
+		return mp_cache_decode(c);
+	/* Only decoding threads wait here. Keeping publication under the lock
+	 * prevents parallel players from allocating duplicate full-movie buffers. */
+	pthread_mutex_lock(&shared_mutex);
+	struct mp_shared_cache *entry = shared_caches;
+	while (entry && strcmp(entry->key, c->shared_key) != 0) entry = entry->next;
+	if (entry) {
+		mp_media_free(&c->m);
+		c->video_frames.da = entry->video_frames.da;
+		c->audio_segments.da = entry->audio_segments.da;
+		c->final_v_duration = entry->final_v_duration;
+		c->final_a_duration = entry->final_a_duration;
+		c->start_time = entry->start_time;
+		c->media_duration = entry->media_duration;
+		c->has_video = entry->has_video;
+		c->has_audio = entry->has_audio;
+		entry->refs++;
+	} else {
+		if (!mp_cache_decode(c)) {
+			pthread_mutex_unlock(&shared_mutex);
+			return false;
+		}
+		entry = bzalloc(sizeof(*entry));
+		entry->key = bstrdup(c->shared_key);
+		entry->refs = 1;
+		entry->video_frames.da = c->video_frames.da;
+		entry->audio_segments.da = c->audio_segments.da;
+		entry->final_v_duration = c->final_v_duration;
+		entry->final_a_duration = c->final_a_duration;
+		entry->start_time = c->start_time;
+		entry->media_duration = c->media_duration;
+		entry->has_video = c->has_video;
+		entry->has_audio = c->has_audio;
+		entry->next = shared_caches;
+		shared_caches = entry;
+	}
+	c->shared = entry;
+	pthread_mutex_unlock(&shared_mutex);
+	return true;
 }
 
 static void seek_to(mp_cache_t *c, int64_t pos)
@@ -369,7 +487,7 @@ static inline bool mp_cache_thread(mp_cache_t *c)
 {
 	os_set_thread_name("mp_cache_thread");
 
-	if (!mp_cache_decode(c)) {
+	if (!mp_cache_decode_shared(c)) {
 		return false;
 	}
 
@@ -547,6 +665,7 @@ bool mp_cache_init(mp_cache_t *c, const struct mp_media_info *info)
 	mp_media_t *m = &c->m;
 
 	pthread_mutex_init_value(&c->mutex);
+	c->shared_key = shared_cache_key(info);
 
 	if (!mp_media_init(m, &info2)) {
 		mp_cache_free(c);
@@ -605,6 +724,11 @@ void mp_cache_free(mp_cache_t *c)
 	if (c->m.fmt)
 		mp_media_free(&c->m);
 
+	if (c->shared) {
+		shared_cache_release(c->shared);
+		da_init(c->video_frames);
+		da_init(c->audio_segments);
+	}
 	for (size_t i = 0; i < c->video_frames.num; i++) {
 		struct obs_source_frame *f = &c->video_frames.array[i];
 		obs_source_frame_free(f);
@@ -618,6 +742,7 @@ void mp_cache_free(mp_cache_t *c)
 
 	bfree(c->path);
 	bfree(c->format_name);
+	bfree(c->shared_key);
 	pthread_mutex_destroy(&c->mutex);
 	os_sem_destroy(c->sem);
 	memset(c, 0, sizeof(*c));

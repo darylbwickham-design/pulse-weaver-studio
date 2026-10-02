@@ -309,6 +309,7 @@ static void ffmpeg_source_open(struct ffmpeg_source *s)
 			.reconnecting = s->reconnecting,
 			.request_preload = s->is_stinger,
 			.full_decode = s->full_decode,
+			.share_cache = s->is_stinger && s->full_decode,
 		};
 
 		s->media = media_playback_create(&info);

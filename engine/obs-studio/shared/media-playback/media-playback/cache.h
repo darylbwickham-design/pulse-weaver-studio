@@ -53,6 +53,8 @@ struct mp_cache {
 
 	DARRAY(struct obs_source_frame) video_frames;
 	DARRAY(struct obs_source_audio) audio_segments;
+	char *shared_key;
+	struct mp_shared_cache *shared;
 
 	size_t cur_v_idx;
 	size_t cur_a_idx;
