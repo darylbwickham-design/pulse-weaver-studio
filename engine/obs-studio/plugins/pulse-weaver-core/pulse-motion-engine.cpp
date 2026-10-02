@@ -2868,7 +2868,8 @@ void PulseMotionEngine::refreshPreviewChoices()
 	previewFromLook->clear();
 	previewFromLook->addItem("Current scene state", QString());
 	const QJsonObject selected = actionByIdentity(editingId);
-	const QString stage = stageField ? stageField->currentData().toString() : selected.value("stage").toString();
+	const QString savedStage = selected.value("stage").toString();
+	const QString stage = !savedStage.isEmpty() ? savedStage : (stageField ? stageField->currentData().toString() : QString());
 	const QString container = mainContainer.isEmpty() ? selected.value("container").toString() : mainContainer;
 	for (const QJsonValue &value : actions) {
 		const QJsonObject candidate = value.toObject();
@@ -3131,18 +3132,68 @@ void PulseMotionEngine::openShowWizard()
 		wizard.addPage(page);
 		return page;
 	};
-	auto *purpose = makePage("What belongs in your show?", "Choose the stages you want. You can add more looks later in Control.");
+	struct StartingPage final : QWizardPage {
+		using QWizardPage::QWizardPage;
+		QCheckBox *reference = nullptr;
+		int reviewId = -1;
+		int nextId() const override { return reference && reference->isChecked() ? reviewId : QWizardPage::nextId(); }
+	};
+	auto *purpose = new StartingPage(&wizard);
+	purpose->setTitle("What belongs in your show?");
+	purpose->setSubTitle("Build fresh layouts or use existing Stage compositions as a starting point.");
+	purpose->setLayout(new QVBoxLayout);
+	wizard.addPage(purpose);
 	auto *showName = new QLineEdit("My Show", purpose);
 	showName->setPlaceholderText("Name this show");
 	purpose->layout()->addWidget(new QLabel("Show name", purpose));
 	purpose->layout()->addWidget(showName);
+	const QString stagesPath = QDir(QFileInfo(storagePath).absolutePath()).absoluteFilePath("../../pulseweaver-stages.json");
+	QFile existingStagesFile(stagesPath);
+	QJsonArray referenceStages;
+	if (existingStagesFile.open(QIODevice::ReadOnly))
+		referenceStages = QJsonDocument::fromJson(existingStagesFile.readAll()).array();
+	existingStagesFile.close();
+	auto *useReference = new QCheckBox("Use existing Stage compositions", purpose);
+	useReference->setAccessibleName("Use existing Stage compositions");
+	useReference->setEnabled(!referenceStages.isEmpty());
+	useReference->setChecked(!referenceStages.isEmpty());
+	purpose->reference = useReference;
+	purpose->layout()->addWidget(useReference);
+	auto *referenceHelp = new QLabel("Create a separate editable show with the reference's layers, saved looks, camera crops, sound routing and transitions. Landscape and portrait keep their own framing. Sources are reused; editing a new look does not reposition the reference look.", purpose);
+	referenceHelp->setWordWrap(true);
+	purpose->layout()->addWidget(referenceHelp);
+	connect(useReference, &QCheckBox::toggled, referenceHelp, &QWidget::setVisible);
+	referenceHelp->setVisible(useReference->isChecked());
 	QMap<QString, QCheckBox *> enabledStages;
+	QMap<QString, QComboBox *> stageReferences;
 	for (const auto &entry : std::vector<std::pair<QString, QString>>{{"Starting", "Starting"},
 		{"Hangout", "Hangout / conversation"}, {"Gameplay", "Gameplay / activity"},
 		{"Intermission", "BRB / Ending"}, {"Celebration", "Raid / shoutout"}}) {
 		auto *check = new QCheckBox(entry.second, purpose);
 		check->setChecked(true);
-		purpose->layout()->addWidget(check);
+		auto *row = new QWidget(purpose);
+		auto *rowLayout = new QHBoxLayout(row);
+		rowLayout->setContentsMargins(0, 0, 0, 0);
+		rowLayout->addWidget(check);
+		auto *reference = new QComboBox(row);
+		reference->setAccessibleName(entry.first + " reference Stage");
+		reference->addItem("Choose a reference Stage", QString());
+		for (const QJsonValue &value : referenceStages) {
+			const QJsonObject stage = value.toObject();
+			const QString name = stage.value("name").toString();
+			OBSSourceAutoRelease horizontal = motionSource(stage.value("horizontal").toString());
+			OBSSourceAutoRelease portrait = motionSource(stage.value("vertical").toString());
+			if (!horizontal || !portrait || !obs_scene_from_source(horizontal) || !obs_scene_from_source(portrait)) continue;
+			reference->addItem(name, name);
+			if (name.endsWith(entry.first, Qt::CaseInsensitive) && reference->currentIndex() == 0)
+				reference->setCurrentIndex(reference->count() - 1);
+		}
+		rowLayout->addWidget(reference, 1);
+		reference->setVisible(useReference->isChecked());
+		connect(useReference, &QCheckBox::toggled, reference, &QWidget::setVisible);
+		connect(check, &QCheckBox::toggled, reference, &QWidget::setEnabled);
+		purpose->layout()->addWidget(row);
+		stageReferences.insert(entry.first, reference);
 		enabledStages.insert(entry.first, check);
 	}
 	static_cast<QVBoxLayout *>(purpose->layout())->addStretch();
@@ -3291,7 +3342,7 @@ void PulseMotionEngine::openShowWizard()
 	addRole(content, contentForm, "camera", "Main camera", {"facecam", "webcam", "camera"});
 	addRole(content, contentForm, "secondary", "Secondary focus", {"printer", "desk"});
 	addRole(content, contentForm, "alertCamera", "Alert / pixel-board camera", {"pixel", "alert cam"});
-	addRole(content, contentForm, "game", "Gameplay", {"game_capture"});
+	addRole(content, contentForm, "game", "Game capture", {"game_capture"});
 	addRole(content, contentForm, "desktop", "Desktop / screen", {"monitor_capture", "display_capture", "main screen"});
 	for (const QString &role : {QString("camera"), QString("secondary"), QString("alertCamera")}) {
 		auto *framing = new QComboBox(content);
@@ -3448,6 +3499,7 @@ void PulseMotionEngine::openShowWizard()
 	static_cast<QVBoxLayout *>(composition->layout())->addStretch();
 
 	auto *review = makePage("Review your show", "Creating the show adds new scenes and looks. Existing scenes stay available.");
+	purpose->reviewId = wizard.pageIds().last();
 	auto *reviewText = new QLabel(review);
 	reviewText->setWordWrap(true);
 	review->layout()->addWidget(reviewText);
@@ -3461,6 +3513,23 @@ void PulseMotionEngine::openShowWizard()
 		for (auto it = roles.cbegin(); it != roles.cend(); ++it)
 			if (!it.value()->currentData().toString().isEmpty()) assigned.append(it.value()->accessibleName() + ": " + it.value()->currentText());
 		QStringList missing;
+		if (useReference->isChecked()) {
+			QStringList references;
+			for (const QString &stage : stageNames) {
+				const QString reference = stageReferences.value(stage)->currentData().toString();
+				if (reference.isEmpty()) missing.append("Choose a reference for " + stage + ".");
+				else references.append(stage + ": " + reference);
+			}
+			if (stageNames.isEmpty()) missing.append("Choose at least one Stage.");
+			if (showName->text().trimmed().isEmpty()) missing.append("Name your show.");
+			reviewText->setText("New show: " + showName->text().trimmed() + "\n\nReference compositions:\n" + references.join("\n") +
+				"\n\nAll saved looks and layers are retained, with separate landscape and portrait framing. Stage transitions and sound exclusions are copied. Edit the new show in Control; use Run saved look live when ready." +
+				(missing.isEmpty() ? QString() : "\n\nBefore creating:\n" + missing.join("\n")));
+			QTimer::singleShot(0, &wizard, [&wizard, valid = missing.isEmpty()] {
+				if (auto *finish = wizard.button(QWizard::FinishButton)) finish->setEnabled(valid);
+			});
+			return;
+		}
 		auto has = [&roles](const QString &role) { return !roles.value(role)->currentData().toString().isEmpty(); };
 		if (stageNames.contains("Starting") && !has("starting") && !has("secondary") && !has("game") && !has("desktop"))
 			missing.append("Starting needs an overlay or background source.");
@@ -3512,6 +3581,12 @@ void PulseMotionEngine::openShowWizard()
 			{"audioDevices", selectedAudio},
 			{"style", styles->currentItem() ? styles->currentItem()->data(Qt::UserRole).toString() : QString("corner")},
 			{"transition", transition->currentData().toString()}};
+		if (useReference->isChecked()) {
+			QJsonObject references;
+			for (const QJsonValue &stage : chosenStages)
+				references.insert(stage.toString(), stageReferences.value(stage.toString())->currentData().toString());
+			choices.insert("references", references);
+		}
 		const QJsonObject result = createGuidedShow(choices);
 		setStatus(result.value("message").toString(), !result.value("ok").toBool());
 		if (result.value("ok").toBool()) return;
@@ -3520,9 +3595,194 @@ void PulseMotionEngine::openShowWizard()
 	}
 }
 
+QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
+{
+	const QString prefix = cleanName(choices.value("name").toString(), "My Show");
+	const QJsonArray requested = choices.value("stages").toArray();
+	const QJsonObject references = choices.value("references").toObject();
+	if (requested.isEmpty()) return {{"ok", false}, {"message", "Choose at least one Stage."}};
+	const QString stagePath = QDir(QFileInfo(storagePath).absolutePath()).absoluteFilePath("../../pulseweaver-stages.json");
+	QFile input(stagePath);
+	if (!input.open(QIODevice::ReadOnly)) return {{"ok", false}, {"message", "Could not read the reference Stage catalogue."}};
+	const QJsonDocument document = QJsonDocument::fromJson(input.readAll());
+	input.close();
+	if (!document.isArray()) return {{"ok", false}, {"message", "The reference Stage catalogue is invalid."}};
+	QJsonArray stages = document.array();
+	OBSCanvasAutoRelease verticalCanvas = obs_get_canvas_by_name("Pulse Weaver Vertical");
+	if (!verticalCanvas) return {{"ok", false}, {"message", "Open Show and wait for the portrait canvas before creating the show."}};
+	struct ReferencePlan {
+		QString name;
+		QJsonObject stage;
+		OBSSource horizontal;
+		OBSSource portrait;
+		QJsonArray looks;
+	};
+	std::vector<ReferencePlan> plans;
+	QSet<QString> reserved;
+	const QString collection = motionCollection();
+	for (const QJsonValue &value : requested) {
+		const QString suffix = value.toString();
+		if (!QStringList{"Starting", "Hangout", "Gameplay", "Intermission", "Celebration"}.contains(suffix))
+			return {{"ok", false}, {"message", "Unknown Stage choice: " + suffix}};
+		const QString name = prefix + " · " + suffix;
+		if (reserved.contains(name)) return {{"ok", false}, {"message", "Each Stage can only be selected once."}};
+		reserved.insert(name);
+		OBSSourceAutoRelease occupied = motionSource(name);
+		OBSSourceAutoRelease occupiedPortrait = motionSource(name + " · Portrait");
+		if (occupied || occupiedPortrait)
+			return {{"ok", false}, {"message", "A source or scene named “" + name + "” already exists. Choose another show name."}};
+		QJsonObject reference;
+		const QString referenceName = references.value(suffix).toString();
+		for (const QJsonValue &entry : stages) {
+			const QJsonObject stage = entry.toObject();
+			if (stage.value("name").toString() == name)
+				return {{"ok", false}, {"message", "A Stage named “" + name + "” already exists. Choose another show name."}};
+			if (!referenceName.isEmpty() && stage.value("name").toString() == referenceName) reference = stage;
+		}
+		if (reference.isEmpty()) return {{"ok", false}, {"message", "Choose an existing reference Stage for " + suffix + "."}};
+		OBSSourceAutoRelease horizontal = motionSource(reference.value("horizontal").toString());
+		OBSSourceAutoRelease portrait = motionSource(reference.value("vertical").toString());
+		if (!horizontal || !portrait || !obs_scene_from_source(horizontal) || !obs_scene_from_source(portrait))
+			return {{"ok", false}, {"message", "The landscape or portrait scene for “" + referenceName + "” is missing."}};
+		QJsonArray looks;
+		for (const QJsonValue &entry : actions) {
+			const QJsonObject look = entry.toObject();
+			if (look.value("kind").toString() == "layout" && !look.value("draft").toBool() &&
+				look.value("container").toString() == reference.value("horizontal").toString() &&
+				(look.value("collection").toString().isEmpty() || look.value("collection").toString() == collection))
+				looks.append(look);
+		}
+		if (looks.isEmpty()) looks.append(QJsonObject{{"name", "Current composition"}, {"kind", "layout"},
+			{"durationMs", 750}, {"items", QJsonArray{}}});
+		plans.push_back({name, reference, OBSSource(horizontal), OBSSource(portrait), looks});
+	}
+	const QJsonArray oldActions = actions;
+	std::vector<OBSSource> created;
+	auto rollback = [&created] {
+		for (auto it = created.rbegin(); it != created.rend(); ++it) obs_source_remove(*it);
+	};
+	auto fail = [&rollback](const QString &message) -> QJsonObject {
+		rollback();
+		return {{"ok", false}, {"message", message}};
+	};
+	QJsonArray newActions;
+	QString firstId;
+	for (const ReferencePlan &plan : plans) {
+		const QString portraitName = plan.name + " · Portrait";
+		OBSSceneAutoRelease horizontal = obs_scene_create(plan.name.toUtf8().constData());
+		if (!horizontal) return fail("Could not create “" + plan.name + "”.");
+		created.emplace_back(obs_scene_get_source(horizontal));
+		OBSSceneAutoRelease portrait = obs_canvas_scene_create(verticalCanvas, portraitName.toUtf8().constData());
+		if (!portrait) return fail("Could not create “" + portraitName + "”.");
+		created.emplace_back(obs_scene_get_source(portrait));
+		OBSDataAutoRelease metadata = obs_source_get_private_settings(obs_scene_get_source(portrait));
+		obs_data_set_string(metadata, "pulseweaver.horizontal_uuid", obs_source_get_uuid(obs_scene_get_source(horizontal)));
+		obs_data_set_bool(metadata, "pulseweaver.follow_horizontal", false);
+		obs_data_set_bool(metadata, "pulseweaver.native_vertical", true);
+		struct CopiedItem { QString oldContainer; qint64 oldId; QString newContainer; OBSSceneItem item; Transform baseline; };
+		std::vector<CopiedItem> copied;
+		struct CopyContext { PulseMotionEngine *engine; obs_scene_t *destination; QString oldContainer; QString newContainer;
+			std::vector<CopiedItem> *items; bool ok = true; };
+		auto copyCanvas = [&](obs_source_t *reference, obs_scene_t *destination, const QString &newContainer) {
+			CopyContext context{this, destination, QString::fromUtf8(obs_source_get_name(reference)), newContainer, &copied};
+			obs_scene_enum_items(obs_scene_from_source(reference), [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
+				auto &context = *static_cast<CopyContext *>(opaque);
+				OBSSceneItem item = motionAddSource(context.destination, obs_sceneitem_get_source(original));
+				if (!item) { context.ok = false; return false; }
+				const Transform baseline = PulseMotionEngine::capture(original);
+				context.engine->apply(item, baseline, true);
+				context.items->push_back({context.oldContainer, obs_sceneitem_get_id(original), context.newContainer, item, baseline});
+				return true;
+			}, &context);
+			return context.ok;
+		};
+		if (!copyCanvas(plan.horizontal, horizontal, plan.name) || !copyCanvas(plan.portrait, portrait, portraitName))
+			return fail("Could not retain all layers from “" + plan.stage.value("name").toString() + "”.");
+		QJsonArray initialTargets;
+		for (const QJsonValue &value : plan.looks) {
+			const QJsonObject original = value.toObject();
+			QJsonArray targets;
+			QSet<int> matched;
+			for (int index = 0; index < int(copied.size()); ++index) {
+				const CopiedItem &entry = copied[index];
+				Transform target = entry.baseline;
+				QJsonObject extra;
+				const QJsonArray originals = original.value("items").toArray();
+				for (int targetIndex = 0; targetIndex < originals.size(); ++targetIndex) {
+					const QJsonObject candidate = originals.at(targetIndex).toObject();
+					if (candidate.value("container").toString(original.value("container").toString()) != entry.oldContainer ||
+						candidate.value("itemId").toVariant().toLongLong() != entry.oldId) continue;
+					obs_source_t *source = obs_sceneitem_get_source(entry.item);
+					const QString uuid = candidate.value("sourceUuid").toString();
+					if ((!uuid.isEmpty() && uuid != QString::fromUtf8(obs_source_get_uuid(source))) ||
+						(uuid.isEmpty() && !candidate.value("source").toString().isEmpty() &&
+						candidate.value("source").toString() != QString::fromUtf8(obs_source_get_name(source))))
+						return fail("A layer in reference look “" + original.value("name").toString() + "” has changed identity. Save that reference look again.");
+					target = deserialize(candidate.value("transform").toObject());
+					extra = candidate;
+					matched.insert(targetIndex);
+				}
+				obs_source_t *source = obs_sceneitem_get_source(entry.item);
+				extra.insert("container", entry.newContainer);
+				extra.insert("itemId", QString::number(obs_sceneitem_get_id(entry.item)));
+				extra.insert("source", QString::fromUtf8(obs_source_get_name(source)));
+				extra.insert("sourceUuid", QString::fromUtf8(obs_source_get_uuid(source)));
+				extra.insert("transform", serialize(target));
+				targets.append(extra);
+			}
+			if (matched.size() != original.value("items").toArray().size())
+				return fail("Reference look “" + original.value("name").toString() + "” contains a missing layer. Save it again before using it as a reference.");
+			QJsonObject look = original;
+			const QString referenceName = plan.stage.value("name").toString();
+			QString label = original.value("name").toString();
+			if (label.startsWith(referenceName + " · ")) label = label.mid(referenceName.size() + 3);
+			const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+			if (firstId.isEmpty()) firstId = id;
+			look.insert("version", 1); look.insert("id", id); look.insert("name", plan.name + " · " + label);
+			look.insert("collection", collection); look.insert("container", plan.name); look.insert("stage", plan.name);
+			look.insert("policy", "switch"); look.insert("activateScene", true); look.insert("restore", false);
+			look.insert("draft", false); look.insert("items", targets);
+			look.insert("summary", "Move " + plan.name + " to " + label + ".");
+			if (initialTargets.isEmpty()) initialTargets = targets;
+			newActions.append(look);
+		}
+		for (int index = 0; index < int(copied.size()); ++index)
+			apply(copied[index].item, deserialize(initialTargets.at(index).toObject().value("transform").toObject()), true);
+		QJsonObject stage = plan.stage;
+		stage.insert("name", plan.name); stage.insert("horizontal", plan.name); stage.insert("vertical", portraitName);
+		stage.insert("referenceStage", plan.stage.value("name")); stage.insert("createdBy", "show-builder-reference");
+		QJsonObject assignments = stage.value("assignments").toObject();
+		for (auto it = assignments.begin(); it != assignments.end(); ++it) {
+			QJsonObject assignment = it.value().toObject();
+			assignment.insert("scene", assignment.value("canvas").toString() == "vertical" ? portraitName : plan.name);
+			it.value() = assignment;
+		}
+		stage.insert("assignments", assignments);
+		stages.append(stage);
+	}
+	for (const QJsonValue &look : newActions) actions.append(look);
+	if (!save()) { actions = oldActions; return fail("Could not save the new looks."); }
+	QSaveFile output(stagePath);
+	const QByteArray bytes = QJsonDocument(stages).toJson(QJsonDocument::Indented);
+	if (!output.open(QIODevice::WriteOnly) || output.write(bytes) != bytes.size() || !output.commit()) {
+		output.cancelWriting(); actions = oldActions; save();
+		return fail("Could not save the new Stages. The reference show is intact.");
+	}
+	obs_frontend_save();
+	editingId = firstId;
+	refreshEditor();
+	if (editor) loadActionIntoEditor(actionByIdentity(firstId));
+	emitEvent("motion_catalogue_changed");
+	const QString message = "Created " + prefix + " with " + QString::number(newActions.size()) +
+		" editable looks. Landscape and portrait retain their reference framing. Save edits in Control, then run a saved look live when ready.";
+	setStatus(message);
+	return {{"ok", true}, {"message", message}, {"looks", newActions.size()}, {"stages", int(plans.size())}};
+}
+
 QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 {
 	if (!originalStoreValid) return {{"ok", false}, {"message", "The protected motion store is unreadable."}};
+	if (choices.contains("references")) return createReferencedShow(choices);
 	const QString prefix = cleanName(choices.value("name").toString(), "My Show");
 	QJsonObject selected = choices.value("roles").toObject();
 	const QJsonObject newSourceSpecs = choices.value("newSources").toObject();
@@ -3662,6 +3922,9 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 	}
 	for (const StagePlan &plan : plans) {
 		const QString name = prefix + " · " + plan.suffix;
+		for (auto it = sourceNames.cbegin(); it != sourceNames.cend(); ++it)
+			if (it.value() == name || it.value() == name + " · Portrait")
+				return {{"ok", false}, {"message", "The source name “" + it.value() + "” conflicts with a new Stage. Rename that source before creating the show."}};
 		for (const QJsonValue &value : stages)
 			if (value.toObject().value("name").toString() == name)
 				return {{"ok", false}, {"message", "A Stage named “" + name + "” exists. Choose another show name."}};

@@ -50,6 +50,7 @@ public:
 	void refreshEditor();
 
 private:
+	QJsonObject createReferencedShow(const QJsonObject &choices);
 	friend struct PulseMotionEngineTestAccess;
 	struct Transform {
 		vec2 pos{};

@@ -51,6 +51,7 @@ struct PulseMotionEngineTestAccess {
 	static bool save(PulseMotionEngine &engine) { return engine.save(); }
 	static bool valid(PulseMotionEngine &engine) { return engine.originalStoreValid; }
 	static QJsonArray actions(PulseMotionEngine &engine) { return engine.actions; }
+	static QJsonObject frame(obs_sceneitem_t *item) { return PulseMotionEngine::serialize(PulseMotionEngine::capture(item)); }
 	static void setActions(PulseMotionEngine &engine, const QJsonArray &actions) { engine.actions = actions; }
 	static void remove(PulseMotionEngine &engine, const QString &id) { engine.editingId = id; engine.deleteEditorAction(); }
 	static QString editing(PulseMotionEngine &engine) { return engine.editingId; }
@@ -226,6 +227,95 @@ static void sceneTests()
 	obs_source_remove(obs_sceneitem_get_source(group));
 }
 
+static void referenceBuilderTests(const obs_video_info &video)
+{
+	QTemporaryDir directory;
+	check(QDir().mkpath(directory.filePath("plugin_config/pulse-weaver-core")), "reference builder storage directory");
+	const QString motionPath = directory.filePath("plugin_config/pulse-weaver-core/motion.json");
+	const QString stagePath = directory.filePath("pulseweaver-stages.json");
+	PulseMotionEngine engine(nullptr, motionPath);
+	obs_video_info portraitVideo = video;
+	portraitVideo.base_width = portraitVideo.output_width = 480;
+	portraitVideo.base_height = portraitVideo.output_height = 640;
+	OBSCanvasAutoRelease canvas = obs_canvas_create("Pulse Weaver Vertical", &portraitVideo, PROGRAM);
+	check(bool(canvas), "reference portrait canvas");
+	OBSSceneAutoRelease horizontal = obs_scene_create("Reference Starting");
+	OBSSceneAutoRelease portrait = obs_canvas_scene_create(canvas, "Reference Portrait");
+	OBSSourceAutoRelease source = obs_source_create_private("pulse_motion_audit_fixture", "Reference camera", nullptr);
+	obs_sceneitem_t *hItem = obs_scene_add(horizontal, source);
+	obs_sceneitem_t *pItem = obs_scene_add(portrait, source);
+	obs_sceneitem_set_id(hItem, 40);
+	obs_sceneitem_set_id(pItem, 60);
+	vec2 position{17, 29}; obs_sceneitem_set_pos(hItem, &position);
+	obs_sceneitem_crop crop{7, 11, 13, 19}; obs_sceneitem_set_crop(hItem, &crop);
+	position = {83, 97}; obs_sceneitem_set_pos(pItem, &position);
+	obs_sceneitem_set_rot(pItem, 12);
+	obs_sceneitem_set_locked(pItem, true);
+	const QJsonObject hFrame = PulseMotionEngineTestAccess::frame(hItem);
+	const QJsonObject pFrame = PulseMotionEngineTestAccess::frame(pItem);
+	QJsonObject look{{"version", 1}, {"id", "reference-look"}, {"name", "Reference Starting · Cropped camera"},
+		{"kind", "layout"}, {"container", "Reference Starting"}, {"durationMs", 850},
+		{"items", QJsonArray{
+			QJsonObject{{"container", "Reference Starting"}, {"itemId", "40"}, {"source", "Reference camera"}, {"transform", hFrame}},
+			QJsonObject{{"container", "Reference Portrait"}, {"itemId", "60"}, {"source", "Reference camera"}, {"transform", pFrame}}}}};
+	PulseMotionEngineTestAccess::setActions(engine, QJsonArray{look});
+	QJsonObject reference{{"name", "Reference Starting"}, {"horizontal", "Reference Starting"}, {"vertical", "Reference Portrait"},
+		{"horizontalTransition", "stinger:Fixture"}, {"verticalTransition", "stinger:Fixture"},
+		{"assignments", QJsonObject{{"youtube_vertical", QJsonObject{{"canvas", "vertical"},
+			{"scene", "Reference Portrait"}, {"excluded", QJsonArray{"Music"}}}}}}};
+	const QByteArray initialStages = QJsonDocument(QJsonArray{reference}).toJson();
+	writeFile(stagePath, initialStages);
+	const QJsonObject choices{{"name", "Builder Trial"}, {"stages", QJsonArray{"Starting"}},
+		{"references", QJsonObject{{"Starting", "Reference Starting"}}}};
+	const auto result = engine.createGuidedShow(choices);
+	check(result.value("ok").toBool() && result.value("looks").toInt() == 1, "reference builder creates paired editable look");
+	OBSSourceAutoRelease generated = obs_get_source_by_name("Builder Trial · Starting");
+	OBSSourceAutoRelease generatedPortrait = obs_canvas_get_source_by_name(canvas, "Builder Trial · Starting · Portrait");
+	check(generated && generatedPortrait, "reference builder creates distinct landscape and portrait scenes");
+	obs_sceneitem_t *hCopy = obs_scene_find_source(obs_scene_from_source(generated), "Reference camera");
+	obs_sceneitem_t *pCopy = obs_scene_find_source(obs_scene_from_source(generatedPortrait), "Reference camera");
+	check(PulseMotionEngineTestAccess::frame(hCopy) == hFrame, "landscape crop and position retained");
+	check(PulseMotionEngineTestAccess::frame(pCopy) == pFrame, "portrait rotation lock and position retained independently");
+	check(PulseMotionEngineTestAccess::frame(hItem) == hFrame && PulseMotionEngineTestAccess::frame(pItem) == pFrame,
+		"creating a show does not alter reference geometry");
+	const QJsonArray stored = QJsonDocument::fromJson(readFile(stagePath)).array();
+	const QJsonObject createdStage = stored.last().toObject();
+	check(createdStage.value("horizontalTransition") == reference.value("horizontalTransition"), "reference stinger retained");
+	const QJsonObject assignment = createdStage.value("assignments").toObject().value("youtube_vertical").toObject();
+	check(assignment.value("scene").toString() == "Builder Trial · Starting · Portrait" &&
+		assignment.value("excluded").toArray() == QJsonArray{"Music"}, "routing targets new portrait scene while retaining exclusions");
+	const QJsonObject clonedLook = PulseMotionEngineTestAccess::actions(engine).last().toObject();
+	check(clonedLook.value("id") != look.value("id") && clonedLook.value("durationMs").toInt() == 850,
+		"new look identity retains movement duration");
+	check(clonedLook.value("items").toArray().first().toObject().value("itemId").toString() != "40",
+		"saved look remaps reference scene-item identity");
+	position = {300, 320}; obs_sceneitem_set_pos(hCopy, &position);
+	check(PulseMotionEngineTestAccess::frame(hItem) == hFrame, "new layout editing cannot reposition reference item");
+	const QByteArray beforeFailure = readFile(stagePath);
+	const QJsonArray beforeActions = PulseMotionEngineTestAccess::actions(engine);
+	check(!engine.createGuidedShow(choices).value("ok").toBool(), "existing destination names rejected");
+	check(readFile(stagePath) == beforeFailure && PulseMotionEngineTestAccess::actions(engine) == beforeActions,
+		"name collision preserves catalogue and looks");
+	QJsonObject broken = look;
+	QJsonArray brokenTargets = broken.value("items").toArray();
+	QJsonObject bad = brokenTargets.first().toObject(); bad.insert("sourceUuid", "wrong-source-identity");
+	brokenTargets.replace(0, bad); broken.insert("items", brokenTargets);
+	PulseMotionEngineTestAccess::setActions(engine, QJsonArray{broken});
+	QJsonObject invalidChoices = choices; invalidChoices.insert("name", "Broken Trial");
+	check(!engine.createGuidedShow(invalidChoices).value("ok").toBool(), "stale reference source identity rejected");
+	OBSSourceAutoRelease rolledBack = obs_get_source_by_name("Broken Trial · Starting");
+	OBSSourceAutoRelease rolledBackPortrait = obs_canvas_get_source_by_name(canvas, "Broken Trial · Starting · Portrait");
+	check(!rolledBack && !rolledBackPortrait && readFile(stagePath) == beforeFailure,
+		"failed reference import rolls back both canvases without touching catalogue");
+	QJsonObject freshChoices{{"name", "Collision"}, {"stages", QJsonArray{"Gameplay"}}, {"style", "corner"},
+		{"roles", QJsonObject{{"game", "new:game"}}},
+		{"newSources", QJsonObject{{"game", QJsonObject{{"role", "game"}, {"name", "Collision · Gameplay"}, {"kind", "game_capture"}}}}}};
+	check(!engine.createGuidedShow(freshChoices).value("ok").toBool(), "planned source cannot take a generated Stage name");
+	obs_source_remove(generated); obs_source_remove(generatedPortrait);
+	obs_source_remove(obs_scene_get_source(horizontal)); obs_source_remove(obs_scene_get_source(portrait));
+	obs_canvas_remove(canvas);
+}
+
 int main(int argc, char **argv)
 {
 	QApplication application(argc, argv);
@@ -246,6 +336,7 @@ int main(int argc, char **argv)
 	check(obs_reset_video(&video) == OBS_VIDEO_SUCCESS, "isolated graphics startup");
 	storageTests();
 	sceneTests();
+	referenceBuilderTests(video);
 	obs_wait_for_destroy_queue();
 	obs_shutdown();
 	check(runtimeErrors == 0, "no unexpected OBS runtime errors");

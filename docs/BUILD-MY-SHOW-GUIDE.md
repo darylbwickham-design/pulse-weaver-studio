@@ -1,6 +1,19 @@
 # Build a show in Pulse Weaver
 
-This guide applies to Pulse Weaver 1.14 experimental alpha 3 and unstable 10. A new setup opens at **Settings → Start here**. Existing setups continue to open on Show.
+This guide applies to Pulse Weaver 1.14.2 experimental alpha 2. A new setup opens at **Settings → Start here**. Existing setups continue to open on Show.
+
+## Start from an existing show
+
+If you already have Stages, **Use existing Stage compositions** is selected on
+the builder's first page. Name the new show and choose a reference Stage for
+each role, then review and finish. The builder retains saved looks, layers,
+camera crops, independent landscape and portrait framing, movement durations,
+output assignments, sound exclusions and Stage transitions.
+
+The generated scenes and looks have their own identities. Sources are shared:
+editing source properties affects every use of that source, and nested group
+contents remain shared. Editing a top-level layer's placement changes its new
+composition. Untick the reference option to follow the fresh-layout steps below.
 
 1. Open **Show Control** and click **Build my show…** beside the Stage selector on a fresh install. If you already have stages, click **Control** in the Show heading, then **Build my show…**. You can start with an empty scene collection.
 2. Name the show and tick the stages you want: Starting, Hangout, Gameplay, BRB/Ending, and Raid/Shoutout. Click **Next**.

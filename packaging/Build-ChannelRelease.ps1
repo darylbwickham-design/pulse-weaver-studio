@@ -47,6 +47,23 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/youtube-chat-stream
 Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/youtube-chat-stream/README.md') -Destination (Join-Path $payload 'bin/64bit/youtube-chat/README.md')
 Assert-PulseWeaverRuntimeComponents -Root $payload -IncludeChat
 Assert-PulseWeaverRuntimeTree -Root $payload
+$pluginStage = Join-Path $output 'lumia'
+New-Item -ItemType Directory -Path $pluginStage | Out-Null
+foreach($entry in @('main.js','manifest.json','package.json','README.md','assets')) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot "integrations/lumia-pulseweaver/$entry") -Destination $pluginStage -Recurse
+}
+$pluginVersion = (Get-Content -LiteralPath (Join-Path $pluginStage 'manifest.json') -Raw | ConvertFrom-Json).version
+$packageVersion = (Get-Content -LiteralPath (Join-Path $pluginStage 'package.json') -Raw | ConvertFrom-Json).version
+if ($pluginVersion -ne $packageVersion) { throw 'Lumia manifest and package versions do not match.' }
+$pluginZip = Join-Path $output "PulseWeaver-Lumia-$pluginVersion.zip"
+Compress-Archive -Path (Join-Path $pluginStage '*') -DestinationPath $pluginZip
+$plugin = [IO.Path]::ChangeExtension($pluginZip,'.lumiaplugin')
+Move-Item -LiteralPath $pluginZip -Destination $plugin
+$bundledPluginDirectory = Join-Path $payload 'integrations/lumia'
+New-Item -ItemType Directory -Path $bundledPluginDirectory -Force | Out-Null
+Copy-Item -LiteralPath $plugin -Destination $bundledPluginDirectory
+Copy-Item -LiteralPath (Join-Path $pluginStage 'README.md') -Destination $bundledPluginDirectory
+Assert-PulseWeaverRuntimeTree -Root $payload
 $archive = Join-Path $output 'payload.zip'
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive -CompressionLevel Optimal
 $suffix = if ($Channel -eq 'alpha') {'ALPHA'} elseif ($Channel -eq 'unstable') {'UNSTABLE'} else {'RELEASE'}
@@ -58,16 +75,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Installer publish failed.' }
 $name = if ($Channel -eq 'alpha') { "PulseWeaver-Setup-$Version-alpha.$AlphaRevision.exe" } elseif ($Channel -eq 'unstable') { "PulseWeaver-Setup-$Version-unstable.$AlphaRevision.exe" } else { "PulseWeaver-Setup-$Version.exe" }
 $installer = Join-Path $output $name
 Copy-Item -LiteralPath (Join-Path $publish "PulseWeaver-Setup-$Version-$suffix.exe") -Destination $installer
-$pluginStage = Join-Path $output 'lumia'
-New-Item -ItemType Directory -Path $pluginStage | Out-Null
-foreach($entry in @('main.js','manifest.json','package.json','README.md','assets')) {
-    Copy-Item -LiteralPath (Join-Path $projectRoot "integrations/lumia-pulseweaver/$entry") -Destination $pluginStage -Recurse
-}
-$pluginVersion = (Get-Content -LiteralPath (Join-Path $pluginStage 'manifest.json') -Raw | ConvertFrom-Json).version
-$pluginZip = Join-Path $output "PulseWeaver-Lumia-$pluginVersion.zip"
-Compress-Archive -Path (Join-Path $pluginStage '*') -DestinationPath $pluginZip
-$plugin = [IO.Path]::ChangeExtension($pluginZip,'.lumiaplugin')
-Move-Item -LiteralPath $pluginZip -Destination $plugin
 @($installer,$plugin) | ForEach-Object { $h=Get-FileHash -LiteralPath $_ -Algorithm SHA256; "$($h.Hash)  $([IO.Path]::GetFileName($_))" } |
     Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt')
 Write-Output $installer
