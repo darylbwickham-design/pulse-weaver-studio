@@ -17,6 +17,8 @@ target_sources(
   PRIVATE pulse-weaver-core.cpp
           pulse-motion-engine.cpp
           pulse-motion-engine.hpp
+          pulse-show-builder.cpp
+          pulse-show-templates.hpp
           pulse-overlay-alerts.cpp
           pulse-overlay-alerts.hpp
           pulse-overlay-renderer.cpp

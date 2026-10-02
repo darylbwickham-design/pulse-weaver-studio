@@ -1,30 +1,41 @@
 # Build a show in Pulse Weaver
 
-This guide applies to Pulse Weaver 1.14.2 experimental alpha 2. A new setup opens at **Settings → Start here**. Existing setups continue to open on Show.
+This guide describes the 1.14.2 theme builder candidate. A fresh setup opens at **Settings → Start here**; existing setups open on Show.
 
-## Start from an existing show
+## Create Stages and animated Looks
 
-If you already have Stages, **Use existing Stage compositions** is selected on
-the builder's first page. Name the new show and choose a reference Stage for
-each role, then review and finish. The builder retains saved looks, layers,
-camera crops, independent landscape and portrait framing, movement durations,
-output assignments, sound exclusions and Stage transitions.
+1. Open **Show Control → Control → Build my show…**. Name your show and tick the themes you want. Each theme creates **one Stage** with a landscape scene and its paired portrait scene.
+2. Click **Next**. Each Stage has **three Looks selected by default**, shown together as composition cards. Use the Stage tabs to inspect them; untick any view you do not need. Looks are arrangements of shared sources inside a Stage.
+3. On **Assign sources**, use the Stage tabs. Choose an existing source from each dropdown or **Create new…**. The optional reuse checkbox fills empty assignments of the same capture role in other Stages; you can change individual assignments afterwards. Presenter and work/activity cameras are separate roles. Title/countdown graphics are prepared automatically, and can be replaced with an existing graphic or a browser URL. New sources are created only when you finish.
+4. On **Add overlays**, assign up to **three full-canvas layers per canvas**. Each slot can use an existing source or a new browser URL. **Choose Looks…** controls where a layer is visible. Layer 1 is lowest and layer 3 highest. If your alert overlay already contains captions, use it for captions as well. Assign only the sticker service you intend to use. Personal provider URLs belong in your local profile, not the shipped templates.
+5. On **Review both canvases**, select a target Look. Choose another Look under **Move from**, then **Play movement** or scrub the slider. The rehearsal uses the same movement and layer coverage code as live Looks, with private scenes. Browser widgets and uncreated sources appear as placeholders during this step. Rehearsing does not change output.
+6. Choose **Adjust landscape** or **Adjust portrait**. Select **Frame source** to change its panel's Left, Top, Width and Height, fit/crop mode, and crop position. **Reset** restores that panel's template placement. The portrait divider controls the camera-above/content-below split; the corner control applies to landscape inset Looks. Changes apply to the selected Look and canvas. Movement duration applies to both canvases and defaults to **850 ms**.
+7. Choose Fade or Cut for switching Stages. Stop streaming and recording before **Finish**. The builder validates assignments, creates the selected Stages and Looks, preserves existing source properties/audio/routing, and rolls back newly created resources if creation fails. Wizard choices remain available to correct the problem.
+8. In **Control**, select a Stage and Look, then **Edit selected look**. Drag layers or use **Choose sources + layout…**, **Swap focus**, and the layer placement controls. **Save look** stores edits; **+ New look** and **Duplicate look** let you add further variations.
+9. **Run saved look live** applies a saved Look. Staying in one Stage animates sources into their new framing. Switching Stages uses that Stage's transition and reveals the already prepared Look. Lumia's **Run Stage Look / Motion Action** can trigger the same saved Looks.
 
-The generated scenes and looks have their own identities. Sources are shared:
-editing source properties affects every use of that source, and nested group
-contents remain shared. Editing a top-level layer's placement changes its new
-composition. Untick the reference option to follow the fresh-layout steps below.
+## The three starting compositions
 
-1. Open **Show Control** and click **Build my show…** beside the Stage selector on a fresh install. If you already have stages, click **Control** in the Show heading, then **Build my show…**. You can start with an empty scene collection.
-2. Name the show and tick the stages you want: Starting, Hangout, Gameplay, BRB/Ending, and Raid/Shoutout. Click **Next**.
-3. For each role, select an **existing source**, click **Create new…**, or choose **I don't use this**. Set up the main camera, secondary focus (such as a printer), optional alert or pixel-board camera, Game Capture, and screen capture. A new Game Capture can target a running window or any fullscreen game. The unstable builder offers an existing scene item's camera crop and rotation as a starting frame. Click **Next**.
-4. Assign landscape and portrait chat, alerts, captions, and stage graphics the same way. **Create new…** accepts a browser overlay URL for chat, alerts, or captions. Starting, BRB, Ending, and Raid each get a ready-to-use local Pulse Weaver title graphic unless you select an existing source. If an external app controls a browser overlay's placement, its full-canvas framing stays intact. Click **Next**.
-5. Check that each overlay is assigned to the intended canvas. A newly created portrait chat source uses the portrait canvas size; chat and alerts that another app positions stay full canvas.
-6. Choose desktop and microphone devices on **Set up sound**. **Keep current device** preserves an existing collection. Optionally select a dedicated music audio source to exclude from YouTube and Kick. Twitch and its VOD track stay as configured. Never select the same Game Capture source as the picture and music, because excluding it would also exclude the picture.
-7. Choose **Main + corner**, **Side by side**, or **Fullscreen focus**. The portrait layout fills its lower two thirds with the main source and uses the upper third for the supporting source. Choose a transition for switching stages, including an existing stinger if one is listed. Click **Next**.
-8. Review the stages and source assignments. Resolve any missing-source messages, then click **Finish**. Only now does the builder create the requested sources, landscape and portrait scenes, and saved looks. It removes what it just created if this step fails, and keeps your wizard choices available to correct the issue. Your existing scenes remain available.
-9. In **Control**, choose a Stage and Look using the blue text choices above the previews, then click **Edit selected look**. Choose a layer on the right or click a preview, arrange it, and click **Save look**. Use **+ New look** for a fresh arrangement or **Duplicate look** to start from the selected one. **Choose sources + layout…** lets you pick the large and supporting sources explicitly, then preview **Main + corner**, **Side by side** or **Full screen main** on both canvases. Click **Undo** if it is wrong. **Swap focus** exchanges the two main sources. You can also drag a source to move it; drag a corner to resize; use **Shift** with a corner to stretch or **Alt** with a corner to crop. The right rail has **Fill**, **Corner**, **Left** and **Right** placements for an individual source.
-10. Click **Run saved look live** to send the look to output. Switching to another Stage uses its fade, cut or stinger and reveals the finished look. Changing looks while staying in one Stage animates the sources into their saved positions. The existing Lumia **Run Stage Look / Motion Action** action can trigger saved looks.
+| Stage | Look 1 | Look 2 | Look 3 |
+| --- | --- | --- | --- |
+| Starting | Countdown focus: small dimmed camera left | Camera teaser: camera grows left | Ready to begin: camera grows again, countdown moves beside it |
+| Viewer focus | Just chatting: full presenter | Screen reaction: screen leads, small left presenter | Presenter reaction: large presenter left, smaller screen right |
+| Gameplay focus | Gameplay focus: game with optional small camera | Balanced gameplay: larger left camera column, game right | Presenter reaction: large presenter left, smaller game right |
+| Intermission | BRB focus: holding message with optional activity | Return countdown: larger activity column | Activity continues: full activity with holding label |
+| Craft focus | Work focus: work with optional small camera | Balanced work: larger left presenter, work right | Presenter explains: large presenter left, smaller work right |
+| Wrap-up | Presenter goodbye: full camera with closing message | Credits focus: camera shrinks left | Final card: message leads, camera moves to a small inset |
+
+Shared sources keep the same scene item identity so changing Looks can move them. Starting uses one scoped dimmed/clipped-corner camera wrapper per canvas, and one countdown browser per canvas, shared across its three Looks. The original camera remains unfiltered. Portrait camera/content layouts have matching widths and no gap, with different split heights for different Looks. Game and screen images fit their panels by default; crop is an explicit choice.
+
+Chat is an overlay throughout, never the main content panel. Lumia Stream's **Chatty** and **Chatty vert** sources use the full landscape and portrait canvases respectively. Put them in overlay layer 3, visible in every Look, above the alert and sticker layers.
+
+When a small left presenter grows into a column, content stays underneath until the camera covers that column. The reverse move fills the canvas before shrinking the camera. Control, wizard rehearsal and live Looks use the same movement sequence.
+
+## Copy an existing show
+
+Choose **Copy an existing show's compositions…** on the first builder page to use the reference workflow. Name the new show, select reference Stages, review, and finish. It retains saved Looks, layers, camera crops, independent landscape/portrait framing, movement durations, output assignments, sound exclusions, and Stage transitions.
+
+The copied scenes and Looks have their own identities. Sources and nested group contents remain shared: source-property changes affect every use, while moving a top-level layer changes only its composition.
 
 ## Understand Control and live output
 

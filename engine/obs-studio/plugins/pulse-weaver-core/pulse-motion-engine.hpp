@@ -50,6 +50,8 @@ public:
 	void refreshEditor();
 
 private:
+	QJsonObject createThemedShow(const QJsonObject &choices);
+	void openReferenceWizard();
 	QJsonObject createReferencedShow(const QJsonObject &choices);
 	friend struct PulseMotionEngineTestAccess;
 	struct Transform {
@@ -79,7 +81,7 @@ private:
 	};
 	struct Execution {
 		struct CoveragePair {
-			enum class Kind { FullInset, PortraitSplit } kind;
+			enum class Kind { FullInset, PortraitSplit, InsetColumn } kind;
 			std::size_t incoming = 0;
 			std::size_t outgoing = 0;
 			float width = 0.0f;
@@ -215,6 +217,7 @@ private:
 	void syncHotkeys();
 	static void hotkeyTriggered(void *data, obs_hotkey_id id, obs_hotkey_t *, bool pressed);
 	void populateStages();
+	void selectEditorStage(const QString &stage);
 	void populateScenes();
 	void populateSources();
 	void populateItems();
@@ -240,6 +243,7 @@ private:
 				     const QString &sourceUuid = {}) const;
 	bool prepareExecution(Execution &execution, QString &error);
 	void prepareCoveragePairs(Execution &execution);
+	static void applyMovementFrame(Execution &execution, double progress);
 	void beginAfterStage();
 	void tick();
 	void finishMove();

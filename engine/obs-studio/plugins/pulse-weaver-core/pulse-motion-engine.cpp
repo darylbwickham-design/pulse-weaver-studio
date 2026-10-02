@@ -1715,6 +1715,19 @@ QJsonArray PulseMotionEngine::itemCatalogue(const QString &container) const
 	return result;
 }
 
+void PulseMotionEngine::selectEditorStage(const QString &stage)
+{
+	if (!stageField) return;
+	int row = stageField->findData(stage);
+	// A just-created Stage can reach the editor before the main selector reloads.
+	// Retain that identity instead of silently assigning an unrelated older Stage.
+	if (row < 0) {
+		stageField->addItem(stage.isEmpty() ? QString("No Stage") : stage, stage);
+		row = stageField->count() - 1;
+	}
+	stageField->setCurrentIndex(row);
+}
+
 void PulseMotionEngine::populateStages()
 {
 	if (!stageField) return;
@@ -1727,8 +1740,7 @@ void PulseMotionEngine::populateStages()
 			stageField->addItem(name, name);
 		}
 	}
-	const int row = stageField->findData(selected);
-	if (row >= 0) stageField->setCurrentIndex(row);
+	selectEditorStage(selected);
 	stageField->blockSignals(false);
 }
 
@@ -1834,8 +1846,7 @@ void PulseMotionEngine::loadActionIntoEditor(const QJsonObject &action)
 	nameField->setText(action.value("name").toString());
 	kindField->setCurrentIndex(std::max(0, kindField->findData(action.value("kind").toString("punch"))));
 	policyField->setCurrentIndex(std::max(0, policyField->findData(action.value("policy").toString("switch"))));
-	const int stageRow = stageField->findData(action.value("stage").toString());
-	if (stageRow >= 0) stageField->setCurrentIndex(stageRow);
+	selectEditorStage(action.value("stage").toString());
 	const int sceneRow = sceneField->findData(action.value("container").toString(action.value("scene").toString()));
 	if (sceneRow >= 0) sceneField->setCurrentIndex(sceneRow);
 	if (mainContainer.isEmpty()) mainContainer = sceneField->currentData().toString();
@@ -2962,51 +2973,52 @@ void PulseMotionEngine::previewDraft(int progress)
 			pairedPreviews.insert(it.key(), paired);
 		}
 	}
+	Execution rehearsal;
+	auto addPreviewTrack = [&](const QString &container, qint64 id, obs_sceneitem_t *target, obs_sceneitem_t *preview) {
+		if (!target || !preview) return;
+		obs_source_t *source = obs_sceneitem_get_source(target);
+		const QString sourceName = QString::fromUtf8(obs_source_get_name(source));
+		OBSSceneItem live = resolveItem(container, id, sourceName, false, QString::fromUtf8(obs_source_get_uuid(source)));
+		if (!live) return;
+		Track track;
+		track.container = container;
+		track.item = preview;
+		track.from = capture(live);
+		previewStartTransform(container, target, id, track.from);
+		track.target = capture(target);
+		track.graphic = motionGraphicSwitch(sourceName, source);
+		rehearsal.tracks.push_back(track);
+	};
 	for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
 		OBSSceneItem target = draftItem(it.key());
 		if (!target) continue;
-		obs_source_t *targetSource = obs_sceneitem_get_source(target);
-		OBSSceneItem live = resolveItem(draftContainer, it.key(), QString::fromUtf8(obs_source_get_name(targetSource)), false,
-			QString::fromUtf8(obs_source_get_uuid(targetSource)));
 		auto *preview = obs_scene_find_sceneitem_by_id(previewScene, previewIds.value(it.value(), -1));
-		if (!live || !preview) continue;
-		Transform from = capture(live);
-		previewStartTransform(draftContainer, target, it.key(), from);
-		const Transform to = capture(target);
-		const QString sourceName = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(target)));
-		if (motionGraphicSwitch(sourceName, obs_sceneitem_get_source(target)) && from.visible != to.visible) {
-			apply(preview, progress < 50 ? from : to, true);
-			continue;
-		}
-		Transform frame = transitionFrame(from, to, progress / 100.0, float(obs_source_get_width(obs_scene_get_source(draftScene))));
-		frame.visible = from.visible || to.visible;
-		frame.order = from.visible && (progress < 60 || !to.visible) ? from.order : to.order;
-		apply(preview, frame, true);
+		addPreviewTrack(draftContainer, it.key(), target, preview);
 	}
 	for (auto it = pairedPreviews.cbegin(); it != pairedPreviews.cend(); ++it) {
 		const auto targetDraft = parkedDrafts.value(it.key());
 		for (auto id = it->ids.cbegin(); id != it->ids.cend(); ++id) {
 			auto *target = obs_scene_find_sceneitem_by_id(targetDraft.scene, targetDraft.ids.value(id.key(), -1));
 			auto *preview = obs_scene_find_sceneitem_by_id(it->scene, id.value());
-			if (!target || !preview) continue;
-			obs_source_t *targetSource = obs_sceneitem_get_source(target);
-			OBSSceneItem live = resolveItem(it.key(), id.key(), QString::fromUtf8(obs_source_get_name(targetSource)), false,
-				QString::fromUtf8(obs_source_get_uuid(targetSource)));
-			if (!live) continue;
-			Transform from = capture(live);
-			previewStartTransform(it.key(), target, id.key(), from);
-			const Transform to = capture(target);
-			const QString sourceName = QString::fromUtf8(obs_source_get_name(obs_sceneitem_get_source(target)));
-			if (motionGraphicSwitch(sourceName, obs_sceneitem_get_source(target)) && from.visible != to.visible) {
-				apply(preview, progress < 50 ? from : to, true);
-				continue;
-			}
-			Transform frame = transitionFrame(from, to, progress / 100.0, float(obs_source_get_width(obs_scene_get_source(targetDraft.scene))));
-			frame.visible = from.visible || to.visible;
-			frame.order = from.visible && (progress < 60 || !to.visible) ? from.order : to.order;
-			apply(preview, frame, true);
+			addPreviewTrack(it.key(), id.key(), target, preview);
 		}
 	}
+	// Reconstruct the starting stack on every scrub, including backwards seeks.
+	// Only private preview items are changed; drafts and live scenes stay intact.
+	std::stable_sort(rehearsal.tracks.begin(), rehearsal.tracks.end(), [](const Track &a, const Track &b) {
+		return a.from.order < b.from.order;
+	});
+	for (const Track &track : rehearsal.tracks) {
+		const float width = float(obs_source_get_width(obs_scene_get_source(obs_sceneitem_get_scene(track.item))));
+		Transform start = track.graphic ? track.from : transitionFrame(track.from, track.target, 0.0, width);
+		if (!track.graphic) {
+			start.visible = track.from.visible || track.target.visible;
+			if (!track.from.visible && track.target.visible) start.order = track.target.order;
+		}
+		apply(track.item, start, true);
+	}
+	prepareCoveragePairs(rehearsal);
+	applyMovementFrame(rehearsal, progress / 100.0);
 	syncVisualCanvas();
 }
 
@@ -3104,7 +3116,7 @@ void PulseMotionEngine::createStarterStage()
 	setStatus("Created Game, Chatting, Printer and BRB looks. Preview here, or run them from Lumia. Existing scenes are unchanged.");
 }
 
-void PulseMotionEngine::openShowWizard()
+void PulseMotionEngine::openReferenceWizard()
 {
 	struct Choice { QString name; QString uuid; QString type; };
 	QList<Choice> available;
@@ -3782,6 +3794,7 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 {
 	if (!originalStoreValid) return {{"ok", false}, {"message", "The protected motion store is unreadable."}};
+	if (choices.value("schema").toInt() == 2) return createThemedShow(choices);
 	if (choices.contains("references")) return createReferencedShow(choices);
 	const QString prefix = cleanName(choices.value("name").toString(), "My Show");
 	QJsonObject selected = choices.value("roles").toObject();
@@ -4124,8 +4137,8 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 				transform.visible = entry.role == look.main || (entry.role == look.supporting && showSupporting) || overlay;
 				if (overlay && entry.role != look.graphic) {
 					transform.scale = {1, 1};
-					transform.bounds = {0, 0};
-					transform.boundsType = OBS_BOUNDS_NONE;
+					transform.bounds = {width, height};
+					transform.boundsType = OBS_BOUNDS_SCALE_INNER;
 					transform.boundsCrop = false;
 					transform.locked = true;
 				} else if (entry.role == look.supporting && style != "full") {
@@ -4883,6 +4896,32 @@ void PulseMotionEngine::prepareCoveragePairs(Execution &execution)
 				t.bounds.x >= width * 0.9f && t.bounds.y > height * 0.5f &&
 				t.pos.y + t.bounds.y >= height * 0.9f;
 		};
+		const auto insetColumn = [width, height](const Track &camera, const Track &content) {
+			if (width <= height * 1.2f || camera.graphic || content.graphic) return false;
+			const auto rectangle = [](const Transform &t) {
+				return t.boundsType != OBS_BOUNDS_NONE && t.alignment == (OBS_ALIGN_TOP | OBS_ALIGN_LEFT) &&
+					std::abs(t.rotation) < 0.001f;
+			};
+			const auto matches = [&](const Transform &inset, const Transform &full,
+						const Transform &column, const Transform &panel) {
+				return rectangle(inset) && rectangle(full) && rectangle(column) && rectangle(panel) &&
+					inset.boundsType == OBS_BOUNDS_SCALE_OUTER && inset.boundsCrop &&
+					column.boundsType == OBS_BOUNDS_SCALE_OUTER && column.boundsCrop &&
+					inset.pos.x >= 0 && inset.pos.x < width * 0.2f &&
+					inset.bounds.x > 0 && inset.bounds.x <= width * 0.45f &&
+					inset.bounds.y > 0 && inset.bounds.y <= height * 0.5f &&
+					std::abs(full.pos.x) <= 1 && std::abs(full.pos.y) <= 1 &&
+					std::abs(full.bounds.x - width) <= 1 && std::abs(full.bounds.y - height) <= 1 &&
+					std::abs(column.pos.x) <= 1 && std::abs(column.pos.y) <= 1 &&
+					column.bounds.x >= width * 0.2f && column.bounds.x <= width * 0.75f &&
+					std::abs(column.bounds.y - height) <= 1 && std::abs(panel.pos.y) <= 1 &&
+					std::abs(panel.bounds.y - height) <= 1 &&
+					std::abs(panel.pos.x - column.bounds.x) <= 1 &&
+					std::abs(panel.pos.x + panel.bounds.x - width) <= 1;
+			};
+			return matches(camera.from, content.from, camera.target, content.target) ||
+				matches(camera.target, content.target, camera.from, content.from);
+		};
 		for (std::size_t j = i + 1; j < execution.tracks.size(); ++j) {
 			if (paired[j]) continue;
 			const Track &b = execution.tracks[j];
@@ -4899,6 +4938,10 @@ void PulseMotionEngine::prepareCoveragePairs(Execution &execution)
 			} else if (height > width * 1.2f && bottom(a.from) && top(a.target) &&
 			           top(b.from) && bottom(b.target)) {
 				execution.coveragePairs.push_back({Execution::CoveragePair::Kind::PortraitSplit, j, i, width, height});
+			} else if (insetColumn(a, b)) {
+				execution.coveragePairs.push_back({Execution::CoveragePair::Kind::InsetColumn, i, j, width, height});
+			} else if (insetColumn(b, a)) {
+				execution.coveragePairs.push_back({Execution::CoveragePair::Kind::InsetColumn, j, i, width, height});
 			} else {
 				continue;
 			}
@@ -5024,46 +5067,34 @@ void PulseMotionEngine::beginAfterStage()
 	}
 }
 
-void PulseMotionEngine::tick()
+void PulseMotionEngine::applyMovementFrame(Execution &execution, double progress)
 {
-	if (!active) {
-		animationTimer.stop();
-		return;
-	}
-	if (active->phase == "holding") {
-		if (QDateTime::currentMSecsSinceEpoch() >= active->holdUntil)
-			beginRestore("Hold finished");
-		return;
-	}
-	if (active->phase != "moving" && active->phase != "restoring") return;
-	const double progress = active->durationMs <= 0 ? 1.0 :
-		std::min(1.0, double(active->clock.elapsed()) / double(active->durationMs));
-	std::vector<bool> covered(active->tracks.size(), false);
-	if (!active->restoring)
-		for (const Execution::CoveragePair &pair : active->coveragePairs)
+	std::vector<bool> covered(execution.tracks.size(), false);
+	if (!execution.restoring)
+		for (const Execution::CoveragePair &pair : execution.coveragePairs)
 			covered[pair.incoming] = covered[pair.outgoing] = true;
-	if (!active->restoring && !active->graphicCommitted && progress >= 0.5) {
+	if (!execution.restoring && !execution.graphicCommitted && progress >= 0.5) {
 		// Hide old artwork before revealing the new full-canvas graphics.
-		for (Track &track : active->tracks)
+		for (Track &track : execution.tracks)
 			if (track.graphic && track.from.visible && !track.target.visible)
 				apply(track.item, track.target, true);
-		for (Track &track : active->tracks)
+		for (Track &track : execution.tracks)
 			if (track.graphic && !track.from.visible && track.target.visible)
 				apply(track.item, track.target, true);
-		active->graphicCommitted = true;
+		execution.graphicCommitted = true;
 	}
-	if (!active->restoring && !active->orderCommitted && progress >= 0.6) {
+	if (!execution.restoring && !execution.orderCommitted && progress >= 0.6) {
 		// Swap the stack after continuous sources have travelled most of the way.
 		// Incoming sources were prepared off canvas before their first visible frame.
-		for (Track &track : active->tracks)
-			if (!covered[&track - active->tracks.data()] && track.from.visible && track.target.visible)
+		for (Track &track : execution.tracks)
+			if (!covered[&track - execution.tracks.data()] && track.from.visible && track.target.visible)
 				obs_sceneitem_set_order_position(track.item, track.target.order);
-		active->orderCommitted = true;
+		execution.orderCommitted = true;
 	}
-	if (!active->restoring) {
-		for (Execution::CoveragePair &pair : active->coveragePairs) {
-			Track &incoming = active->tracks[pair.incoming];
-			Track &outgoing = active->tracks[pair.outgoing];
+	if (!execution.restoring) {
+		for (Execution::CoveragePair &pair : execution.coveragePairs) {
+			Track &incoming = execution.tracks[pair.incoming];
+			Track &outgoing = execution.tracks[pair.outgoing];
 			Transform enterFrame, leaveFrame;
 			if (pair.kind == Execution::CoveragePair::Kind::FullInset) {
 				if (progress < 0.5) {
@@ -5083,6 +5114,21 @@ void PulseMotionEngine::tick()
 						obs_sceneitem_set_order_position(outgoing.item, outgoing.target.order);
 						pair.orderCommitted = true;
 					}
+				}
+			} else if (pair.kind == Execution::CoveragePair::Kind::InsetColumn) {
+				// Keep content behind the expanding camera until it covers the whole
+				// column. In reverse, fill the canvas before shrinking the camera.
+				const bool expanding = incoming.target.bounds.y > incoming.from.bounds.y;
+				const double cameraProgress = expanding ? std::min(1.0, progress / 0.65) :
+					std::max(0.0, (progress - 0.35) / 0.65);
+				const double contentProgress = expanding ? std::max(0.0, (progress - 0.65) / 0.35) :
+					std::min(1.0, progress / 0.35);
+				enterFrame = interpolate(incoming.from, incoming.target, cameraProgress);
+				leaveFrame = interpolate(outgoing.from, outgoing.target, contentProgress);
+				if (progress > 0.0 && progress < 1.0 && !pair.orderCommitted) {
+					obs_sceneitem_set_order_position(outgoing.item, std::min(incoming.from.order, outgoing.from.order));
+					obs_sceneitem_set_order_position(incoming.item, std::max(incoming.from.order, outgoing.from.order));
+					pair.orderCommitted = true;
 				}
 			} else {
 				auto fullFrame = [&pair](const Transform &value) {
@@ -5116,16 +5162,33 @@ void PulseMotionEngine::tick()
 			apply(outgoing.item, leaveFrame, progress >= 1.0);
 		}
 	}
-	for (Track &track : active->tracks) {
-		if (covered[&track - active->tracks.data()]) continue;
-		if (!active->restoring && track.graphic &&
+	for (Track &track : execution.tracks) {
+		if (covered[&track - execution.tracks.data()]) continue;
+		if (!execution.restoring && track.graphic &&
 		    track.from.visible != track.target.visible)
 			continue;
 		obs_scene_t *scene = obs_sceneitem_get_scene(track.item);
 		const float width = scene ? float(obs_source_get_width(obs_scene_get_source(scene))) : 0.0f;
-		const Transform frame = active->restoring ? interpolate(track.from, track.target, progress) : transitionFrame(track.from, track.target, progress, width);
+		const Transform frame = execution.restoring ? interpolate(track.from, track.target, progress) : transitionFrame(track.from, track.target, progress, width);
 		apply(track.item, frame, progress >= 1.0);
 	}
+}
+
+void PulseMotionEngine::tick()
+{
+	if (!active) {
+		animationTimer.stop();
+		return;
+	}
+	if (active->phase == "holding") {
+		if (QDateTime::currentMSecsSinceEpoch() >= active->holdUntil)
+			beginRestore("Hold finished");
+		return;
+	}
+	if (active->phase != "moving" && active->phase != "restoring") return;
+	const double progress = active->durationMs <= 0 ? 1.0 :
+		std::min(1.0, double(active->clock.elapsed()) / double(active->durationMs));
+	applyMovementFrame(*active, progress);
 	if (progress < 1.0) return;
 	if (active->phase == "restoring") {
 		for (Track &track : active->tracks) apply(track.item, track.baseline, true);

@@ -1,12 +1,15 @@
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-motion-engine.hpp"
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-scene-item-ref.hpp"
+#include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-show-templates.hpp"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <util/base.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -48,10 +51,110 @@ static void writeFile(const QString &path, const QByteArray &bytes)
 }
 
 struct PulseMotionEngineTestAccess {
+	static QString selectedStage(PulseMotionEngine &engine, const QString &stage) {
+		QComboBox field;field.addItem("Unrelated old Stage","Unrelated old Stage");
+		engine.stageField=&field;engine.selectEditorStage(stage);engine.populateStages();
+		return field.currentData().toString();
+	}
 	static bool save(PulseMotionEngine &engine) { return engine.save(); }
 	static bool valid(PulseMotionEngine &engine) { return engine.originalStoreValid; }
 	static QJsonArray actions(PulseMotionEngine &engine) { return engine.actions; }
 	static QJsonObject frame(obs_sceneitem_t *item) { return PulseMotionEngine::serialize(PulseMotionEngine::capture(item)); }
+	static void movement(PulseMotionEngine &engine, const QJsonObject &from, const QJsonObject &to)
+	{
+		const QString container = to.value("container").toString();
+		OBSSceneAutoRelease scene = obs_scene_create_private("Inert movement preview");
+		PulseMotionEngine::Execution execution;
+		QHash<qint64, QJsonObject> liveBefore;
+		for (const auto &value : to.value("items").toArray()) {
+			const auto row = value.toObject();
+			if (row.value("container").toString() != container) continue;
+			const qint64 id = row.value("itemId").toString().toLongLong();
+			OBSSceneItem live = engine.resolveItem(container, id, row.value("source").toString(), false,
+				row.value("sourceUuid").toString());
+			check(bool(live), "movement fixture source resolves");
+			liveBefore.insert(id, frame(live));
+			PulseMotionEngine::Track track;
+			track.container = container;
+			track.itemId = id;
+			track.item = obs_scene_add(scene, obs_sceneitem_get_source(live));
+			track.target = engine.deserialize(row.value("transform").toObject());
+			bool found = false;
+			for (const auto &startValue : from.value("items").toArray()) {
+				const auto start = startValue.toObject();
+				if (start.value("container").toString() == container && start.value("itemId") == row.value("itemId")) {
+					track.from = engine.deserialize(start.value("transform").toObject());
+					found = true;
+					break;
+				}
+			}
+			check(found, "movement endpoints share the same scene item");
+			execution.tracks.push_back(track);
+		}
+		std::stable_sort(execution.tracks.begin(), execution.tracks.end(), [](const auto &a, const auto &b) {
+			return a.from.order < b.from.order;
+		});
+		QComboBox kind, start;
+		kind.addItem("Layout", "layout"); start.addItem("Starting Look", from.value("id"));
+		engine.kindField = &kind; engine.previewFromLook = &start;
+		engine.draftScene = scene; engine.draftContainer = container; engine.draftIds.clear();
+		for (const auto &track : execution.tracks) engine.draftIds.insert(track.itemId, obs_sceneitem_get_id(track.item));
+		const float width = float(obs_source_get_width(obs_scene_get_source(scene)));
+		const float height = float(obs_source_get_height(obs_scene_get_source(scene)));
+		for (bool editorPreview : {false, true}) {
+			for (int percent : {0, 10, 25, 35, 50, 65, 75, 90, 100, 50, 20, 80}) {
+				if (editorPreview) {
+					for (const auto &track : execution.tracks) engine.apply(track.item, track.target, true);
+					engine.previewDraft(percent);
+				} else {
+					for (const auto &track : execution.tracks) engine.apply(track.item, track.from, true);
+					execution.orderCommitted = execution.graphicCommitted = false;
+					engine.prepareCoveragePairs(execution);
+					check(execution.coveragePairs.size() == 1 && execution.coveragePairs[0].kind ==
+						PulseMotionEngine::Execution::CoveragePair::Kind::InsetColumn,
+						"inset-to-column movement uses canvas coverage choreography");
+					engine.applyMovementFrame(execution, percent / 100.0);
+				}
+				std::vector<PulseMotionEngine::Transform> content;
+				int chatOrder = -1, highest = -1;
+				for (const auto &track : execution.tracks) {
+					obs_sceneitem_t *item = track.item;
+					if (editorPreview && engine.previewScene)
+						item = obs_scene_find_sceneitem_by_id(engine.previewScene,
+							engine.previewIds.value(obs_sceneitem_get_id(track.item), -1));
+					check(item != nullptr, "movement preview keeps every Stage item");
+					const auto current = engine.capture(item);
+					if (track.target.order < 2) content.push_back(current);
+					if (current.visible) highest = std::max(highest, current.order);
+					if (track.target.order == int(execution.tracks.size()) - 1) {
+						chatOrder = current.order;
+						check(current.visible && current.pos.x == 0 && current.pos.y == 0 &&
+							current.bounds.x == width && current.bounds.y == height,
+							"chat stays visible at full-canvas bounds throughout movement");
+					}
+					if (percent == 0 || percent == 100)
+						check(frame(item) == engine.serialize(percent == 0 ? track.from : track.target),
+							"movement reaches exact saved endpoint including stack and crop");
+				}
+				bool covered = content.size() == 2;
+				for (int y = 0; y <= 12; ++y) for (int x = 0; x <= 16; ++x) {
+					const float px = width * x / 16, py = height * y / 12;
+					bool filled = false;
+					for (const auto &t : content) filled |= t.visible && px >= t.pos.x - 1 && py >= t.pos.y - 1 &&
+						px <= t.pos.x + t.bounds.x + 1 && py <= t.pos.y + t.bounds.y + 1;
+					covered &= filled;
+				}
+				check(covered, "camera/content panels leave no canvas gap at intermediate frames or backwards scrubs");
+				check(chatOrder == highest, "chat remains topmost throughout movement");
+			}
+		}
+		engine.previewScene = nullptr; engine.pairedPreviews.clear(); engine.previewIds.clear();
+		engine.draftScene = nullptr; engine.draftIds.clear(); engine.kindField = nullptr; engine.previewFromLook = nullptr;
+		for (const auto &track : execution.tracks) {
+			OBSSceneItem live = engine.resolveItem(container, track.itemId, {}, false);
+			check(live && frame(live) == liveBefore.value(track.itemId), "offline preview never changes the live scene");
+		}
+	}
 	static void setActions(PulseMotionEngine &engine, const QJsonArray &actions) { engine.actions = actions; }
 	static void remove(PulseMotionEngine &engine, const QString &id) { engine.editingId = id; engine.deleteEditorAction(); }
 	static QString editing(PulseMotionEngine &engine) { return engine.editingId; }
@@ -234,6 +337,8 @@ static void referenceBuilderTests(const obs_video_info &video)
 	const QString motionPath = directory.filePath("plugin_config/pulse-weaver-core/motion.json");
 	const QString stagePath = directory.filePath("pulseweaver-stages.json");
 	PulseMotionEngine engine(nullptr, motionPath);
+	check(PulseMotionEngineTestAccess::selectedStage(engine,"Newly generated Stage")=="Newly generated Stage",
+		"refresh preserves a newly generated Stage before the main selector reloads");
 	obs_video_info portraitVideo = video;
 	portraitVideo.base_width = portraitVideo.output_width = 480;
 	portraitVideo.base_height = portraitVideo.output_height = 640;
@@ -316,6 +421,185 @@ static void referenceBuilderTests(const obs_video_info &video)
 	obs_canvas_remove(canvas);
 }
 
+static void themedBuilderTests(const obs_video_info &video)
+{
+	check(PulseShow::catalogue().size() == 6, "six builder themes");
+	for (const auto &look : PulseShow::theme("viewer")->looks)
+		check(look.main != "chat" && look.support != "chat", "viewer chat stays an overlay rather than a content panel");
+	for (const auto &theme : PulseShow::catalogue()) {
+		check(theme.looks.size() == 3, "three recommended Looks per Stage");
+		for (bool portrait : {false, true}) for (size_t a = 0; a < theme.looks.size(); ++a) for (size_t b = a + 1; b < theme.looks.size(); ++b) {
+			bool movement = false;
+			for (const auto &from : PulseShow::layout(theme.looks[a], portrait, true))
+				for (const auto &to : PulseShow::layout(theme.looks[b], portrait, true))
+					if (from.role == to.role && from.rect != to.rect) movement = true;
+			check(movement, "each Look pair moves at least one shared source on each canvas");
+		}
+	}
+	for (const auto &theme : PulseShow::catalogue()) for (const auto &look : theme.looks) {
+		for (bool portrait : {false, true}) for (bool supporting : {false, true}) {
+			const auto panels = PulseShow::layout(look, portrait, supporting);
+			check(!panels.empty(), "every look has content");
+			for (const auto &panel : panels)
+				check(panel.rect.x() >= 0 && panel.rect.y() >= 0 && panel.rect.width() > 0 &&
+					panel.rect.height() > 0 && panel.rect.right() <= 1.001 && panel.rect.bottom() <= 1.001,
+					"template geometry stays inside its canvas");
+		}
+	}
+	const auto *starting = PulseShow::theme("starting");
+	const auto start = PulseShow::layout(*PulseShow::look(*starting, "countdown-camera"), false, true);
+	check(start[1].rect.center().x() < .5 && start[1].treated, "starting camera is left and scoped for treatment");
+	const auto *craft = PulseShow::theme("craft");
+	const auto stacked = PulseShow::layout(*PulseShow::look(*craft, "work-camera"), true, true);
+	check(stacked[1].role == "presenter" && stacked[1].rect.y() == 0 &&
+		std::abs(stacked[0].rect.y() - stacked[1].rect.bottom()) < .001, "portrait presenter sits directly above activity");
+	const auto *game = PulseShow::theme("gameplay");
+	check(!PulseShow::layout(*PulseShow::look(*game,"game-camera"),false,true)[0].fill, "game image fits without automatic crop");
+	check(PulseShow::layout(*PulseShow::look(*game,"game"),false,false,{{"gameFill",true}})[0].fill,
+		"full-canvas gameplay honours explicit crop");
+	check(!PulseShow::layout(*PulseShow::look(*craft,"work"),true,false,{{"activityFill",false}})[0].fill,
+		"full-canvas camera honours explicit fit");
+	const auto custom = PulseShow::layout(*PulseShow::look(*craft,"work"), false, true,
+		{{"presenterRect",QJsonArray{.8,.9,.5,.5}}});
+	check(custom[1].rect.right() <= 1.001 && custom[1].rect.bottom() <= 1.001,
+		"manual panel dimensions are clamped inside canvas");
+	QTemporaryDir directory;
+	check(QDir().mkpath(directory.filePath("plugin_config/pulse-weaver-core")), "themed storage directory");
+	const QString motionPath = directory.filePath("plugin_config/pulse-weaver-core/motion.json");
+	const QString stagePath = directory.filePath("pulseweaver-stages.json");
+	writeFile(stagePath, "[]");
+	PulseMotionEngine engine(nullptr, motionPath);
+	obs_video_info portraitVideo = video; portraitVideo.base_width = portraitVideo.output_width = 480;
+	portraitVideo.base_height = portraitVideo.output_height = 640;
+	OBSCanvasAutoRelease canvas = obs_canvas_create("Pulse Weaver Vertical", &portraitVideo, PROGRAM);
+	OBSSourceAutoRelease source = obs_source_create("pulse_motion_audit_fixture", "Builder graphic fixture", nullptr, nullptr);
+	const QString uuid = obs_source_get_uuid(source);
+	const uint32_t originalMixers = obs_source_get_audio_mixers(source);
+	QJsonObject stage{{"theme","starting"},{"looks",QJsonArray{"countdown"}},{"roles",QJsonObject{{"graphic",uuid}}}};
+	QJsonObject choices{{"schema",2},{"name","Themed Trial"},{"stages",QJsonArray{stage}}};
+	const auto result = engine.createGuidedShow(choices);
+	check(result.value("ok").toBool() && result.value("stages").toInt()==1 && result.value("looks").toInt()==1,
+		"optional camera omitted; exactly one selected Stage and Look created");
+	OBSSourceAutoRelease generated = obs_get_source_by_name("Themed Trial · Starting");
+	OBSSourceAutoRelease generatedPortrait = obs_canvas_get_source_by_name(canvas,"Themed Trial · Starting · Portrait");
+	check(generated && generatedPortrait, "themed paired scenes created");
+	const auto targets = PulseMotionEngineTestAccess::actions(engine).last().toObject().value("items").toArray();
+	check(targets.size()==2, "one source target per canvas without unselected layers");
+	check(obs_source_get_audio_mixers(source) == originalMixers, "reused source audio untouched");
+	const QByteArray before = readFile(stagePath);
+	check(!engine.createGuidedShow(choices).value("ok").toBool(), "duplicate destination rejected");
+	QJsonObject missing = choices; missing.insert("name","Missing Trial"); stage.insert("roles",QJsonObject{{"graphic","missing-uuid"}}); missing.insert("stages",QJsonArray{stage});
+	check(!engine.createGuidedShow(missing).value("ok").toBool(), "missing UUID rejected");
+	stage.insert("looks",QJsonArray{}); missing.insert("stages",QJsonArray{stage});
+	check(!engine.createGuidedShow(missing).value("ok").toBool(), "empty Look selection rejected");
+	QJsonObject badOverlay = choices; badOverlay.insert("name","Overlay Trial"); badOverlay.insert("overlays",QJsonArray{QJsonObject{{"canvas","horizontal"},{"order",4},{"source",uuid}}});
+	check(!engine.createGuidedShow(badOverlay).value("ok").toBool(), "fourth full-canvas slot rejected");
+	check(readFile(stagePath)==before, "validation failures preserve existing stages");
+	// All source types are inert test fixtures, including browser sources. No URL
+	// is fetched and no device is opened by these catalogue/transaction checks.
+	for (const char *kind : {"dshow_input", "game_capture", "monitor_capture", "browser_source"}) {
+		obs_source_info type{}; type.id=kind; type.type=OBS_SOURCE_TYPE_INPUT; type.output_flags=OBS_SOURCE_VIDEO;
+		type.get_name=[](void *){return "Inert builder fixture";}; type.get_width=[](void *){return 640u;}; type.get_height=[](void *){return 480u;};
+		type.create=[](obs_data_t *,obs_source_t *)->void *{return new int(1);}; type.destroy=[](void *p){delete static_cast<int *>(p);}; obs_register_source(&type);
+	}
+	for (const char *kind : {"color_filter", "mask_filter"}) {
+		obs_source_info type{};type.id=kind;type.type=OBS_SOURCE_TYPE_FILTER;type.output_flags=OBS_SOURCE_VIDEO;
+		type.get_name=[](void *){return "Inert filter fixture";};type.create=[](obs_data_t *,obs_source_t *)->void *{return new int(1);};type.destroy=[](void *p){delete static_cast<int *>(p);};obs_register_source(&type);
+	}
+	OBSSourceAutoRelease camera=obs_source_create("dshow_input","Builder camera fixture",nullptr,nullptr);
+	OBSSourceAutoRelease screen=obs_source_create("monitor_capture","Builder screen fixture",nullptr,nullptr);
+	OBSSourceAutoRelease gameSource=obs_source_create("game_capture","Builder game fixture",nullptr,nullptr);
+	QJsonArray allStages;int totalLooks=0;
+	for(const auto &theme:PulseShow::catalogue()) {QJsonArray ids;for(const auto &look:theme.looks){ids.append(look.id);++totalLooks;}
+		QJsonObject roles{{"presenter",obs_source_get_uuid(camera)},{"activity",obs_source_get_uuid(camera)},
+			{"detail",obs_source_get_uuid(camera)},{"screen",obs_source_get_uuid(screen)},{"game",obs_source_get_uuid(gameSource)},
+			{"chat",uuid},{"graphic",uuid}};
+		allStages.append(QJsonObject{{"theme",theme.id},{"looks",ids},{"roles",roles}});
+	}
+	OBSSourceAutoRelease alerts=obs_source_create("pulse_motion_audit_fixture","Builder alerts fixture",nullptr,nullptr);
+	OBSSourceAutoRelease stickers=obs_source_create("pulse_motion_audit_fixture","Builder stickers fixture",nullptr,nullptr);
+	OBSSourceAutoRelease chat=obs_source_create("pulse_motion_audit_fixture","Builder chat overlay fixture",nullptr,nullptr);
+	QJsonArray everyLook;for(const auto &theme:PulseShow::catalogue())for(const auto &look:theme.looks)everyLook.append(theme.id+"/"+look.id);
+	QJsonArray overlays;
+	for(const QString &route:{QString("horizontal"),QString("vertical")})for(int order=1;order<=3;++order)
+		overlays.append(QJsonObject{{"canvas",route},{"order",order},{"source",obs_source_get_uuid(order==1?alerts.Get():order==2?stickers.Get():chat.Get())},{"looks",everyLook}});
+	QJsonObject full{{"schema",2},{"name","All Themes"},{"stages",allStages},{"newSources",QJsonObject{}},{"overlays",overlays}};
+	const QJsonObject fullResult=engine.createGuidedShow(full);
+	check(fullResult.value("ok").toBool()&&fullResult.value("looks").toInt()==totalLooks,"all catalogue Looks create successfully with inert sources");
+	const QJsonArray allActions=PulseMotionEngineTestAccess::actions(engine);
+	QHash<QString,QJsonObject> craftActions;
+	for(const auto &value:allActions){const auto action=value.toObject();if(action.value("stage").toString()=="All Themes · Craft focus")
+		craftActions.insert(action.value("templateId").toString(),action);}
+	for(const QString &destination:{QString("craft/work-camera"),QString("craft/presenter-work")}){
+		check(craftActions.contains("craft/work")&&craftActions.contains(destination),"all Craft movement endpoints exist");
+		PulseMotionEngineTestAccess::movement(engine,craftActions.value("craft/work"),craftActions.value(destination));
+		PulseMotionEngineTestAccess::movement(engine,craftActions.value(destination),craftActions.value("craft/work"));
+	}
+	for(const auto &value:allActions){
+		const auto action=value.toObject();if(!action.value("stage").toString().startsWith("All Themes · "))continue;
+		for(const QString &suffix:{QString(""),QString(" · Portrait")}){
+			const QString container=action.value("container").toString()+suffix;QJsonObject chatTarget;int highest=-1;
+			for(const auto &value:action.value("items").toArray()){
+				const auto item=value.toObject(),transform=item.value("transform").toObject();if(item.value("container").toString()!=container)continue;
+				if(transform.value("visible").toBool())highest=qMax(highest,transform.value("order").toInt());
+				if(item.value("sourceUuid").toString()==obs_source_get_uuid(chat))chatTarget=transform;
+			}
+			check(!chatTarget.isEmpty()&&chatTarget.value("visible").toBool()&&chatTarget.value("order").toInt()==highest,
+				"chat overlay is visible and topmost in every Look on both canvases");
+			check(chatTarget.value("positionX").toDouble()==0&&chatTarget.value("positionY").toDouble()==0&&
+				chatTarget.value("boundsWidth").toInt()==(suffix.isEmpty()?640:480)&&chatTarget.value("boundsHeight").toInt()==(suffix.isEmpty()?480:640),
+				"chat overlay keeps full-canvas bounds in every Look");
+		}
+	}
+	for(const auto &theme:PulseShow::catalogue()){
+		QSet<QString> allItems;for(const auto &value:allActions){const QJsonObject action=value.toObject();if(action.value("stage").toString()=="All Themes · "+theme.name)for(const auto &target:action.value("items").toArray())allItems.insert(target.toObject().value("container").toString()+target.toObject().value("itemId").toString());}
+		for(const auto &value:allActions){const QJsonObject action=value.toObject();if(action.value("stage").toString()!="All Themes · "+theme.name)continue;
+			check(action.value("items").toArray().size()==allItems.size(),"every Look explicitly controls all its Stage layers");}
+		QJsonArray stageActions; for(const auto &value:allActions) if(value.toObject().value("stage").toString()=="All Themes · "+theme.name)stageActions.append(value);
+		for(int a=0;a<stageActions.size();++a)for(int b=a+1;b<stageActions.size();++b)for(const QString &route:{QString(""),QString(" · Portrait")}){
+			bool moved=false;const QString container="All Themes · "+theme.name+route;
+			for(const auto &left:stageActions[a].toObject().value("items").toArray())for(const auto &right:stageActions[b].toObject().value("items").toArray()){
+				const auto from=left.toObject(),to=right.toObject();
+				if(from.value("container").toString()!=container || to.value("container").toString()!=container || from.value("itemId")!=to.value("itemId"))continue;
+				const auto f=from.value("transform").toObject(),t=to.value("transform").toObject();
+				if(f.value("visible").toBool()&&t.value("visible").toBool()&&
+				   (f.value("boundsWidth")!=t.value("boundsWidth")||f.value("boundsHeight")!=t.value("boundsHeight")||
+				    f.value("positionX")!=t.value("positionX")||f.value("positionY")!=t.value("positionY")))moved=true;
+			}
+			check(moved,"generated Look pairs keep a shared moving item on each canvas");
+		}
+	}
+	check(obs_source_filter_count(camera)==0,"Starting treatment does not filter the reused camera");
+	QJsonObject countdownStage{{"theme","starting"},{"looks",QJsonArray{"countdown","countdown-camera","introduction"}},
+		{"roles",QJsonObject{{"presenter",obs_source_get_uuid(camera)},{"graphic","new:timer"}}}};
+	QJsonObject countdownChoices{{"schema",2},{"name","Shared Countdown"},{"stages",QJsonArray{countdownStage}},
+		{"newSources",QJsonObject{{"timer",QJsonObject{{"name","Shared countdown fixture"},{"kind","builtin_graphic"},{"text","Starting soon"},{"minutes",5}}}}}};
+	check(engine.createGuidedShow(countdownChoices).value("ok").toBool(),"shared countdown show creates");
+	QSet<QString> graphicSources,treatedCameras;
+	for(const auto &value:PulseMotionEngineTestAccess::actions(engine)){
+		const auto action=value.toObject();if(action.value("stage").toString()!="Shared Countdown · Starting")continue;
+		check(action.value("durationMs").toInt()==850,"new Looks use visible 850 ms movement");
+		for(const auto &value:action.value("items").toArray()){
+			const auto item=value.toObject();if(item.value("source").toString().startsWith("Shared countdown fixture"))graphicSources.insert(item.value("sourceUuid").toString());
+			else treatedCameras.insert(item.value("sourceUuid").toString());
+		}
+	}
+	check(graphicSources.size()==2,"countdown reuses one browser source per canvas across all three Looks");
+	check(treatedCameras.size()==2,"grey presenter reuses one wrapper per canvas across all three Looks");
+	for(const auto &theme:PulseShow::catalogue()){
+		OBSSourceAutoRelease h=obs_get_source_by_name(("All Themes · "+theme.name).toUtf8().constData());
+		OBSSourceAutoRelease p=obs_canvas_get_source_by_name(canvas,("All Themes · "+theme.name+" · Portrait").toUtf8().constData());obs_source_remove(h);obs_source_remove(p);
+	}
+	for(const QString &route:{QString("horizontal"),QString("vertical")}){OBSSourceAutoRelease treatment=obs_get_source_by_name(("All Themes · Starting · Presenter camera · "+route+" camera").toUtf8().constData());if(treatment)obs_source_remove(treatment);}
+	for(const QString &name:{QString("Shared Countdown · Starting"),QString("Shared Countdown · Starting · Portrait")}){
+		OBSSourceAutoRelease owner=name.endsWith(" · Portrait")?obs_canvas_get_source_by_name(canvas,name.toUtf8().constData()):obs_get_source_by_name(name.toUtf8().constData());if(owner)obs_source_remove(owner);
+	}
+	for(const QString &uuid:graphicSources+treatedCameras){OBSSourceAutoRelease source=obs_get_source_by_uuid(uuid.toUtf8().constData());if(source)obs_source_remove(source);}
+	obs_source_remove(camera);obs_source_remove(screen);obs_source_remove(gameSource);
+	obs_source_remove(alerts);obs_source_remove(stickers);obs_source_remove(chat);
+	obs_source_remove(generated); obs_source_remove(generatedPortrait); obs_source_remove(source); obs_canvas_remove(canvas);
+}
+
 int main(int argc, char **argv)
 {
 	QApplication application(argc, argv);
@@ -337,6 +621,7 @@ int main(int argc, char **argv)
 	storageTests();
 	sceneTests();
 	referenceBuilderTests(video);
+	themedBuilderTests(video);
 	obs_wait_for_destroy_queue();
 	obs_shutdown();
 	check(runtimeErrors == 0, "no unexpected OBS runtime errors");
