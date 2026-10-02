@@ -95,6 +95,25 @@
 
 namespace {
 
+bool pulsePlatformOutputReady(QWidget *window, obs_service_t *service, const QString &provider)
+{
+	if (provider == "twitch") {
+		OBSDataAutoRelease settings = service ? obs_service_get_settings(service) : nullptr;
+		return settings && QString::fromUtf8(obs_data_get_string(settings, "service"))
+			.compare("Twitch", Qt::CaseInsensitive) == 0 && *obs_data_get_string(settings, "key");
+	}
+	if (provider.startsWith("youtube"))
+		return window->property("pulseWeaverYouTubeReady").toBool();
+	if (provider == "kick")
+		return window->property("pulseWeaverKickReady").toBool();
+	return provider == "recording";
+}
+
+QString pulsePlatformOutputState(bool live, bool ready)
+{
+	return live ? "LIVE" : ready ? "READY" : "NOT CONNECTED";
+}
+
 #ifdef YOUTUBE_ENABLED
 std::shared_ptr<YoutubeApiWrappers> pulseYouTubeAuth;
 std::mutex pulseYouTubeChatRequestMutex;
@@ -4146,7 +4165,7 @@ void OBSBasic::RefreshPulseWeaverPlatformPreviews()
 			bool ready = false;
 			if (provider == "twitch") {
 				live = StreamingActive();
-				ready = property("pulseWeaverTwitchReady").toBool();
+				ready = pulsePlatformOutputReady(this, GetService(), provider);
 			} else if (provider == "youtube") {
 				live = (pulseYouTubeOutput && obs_output_active(pulseYouTubeOutput)) ||
 				       (pulseYouTubeSecondOutput && obs_output_active(pulseYouTubeSecondOutput));
@@ -4160,7 +4179,7 @@ void OBSBasic::RefreshPulseWeaverPlatformPreviews()
 					(pulseRecordingHorizontalOutput && obs_output_active(pulseRecordingHorizontalOutput));
 				ready = true;
 			}
-			const QString state = live ? "LIVE" : ready ? "READY" : "OFF";
+			const QString state = pulsePlatformOutputState(live, ready);
 			title = provider.toUpper() + " · " + scene + " · " + state;
 		}
 		const QString richTitle = title.toHtmlEscaped();
@@ -4309,7 +4328,8 @@ void OBSBasic::RefreshPulseWeaverStreamStats()
 	const double dropPercent = totalFrames > 0 ? (double(droppedFrames) * 100.0 / double(totalFrames)) : 0.0;
 	const double megabytes = double(bytes) / (1024.0 * 1024.0);
 	pulseStreamStatsTitle->setText("Output · " + selected.title);
-	pulseStreamStatsState->setText(active ? "LIVE" : "READY");
+	pulseStreamStatsState->setText(pulsePlatformOutputState(active,
+		pulsePlatformOutputReady(this, GetService(), selected.key)));
 	pulseStreamStatsUptime->setText(active ? uptime : "00:00:00");
 	pulseStreamStatsBitrate->setText(active ? QString::number(pulseStreamStatsBitrateKbps.value(selected.key), 'f', 0) + " kbps" : "0 kbps");
 	pulseStreamStatsDropped->setText(QString("%1%").arg(dropPercent, 0, 'f', 1));
