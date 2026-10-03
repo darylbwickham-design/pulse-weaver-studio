@@ -1434,7 +1434,7 @@ void OBSBasic::InitPulseWeaverShell()
     chatLayout->addLayout(chatFilters);
 	chatLayout->addWidget(chatFeed, 1);
 	auto *chatToolbar = new QHBoxLayout;
-	chatToolbar->setContentsMargins(0, 0, 0, 0);
+	chatToolbar->setContentsMargins(10, 0, 0, 0);
 	chatToolbar->addWidget(new QLabel("Send to", chatPage));
 	pulseChatProvider = new QComboBox(chatPage);
 	pulseChatProvider->setObjectName("PulseWeaverChatProvider");
@@ -1446,8 +1446,10 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseChatProvider->setToolTip("Chat destination");
 	pulseChatProvider->setMaximumWidth(130);
 	chatToolbar->addWidget(pulseChatProvider);
-	chatLayout->removeWidget(chatStatus);
-	chatLayout->addWidget(chatStatus);
+	auto *chatStatusRow = new QHBoxLayout;
+	chatStatusRow->setContentsMargins(10, 4, 10, 4);
+	chatStatusRow->addWidget(chatStatus);
+	chatLayout->addLayout(chatStatusRow);
 	chatLayout->addLayout(chatToolbar);
 	auto *newMessages = new QPushButton(chatPage);
 	newMessages->setObjectName("PulseWeaverChatNewMessages");
