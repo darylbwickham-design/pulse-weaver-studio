@@ -354,7 +354,8 @@ class PulseWeaverPlugin extends Plugin {
         return this.rememberedOperation(() => this.request(`/motion/run?id=${encodeURIComponent(String(params.action))}&request=${encodeURIComponent(requestId)}`, 'POST'), params, String(params.action));
       }
       case 'stop_motion': return this.request('/motion/stop', 'POST');
-      case 'restore_motion': return this.request('/motion/restore', 'POST');
+      case 'restore_motion': return this.previousPresentation
+        ? this.returnPresentation() : this.restoreNativeMotion();
       case 'restore_original_motion': return this.request('/motion/original', 'POST');
       case 'start_recording': case 'stop_recording': {
         const start = action.type === 'start_recording';
@@ -403,16 +404,31 @@ class PulseWeaverPlugin extends Plugin {
   async returnPresentation() {
     const remembered = this.previousPresentation;
     if (!remembered) throw new Error('No previous stage/look is remembered. Run a Stage/Look action first, or add Remember Current Stage / Look at the start.');
-    const state = await this.ensureState(true);
+    let state = await this.ensureState(true);
     if (!state.stages?.includes(remembered.stage)) throw new Error(`Remembered Stage “${remembered.stage}” no longer exists.`);
-    if (state.motion?.active) throw new Error('Wait for the current motion to finish before returning to the previous stage/look.');
+    const restoredCapturedMotion = state.motion?.active && !remembered.pinned &&
+      remembered.motionExecutionId && state.motion.execution?.id === remembered.motionExecutionId;
+    // Stop and restore an unfinished temporary animation before switching
+    // back, so its timers cannot move sources after the undo.
+    if (state.motion?.active) {
+      await this.restoreNativeMotion();
+      state = await this.ensureState(true);
+    }
     let result;
     if (state.activeStage !== remembered.stage) {
+      // Undo the outgoing look's baseline as well as its stage switch, when
+      // that baseline still belongs to the captured operation.
+      if (!restoredCapturedMotion && !remembered.pinned && remembered.motionExecutionId && this.lastCompletedMotion?.executionId === remembered.motionExecutionId) {
+        await this.request('/motion/restore', 'POST');
+        this.lastCompletedMotion = null;
+      }
       // Changing away does not reset that Stage's scene items: selecting it
       // again retains its exact prior framing, including manual adjustments.
       result = await this.request(`/stage?name=${encodeURIComponent(remembered.stage)}`, 'POST');
     } else if (remembered.motionAction) {
-      if (!remembered.pinned && remembered.motionExecutionId && this.lastCompletedMotion?.executionId === remembered.motionExecutionId) {
+      if (restoredCapturedMotion) {
+        result = { ok: true };
+      } else if (!remembered.pinned && remembered.motionExecutionId && this.lastCompletedMotion?.executionId === remembered.motionExecutionId) {
         result = await this.request('/motion/restore', 'POST');
       } else if (remembered.look && (state.motionActions || []).some(action => action.id === remembered.look.id)) {
         result = await this.request(`/motion/run?id=${encodeURIComponent(remembered.look.id)}&request=${Date.now()}-return`, 'POST');
@@ -425,6 +441,17 @@ class PulseWeaverPlugin extends Plugin {
     if (result.ok === false) throw new Error(result.message || 'Pulse Weaver could not restore the previous presentation.');
     this.previousPresentation = null;
     return { ...result, message: `Returned to Stage “${remembered.stage}” and its previous look.` };
+  }
+  async restoreNativeMotion() {
+    const state = await this.ensureState(true);
+    if (!state.motion?.active) return this.request('/motion/restore', 'POST');
+    const result = await this.request('/motion/stop', 'POST');
+    const deadline = Date.now() + 5000;
+    while ((await this.ensureState(true)).motion?.active) {
+      if (Date.now() >= deadline) throw new Error('Motion is still stopping. Try Undo again once it finishes.');
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return result;
   }
   async actions(config) {
     const lifecycle = this.lifecycle;

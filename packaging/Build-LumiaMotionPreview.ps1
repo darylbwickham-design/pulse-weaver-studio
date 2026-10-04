@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.4.2',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.4.3',
     [string]$OutputDirectory,
     [string]$ConfigPath
 )
@@ -46,6 +46,8 @@ The default port is 18765. For a portable task build, set Custom Pulse Weaver co
 Choose **Run Motion Action** to select a named stage look. Pulse Weaver changes stage through its configured stinger when needed, then runs the saved look. Looks within the same stage use source motion. **Stop and Restore Motion**, **Restore Last Motion** and **Restore Original Scenes** provide recovery controls.
 
 Stage and look actions remember the preceding presentation automatically. Add **Return to Previous Stage / Look** after the alert finishes. For several temporary actions, add **Remember Current Stage / Look** first to pin the original destination. Cross-stage return keeps the prior camera layout; one temporary same-stage look restores its native baseline. Multiple same-stage changes require a previously observed saved look. Remembered state clears when the plugin reloads.
+
+The existing **Restore Last Motion Layout** binding (`restore_motion`) is now **Restore Previous Stage / Look (Undo)**. It returns to the presentation captured before a Lumia stage/look action, even from another current stage, and stops an unfinished motion first. If no destination is remembered, it retains the native layout-only restore. It is one return point, not a history of manual scene edits.
 
 For the newsroom at default timings: Run News intro, Delay 1.5 seconds, Send Custom Overlay Content, Delay 33.8 seconds, Return to Previous Stage / Look.
 

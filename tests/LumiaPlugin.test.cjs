@@ -51,7 +51,7 @@ async function fixture() {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.2');
+ assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.3');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
  assert.equal(manifest.config.actions.length,20);assert.equal(manifest.config.alerts.length,36);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
@@ -246,6 +246,7 @@ function presentationFixture() {
   if(route.startsWith('/stage?')){state.activeStage=new URL('http://localhost'+route).searchParams.get('name');return {ok:true};}
   if(route.startsWith('/motion/run?')){const id=new URL('http://localhost'+route).searchParams.get('id');const action=state.motionActions.find(a=>a.id===id);state.activeStage=action.stage;return {ok:true,accepted:true,executionId:'execution-'+id};}
   if(route==='/motion/restore')return {ok:true,restored:4};
+  if(route==='/motion/stop'){state.motion.active=false;return {ok:true};}
   throw Error('Unexpected route '+route);
  };
  return {plugin,state,calls,setFail:value=>fail=value};
@@ -292,13 +293,33 @@ test('A rejected outbound action retains the prior capture; a rejected return ca
  f.setFail(false);await f.plugin.runAction({type:'return_presentation'});assert.equal(f.state.activeStage,'Gaming');
 });
 
-test('Missing stage and active motion block Return without discarding the saved destination',async()=>{
+test('Missing stage blocks Return without discarding the saved destination',async()=>{
  const f=presentationFixture();await f.plugin.runAction({type:'remember_presentation'});
  f.state.stages=['Celebration'];await assert.rejects(f.plugin.runAction({type:'return_presentation'}),/no longer exists/);
  assert.ok(f.plugin.previousPresentation);
- f.state.stages.push('Gaming');f.state.motion.active=true;
- await assert.rejects(f.plugin.runAction({type:'return_presentation'}),/Wait for/);
  assert.ok(!f.calls.some(c=>c.route.startsWith('/stage?')));
+});
+
+test('Existing Restore Last Motion binding undoes the stage switch from any later stage',async()=>{
+ const f=presentationFixture();
+ await f.plugin.runAction({type:'run_motion',value:{action:'raid-look'}});
+ f.plugin.lastCompletedMotion={executionId:'execution-raid-look',action:'raid-look'};
+ f.state.activeStage='Hangout';
+ await f.plugin.runAction({type:'restore_motion'});
+ assert.equal(f.state.activeStage,'Gaming');assert.equal(f.plugin.previousPresentation,null);
+ const restoreIndex=f.calls.findIndex(c=>c.route==='/motion/restore');
+ const stageIndex=f.calls.findIndex(c=>c.route==='/stage?name=Gaming');
+ assert.ok(restoreIndex>=0 && stageIndex>restoreIndex,'Undo restores the outgoing layout before switching back');
+});
+
+test('Existing Restore Last Motion binding can undo an unfinished same-stage look',async()=>{
+ const f=presentationFixture();
+ await f.plugin.runAction({type:'run_motion',value:{action:'close-look'}});
+ f.state.motion={active:true,execution:{id:'execution-close-look'}};
+ await f.plugin.runAction({type:'restore_motion'});
+ assert.equal(f.state.motion.active,false);assert.equal(f.plugin.previousPresentation,null);
+ assert.ok(f.calls.some(c=>c.route==='/motion/stop'));
+ assert.ok(!f.calls.some(c=>c.route==='/motion/restore'),'Stop already restored this execution; do not restore an unrelated completed baseline');
 });
 
 test('Disabled automatic capture leaves no accidental return target',async()=>{

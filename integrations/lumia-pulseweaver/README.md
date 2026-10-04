@@ -1,4 +1,8 @@
-# Pulse Weaver for Lumia Stream — 1.4.2
+# Pulse Weaver for Lumia Stream — 1.4.3
+
+Version 1.4.3 makes the existing **Restore Last Motion Layout** action an undo control, now labelled **Restore Previous Stage / Look (Undo)**. Its `restore_motion` ID stays the same, so saved Lumia and LumiCon bindings need no replacement. With a remembered presentation, it returns to the stage captured before the previous Lumia stage/look action from any current stage, preserving the earlier layout. It also restores the outgoing action's native baseline when that execution still owns it. An unfinished motion is stopped and restored first. **Return to Previous Stage / Look** uses the same return behavior.
+
+Undo memory is captured by the plugin's stage/look actions or **Remember Current Stage / Look**. With no remembered destination (for example after a plugin reload), the existing Restore action retains its native layout-only fallback; it does not guess an earlier stage. This is one remembered return point, rather than a general history of manual scene edits.
 
 Version 1.4.2 adds **Return to Previous Stage / Look**. Existing Select Stage and Run Stage Look actions remember their preceding presentation by default, so a single temporary raid look needs only the Return action at the end. The remembered stage is refreshed from the native API immediately before the action; failed actions do not replace it, and failed returns keep it available for retry.
 

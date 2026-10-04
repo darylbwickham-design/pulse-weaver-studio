@@ -1,7 +1,7 @@
 {
   "id": "pulseweavercontrol",
   "name": "Pulse Weaver",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "author": "Pulse Weaver",
   "description": "Operate your Pulse Weaver show, Stages, native motion actions, sources, audio and media from Lumia Stream or LumiCon.",
   "lumiaVersion": "^9.0.0",
@@ -237,8 +237,8 @@
       },
       {
         "type": "restore_motion",
-        "label": "Restore Last Motion Layout",
-        "description": "Restore the source state saved before the most recently completed layout action.",
+        "label": "Restore Previous Stage / Look (Undo)",
+        "description": "Undo your previous stage/look change from any current stage. Stops a running motion first. Existing Restore Last Motion bindings use this action.",
         "fields": []
       },
       {
