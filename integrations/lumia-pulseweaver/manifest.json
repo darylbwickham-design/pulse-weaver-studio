@@ -1,7 +1,7 @@
 {
   "id": "pulseweavercontrol",
   "name": "Pulse Weaver",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "author": "Pulse Weaver",
   "description": "Operate your Pulse Weaver show, Stages, native motion actions, sources, audio and media from Lumia Stream or LumiCon.",
   "lumiaVersion": "^9.0.0",
@@ -117,6 +117,23 @@
             "required": true,
             "dynamicOptions": true,
             "options": []
+          },
+          {
+            "key": "rememberPrevious",
+            "label": "Remember previous stage / look",
+            "type": "select",
+            "options": [
+              {
+                "label": "Yes",
+                "value": "true"
+              },
+              {
+                "label": "No",
+                "value": "false"
+              }
+            ],
+            "defaultValue": "true",
+            "required": false
           }
         ]
       },
@@ -124,12 +141,60 @@
         "type": "next_stage",
         "label": "Next Stage",
         "description": "Activate the next existing Stage.",
-        "fields": []
+        "fields": [
+          {
+            "key": "rememberPrevious",
+            "label": "Remember previous stage / look",
+            "type": "select",
+            "options": [
+              {
+                "label": "Yes",
+                "value": "true"
+              },
+              {
+                "label": "No",
+                "value": "false"
+              }
+            ],
+            "defaultValue": "true",
+            "required": false
+          }
+        ]
       },
       {
         "type": "previous_stage",
         "label": "Previous Stage",
         "description": "Activate the previous existing Stage.",
+        "fields": [
+          {
+            "key": "rememberPrevious",
+            "label": "Remember previous stage / look",
+            "type": "select",
+            "options": [
+              {
+                "label": "Yes",
+                "value": "true"
+              },
+              {
+                "label": "No",
+                "value": "false"
+              }
+            ],
+            "defaultValue": "true",
+            "required": false
+          }
+        ]
+      },
+      {
+        "type": "remember_presentation",
+        "label": "Remember Current Stage / Look",
+        "description": "Remember the current stage before several temporary actions. It stays remembered until Return succeeds.",
+        "fields": []
+      },
+      {
+        "type": "return_presentation",
+        "label": "Return to Previous Stage / Look",
+        "description": "Return to the stage and look remembered before your temporary alert. No fixed destination is needed.",
         "fields": []
       },
       {
@@ -144,6 +209,23 @@
             "required": true,
             "dynamicOptions": true,
             "options": []
+          },
+          {
+            "key": "rememberPrevious",
+            "label": "Remember previous stage / look",
+            "type": "select",
+            "options": [
+              {
+                "label": "Yes",
+                "value": "true"
+              },
+              {
+                "label": "No",
+                "value": "false"
+              }
+            ],
+            "defaultValue": "true",
+            "required": false
           }
         ]
       },
@@ -384,6 +466,22 @@
         "system": true,
         "origin": "pulseweaver",
         "value": "STOPPED"
+      },
+      {
+        "name": "previous_stage",
+        "label": "Remembered previous stage",
+        "type": "string",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": ""
+      },
+      {
+        "name": "previous_look",
+        "label": "Remembered previous look",
+        "type": "string",
+        "system": true,
+        "origin": "pulseweaver",
+        "value": ""
       }
     ],
     "alerts": [

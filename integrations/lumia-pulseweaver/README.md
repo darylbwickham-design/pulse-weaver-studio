@@ -1,4 +1,12 @@
-# Pulse Weaver for Lumia Stream — 1.4.1
+# Pulse Weaver for Lumia Stream — 1.4.2
+
+Version 1.4.2 adds **Return to Previous Stage / Look**. Existing Select Stage and Run Stage Look actions remember their preceding presentation by default, so a single temporary raid look needs only the Return action at the end. The remembered stage is refreshed from the native API immediately before the action; failed actions do not replace it, and failed returns keep it available for retry.
+
+For alerts with several temporary stage/look actions, add **Remember Current Stage / Look** first. This pins the original destination until Return succeeds. A cross-stage return selects the original stage and retains its existing camera layout, including manual adjustments. A single temporary look within the same stage restores the native baseline when that execution is still the most recently completed motion. If several same-stage looks overwrite the native baseline, a previously observed saved look can be replayed; otherwise Return reports that the exact earlier layout is unavailable. It never restores an unrelated motion baseline.
+
+Add Return after the overlay's finishing delay, or under End of Command after the alert duration. It is an explicit end action: the overlay does not trigger it itself. Capture is local to the plugin session, cleared on unload/settings changes, and consumed after a successful return. `previous_stage` and `previous_look` expose the remembered destination; the look name is available after the plugin has observed that saved look finish. The regular and Motion Preview namespaces remain separate.
+
+For the newsroom at default timings: Run News intro, Delay 1.5 seconds, Send Custom Overlay Content, Delay 33.8 seconds, Return to Previous Stage / Look. No hard-coded Hangout/Gameplay destination is needed.
 
 Version 1.4.1 updates the existing Pulse Weaver Lumia plugin for release, alpha and unstable. It cancels queued controls and ignores late state/event replies after unload or connection-setting changes. It keeps the `pulseweavercontrol` ID, action IDs and field keys so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.4.1.lumiaplugin` over the existing regular plugin. Keep your existing port and credentials; in-place alpha upgrades use the same installation and connection. Motion controls are available when the connected build supports them.
 

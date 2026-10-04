@@ -15,6 +15,9 @@ class PulseWeaverPlugin extends Plugin {
     this.eventQueue = Promise.resolve(); this.pendingEvents = 0;
     this.actionQueue = Promise.resolve();
 	this.operations = new Map(); this.showAttempt = 0;
+    this.previousPresentation = null;
+    this.stageLooks = new Map();
+    this.lastCompletedMotion = null;
   }
   async onload() { this.enabled = true; this.connect(); }
   async onunload() {
@@ -23,6 +26,7 @@ class PulseWeaverPlugin extends Plugin {
     clearTimeout(this.retryTimer); this.stream?.destroy(); this.stream = null;
     for (const controller of this.controllers) controller.abort();
     this.state = null; this.changes.emit('state');
+    this.previousPresentation = null; this.stageLooks.clear(); this.lastCompletedMotion = null;
     await this.lumia.updateConnection(false);
   }
   async onsettingsupdate() {
@@ -158,6 +162,8 @@ class PulseWeaverPlugin extends Plugin {
     if (!this.state) return;
     const updates = ['twitch','kick','youtube'].map(platform => this.setVariable(`${platform}_status`, this.outputStatus(platform).toUpperCase()));
     updates.push(this.setVariable('active_stage', this.state.activeStage || ''));
+    updates.push(this.setVariable('previous_stage', this.previousPresentation?.stage || ''));
+    updates.push(this.setVariable('previous_look', this.previousPresentation?.look?.name || ''));
     updates.push(this.setVariable('motion_status', String(this.state.motion?.execution?.state || (this.state.motion?.active ? 'running' : 'ready')).toUpperCase()));
     updates.push(this.setVariable('motion_action', this.state.motion?.execution?.name || ''));
     const live = Object.values(this.state.outputs || {}).some(output => output.platform !== 'recording' && output.state === 'live');
@@ -223,6 +229,14 @@ class PulseWeaverPlugin extends Plugin {
       this.state.motion ||= {};
       this.state.motion.active = !['finished','failed','cancelled'].includes(payload.state);
       this.state.motion.execution = this.state.motion.active ? { id: payload.executionId, action: payload.action, name: payload.name, state: payload.state } : null;
+      if (payload.state === 'finished' && payload.ok !== false && payload.action) {
+        const entry = (this.state.motionActions || []).find(action => action.id === payload.action);
+        const stage = entry?.stage || payload.stage || this.state.activeStage;
+        if (stage) this.stageLooks.set(stage, { id: payload.action, name: entry?.name || payload.name || '' });
+        this.lastCompletedMotion = { executionId: payload.executionId, action: payload.action };
+      } else if (['failed', 'cancelled'].includes(payload.state)) {
+        this.lastCompletedMotion = null;
+      }
     }
     if (alert === 'destination_state' || alert === 'recording_state') {
       this.state.outputs ||= {};
@@ -287,6 +301,11 @@ class PulseWeaverPlugin extends Plugin {
     // Start commands must use the plan shown in Pulse Weaver at action time.
     await this.ensureState(action.type === 'go_live' || action.type === 'start_platform');
     switch (action.type) {
+      case 'remember_presentation': {
+        this.previousPresentation = await this.capturePresentation(true);
+        return { ok: true, message: `Remembered Stage “${this.previousPresentation.stage}” and its current layout.` };
+      }
+      case 'return_presentation': return this.returnPresentation();
       case 'start_platform': ++this.showAttempt; return this.destination(String(params.platform), true);
       case 'stop_platform': return this.destination(String(params.platform), false);
       case 'go_live': {
@@ -326,13 +345,13 @@ class PulseWeaverPlugin extends Plugin {
         if (stopAttempt !== this.showAttempt) throw new Error('Show stop superseded by a newer show command.');
         return { message: 'All show destinations are stopped.' };
       }
-      case 'select_stage': return this.request(`/stage?name=${encodeURIComponent(String(params.stage || ''))}`, 'POST');
-      case 'next_stage': return this.request('/stage/next', 'POST');
-      case 'previous_stage': return this.request('/stage/previous', 'POST');
+      case 'select_stage': return this.rememberedOperation(() => this.request(`/stage?name=${encodeURIComponent(String(params.stage || ''))}`, 'POST'), params);
+      case 'next_stage': return this.rememberedOperation(() => this.request('/stage/next', 'POST'), params);
+      case 'previous_stage': return this.rememberedOperation(() => this.request('/stage/previous', 'POST'), params);
       case 'run_motion': {
         if (!params.action) throw new Error('Choose a saved Pulse Weaver motion action.');
         const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        return this.request(`/motion/run?id=${encodeURIComponent(String(params.action))}&request=${encodeURIComponent(requestId)}`, 'POST');
+        return this.rememberedOperation(() => this.request(`/motion/run?id=${encodeURIComponent(String(params.action))}&request=${encodeURIComponent(requestId)}`, 'POST'), params, String(params.action));
       }
       case 'stop_motion': return this.request('/motion/stop', 'POST');
       case 'restore_motion': return this.request('/motion/restore', 'POST');
@@ -359,6 +378,53 @@ class PulseWeaverPlugin extends Plugin {
       }
       default: throw new Error(`Unsupported operation: ${action.type}`);
     }
+  }
+  async capturePresentation(pinned = false) {
+    const state = await this.ensureState(true);
+    if (state.motion?.active) throw new Error('Wait for the current motion to finish before remembering a stage/look.');
+    if (!state.activeStage || !state.stages?.includes(state.activeStage)) throw new Error('The active Pulse Weaver Stage is unavailable.');
+    return { stage: state.activeStage, look: this.stageLooks.get(state.activeStage) || null, pinned, motionExecutionId: null, motionAction: null };
+  }
+  async rememberedOperation(operation, params = {}, motionAction = null) {
+    // Existing alert bindings capture automatically. Explicit Remember pins the
+    // original across several temporary actions until Return succeeds.
+    const pinned = this.previousPresentation?.pinned;
+    const capture = !pinned && params.rememberPrevious !== false && params.rememberPrevious !== 'false'
+      ? await this.capturePresentation() : this.previousPresentation;
+    const result = await operation();
+    if (result.ok === false) throw new Error(result.message || 'Pulse Weaver did not accept the action.');
+    if (capture && capture !== this.previousPresentation) this.previousPresentation = capture;
+    if (this.previousPresentation && motionAction) {
+      this.previousPresentation.motionExecutionId = result.executionId || null;
+      this.previousPresentation.motionAction = motionAction;
+    }
+    return result;
+  }
+  async returnPresentation() {
+    const remembered = this.previousPresentation;
+    if (!remembered) throw new Error('No previous stage/look is remembered. Run a Stage/Look action first, or add Remember Current Stage / Look at the start.');
+    const state = await this.ensureState(true);
+    if (!state.stages?.includes(remembered.stage)) throw new Error(`Remembered Stage “${remembered.stage}” no longer exists.`);
+    if (state.motion?.active) throw new Error('Wait for the current motion to finish before returning to the previous stage/look.');
+    let result;
+    if (state.activeStage !== remembered.stage) {
+      // Changing away does not reset that Stage's scene items: selecting it
+      // again retains its exact prior framing, including manual adjustments.
+      result = await this.request(`/stage?name=${encodeURIComponent(remembered.stage)}`, 'POST');
+    } else if (remembered.motionAction) {
+      if (!remembered.pinned && remembered.motionExecutionId && this.lastCompletedMotion?.executionId === remembered.motionExecutionId) {
+        result = await this.request('/motion/restore', 'POST');
+      } else if (remembered.look && (state.motionActions || []).some(action => action.id === remembered.look.id)) {
+        result = await this.request(`/motion/run?id=${encodeURIComponent(remembered.look.id)}&request=${Date.now()}-return`, 'POST');
+      } else {
+        throw new Error('The exact earlier layout is no longer available. Use one temporary look, or start from a saved look before a multi-look alert.');
+      }
+    } else {
+      result = { ok: true };
+    }
+    if (result.ok === false) throw new Error(result.message || 'Pulse Weaver could not restore the previous presentation.');
+    this.previousPresentation = null;
+    return { ...result, message: `Returned to Stage “${remembered.stage}” and its previous look.` };
   }
   async actions(config) {
     const lifecycle = this.lifecycle;

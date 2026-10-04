@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.3.1',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.4.2',
     [string]$OutputDirectory,
     [string]$ConfigPath
 )
@@ -44,6 +44,10 @@ This package has its own manifest ID, `pulseweavermotionpreview`. Import it alon
 The default port is 18765. For a portable task build, set Custom Pulse Weaver configuration path to that build's config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini. No token is bundled.
 
 Choose **Run Motion Action** to select a named stage look. Pulse Weaver changes stage through its configured stinger when needed, then runs the saved look. Looks within the same stage use source motion. **Stop and Restore Motion**, **Restore Last Motion** and **Restore Original Scenes** provide recovery controls.
+
+Stage and look actions remember the preceding presentation automatically. Add **Return to Previous Stage / Look** after the alert finishes. For several temporary actions, add **Remember Current Stage / Look** first to pin the original destination. Cross-stage return keeps the prior camera layout; one temporary same-stage look restores its native baseline. Multiple same-stage changes require a previously observed saved look. Remembered state clears when the plugin reloads.
+
+For the newsroom at default timings: Run News intro, Delay 1.5 seconds, Send Custom Overlay Content, Delay 33.8 seconds, Return to Previous Stage / Look.
 
 Variables and action results belong to the `pulseweavermotionpreview` namespace. Do not reuse release-plugin variable names in preview-only action chains.
 '@ | Set-Content -LiteralPath (Join-Path $stage 'README.md') -Encoding utf8

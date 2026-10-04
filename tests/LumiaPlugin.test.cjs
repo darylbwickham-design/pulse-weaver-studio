@@ -51,9 +51,9 @@ async function fixture() {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.1');
+ assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.2');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
- assert.equal(manifest.config.actions.length,18);assert.equal(manifest.config.alerts.length,36);
+ assert.equal(manifest.config.actions.length,20);assert.equal(manifest.config.alerts.length,36);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
  for(const action of manifest.config.actions)assert.ok(!/create|delete|transform|filter|raw|url|file/i.test(action.type));
  assert.equal(new Set(manifest.config.alerts.map(a=>a.key)).size,36);
@@ -231,4 +231,85 @@ test('An event suspended during unload cannot trigger a late alert',async()=>{
   await f.plugin.onunload();finish();await pending;
   assert.equal(f.alerts.length,0);
  }finally{await f.close();}
+});
+
+function presentationFixture() {
+ const plugin=load({setVariable:async()=>{},showToast:async()=>{}},19755);
+ const calls=[];
+ const state={operatorApi:2,activeStage:'Gaming',stages:['Gaming','Celebration','Hangout'],motion:{active:false},motionActions:[{id:'game-look',name:'Game and camera',stage:'Gaming'},{id:'raid-look',name:'News intro',stage:'Celebration'},{id:'close-look',name:'Close camera',stage:'Gaming'}],outputs:{}};
+ let fail=false;
+ plugin.state=structuredClone(state);
+ plugin.request=async(route,method)=>{
+  calls.push({route,method});
+  if(route==='/state')return structuredClone(state);
+  if(fail)throw Error('Native action rejected');
+  if(route.startsWith('/stage?')){state.activeStage=new URL('http://localhost'+route).searchParams.get('name');return {ok:true};}
+  if(route.startsWith('/motion/run?')){const id=new URL('http://localhost'+route).searchParams.get('id');const action=state.motionActions.find(a=>a.id===id);state.activeStage=action.stage;return {ok:true,accepted:true,executionId:'execution-'+id};}
+  if(route==='/motion/restore')return {ok:true,restored:4};
+  throw Error('Unexpected route '+route);
+ };
+ return {plugin,state,calls,setFail:value=>fail=value};
+}
+
+test('Run Look captures fresh prior stage; Return restores that stage without replaying or resetting its look',async()=>{
+ const f=presentationFixture();f.plugin.state.activeStage='Hangout';
+ f.plugin.stageLooks.set('Gaming',{id:'game-look',name:'Game and camera'});
+ await f.plugin.runAction({type:'run_motion',value:{action:'raid-look'}});
+ assert.equal(f.plugin.previousPresentation.stage,'Gaming');
+ assert.equal(f.plugin.previousPresentation.look.id,'game-look');
+ await f.plugin.runAction({type:'return_presentation'});
+ assert.equal(f.state.activeStage,'Gaming');assert.equal(f.plugin.previousPresentation,null);
+ assert.equal(f.calls.filter(c=>c.route.startsWith('/motion/run?')).length,1,'Cross-stage return must retain manually adjusted framing');
+ await assert.rejects(f.plugin.runAction({type:'return_presentation'}),/No previous/);
+});
+
+test('A single temporary look in the same stage restores its exact native baseline',async()=>{
+ const f=presentationFixture();
+ await f.plugin.runAction({type:'run_motion',value:{action:'close-look'}});
+ f.plugin.lastCompletedMotion={executionId:'execution-close-look',action:'close-look'};
+ await f.plugin.runAction({type:'return_presentation'});
+ assert.ok(f.calls.some(c=>c.route==='/motion/restore'));
+ assert.equal(f.state.activeStage,'Gaming');
+});
+
+test('Explicit Remember pins the original through multiple temporary stage changes',async()=>{
+ const f=presentationFixture();
+ await f.plugin.runAction({type:'remember_presentation'});
+ await f.plugin.runAction({type:'select_stage',value:{stage:'Celebration'}});
+ await f.plugin.runAction({type:'select_stage',value:{stage:'Hangout'}});
+ assert.equal(f.plugin.previousPresentation.stage,'Gaming');
+ await f.plugin.runAction({type:'return_presentation'});assert.equal(f.state.activeStage,'Gaming');
+});
+
+test('A rejected outbound action retains the prior capture; a rejected return can be retried',async()=>{
+ const f=presentationFixture();
+ await f.plugin.runAction({type:'remember_presentation'});const capture=f.plugin.previousPresentation;
+ f.setFail(true);await assert.rejects(f.plugin.runAction({type:'select_stage',value:{stage:'Celebration'}}),/rejected/);
+ assert.equal(f.plugin.previousPresentation,capture);
+ f.setFail(false);await f.plugin.runAction({type:'select_stage',value:{stage:'Celebration'}});
+ f.setFail(true);await assert.rejects(f.plugin.runAction({type:'return_presentation'}),/rejected/);
+ assert.equal(f.plugin.previousPresentation,capture);
+ f.setFail(false);await f.plugin.runAction({type:'return_presentation'});assert.equal(f.state.activeStage,'Gaming');
+});
+
+test('Missing stage and active motion block Return without discarding the saved destination',async()=>{
+ const f=presentationFixture();await f.plugin.runAction({type:'remember_presentation'});
+ f.state.stages=['Celebration'];await assert.rejects(f.plugin.runAction({type:'return_presentation'}),/no longer exists/);
+ assert.ok(f.plugin.previousPresentation);
+ f.state.stages.push('Gaming');f.state.motion.active=true;
+ await assert.rejects(f.plugin.runAction({type:'return_presentation'}),/Wait for/);
+ assert.ok(!f.calls.some(c=>c.route.startsWith('/stage?')));
+});
+
+test('Disabled automatic capture leaves no accidental return target',async()=>{
+ const f=presentationFixture();await f.plugin.runAction({type:'select_stage',value:{stage:'Celebration',rememberPrevious:'false'}});
+ assert.equal(f.plugin.previousPresentation,null);
+ await assert.rejects(f.plugin.runAction({type:'return_presentation'}),/No previous/);
+});
+
+test('Return never restores another action\'s native baseline',async()=>{
+ const f=presentationFixture();await f.plugin.runAction({type:'run_motion',value:{action:'close-look'}});
+ f.plugin.lastCompletedMotion={executionId:'another-execution',action:'another-look'};
+ await assert.rejects(f.plugin.runAction({type:'return_presentation'}),/exact earlier layout/);
+ assert.ok(!f.calls.some(c=>c.route==='/motion/restore'));assert.ok(f.plugin.previousPresentation);
 });
