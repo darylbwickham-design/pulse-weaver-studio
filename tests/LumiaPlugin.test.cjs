@@ -51,12 +51,14 @@ async function fixture() {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.3');
+ assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.4');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
- assert.equal(manifest.config.actions.length,20);assert.equal(manifest.config.alerts.length,36);
+ assert.equal(manifest.config.actions.length,17);assert.equal(manifest.config.alerts.length,36);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
  for(const action of manifest.config.actions)assert.ok(!/create|delete|transform|filter|raw|url|file/i.test(action.type));
  assert.equal(new Set(manifest.config.alerts.map(a=>a.key)).size,36);
+ assert.equal(manifest.config.actions.find(a=>a.type==='restore_motion').label,'Undo Previous Stage / Look');
+ assert.ok(!manifest.config.actions.some(a=>['return_presentation','stop_motion','restore_original_motion'].includes(a.type)));
 });
 test('Saved motion actions populate the existing plugin and use the guarded motion routes',async()=>{
  const f=await fixture();try{

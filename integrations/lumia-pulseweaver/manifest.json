@@ -1,7 +1,7 @@
 {
   "id": "pulseweavercontrol",
   "name": "Pulse Weaver",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "author": "Pulse Weaver",
   "description": "Operate your Pulse Weaver show, Stages, native motion actions, sources, audio and media from Lumia Stream or LumiCon.",
   "lumiaVersion": "^9.0.0",
@@ -188,13 +188,7 @@
       {
         "type": "remember_presentation",
         "label": "Remember Current Stage / Look",
-        "description": "Remember the current stage before several temporary actions. It stays remembered until Return succeeds.",
-        "fields": []
-      },
-      {
-        "type": "return_presentation",
-        "label": "Return to Previous Stage / Look",
-        "description": "Return to the stage and look remembered before your temporary alert. No fixed destination is needed.",
+        "description": "Remember the current stage before several temporary actions. It stays remembered until Undo succeeds.",
         "fields": []
       },
       {
@@ -230,21 +224,9 @@
         ]
       },
       {
-        "type": "stop_motion",
-        "label": "Stop and Restore Motion",
-        "description": "Stop the running native motion action and restore only the sources it controls.",
-        "fields": []
-      },
-      {
         "type": "restore_motion",
-        "label": "Restore Previous Stage / Look (Undo)",
+        "label": "Undo Previous Stage / Look",
         "description": "Undo your previous stage/look change from any current stage. Stops a running motion first. Existing Restore Last Motion bindings use this action.",
-        "fields": []
-      },
-      {
-        "type": "restore_original_motion",
-        "label": "Restore Original Scenes",
-        "description": "Stop motion and restore the protected original positions, crops, visibility and layer order. Originals survive repeated actions and app restarts.",
         "fields": []
       },
       {
