@@ -1,14 +1,22 @@
-# Pulse Weaver for Lumia Stream — 1.4.1
+# Pulse Weaver for Lumia Stream — 1.4.4
 
-Version 1.4.1 updates the existing Pulse Weaver Lumia plugin for release, alpha and unstable. It cancels queued controls and ignores late state/event replies after unload or connection-setting changes. It keeps the `pulseweavercontrol` ID, action IDs and field keys so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.4.1.lumiaplugin` over the existing regular plugin. Keep your existing port and credentials; in-place alpha upgrades use the same installation and connection. Motion controls are available when the connected build supports them.
+**Undo Previous Stage / Look** is the single restore action in the menu. Its existing `restore_motion` ID is unchanged, so current Lumia and LumiCon Undo bindings remain attached. The separate Return, Stop and Restore, and Restore Original Scenes actions are no longer offered. Older saved bindings retain their handlers for compatibility.
 
-The motion catalogue includes named stage looks such as Game, Chatting, Printer and BRB. Run Stage Look / Motion Action triggers each look from Lumia reactions or LumiCon buttons. Restore Original Scenes returns the protected source state and original on-air scene even after repeated look changes or an app restart. The existing Stop + Restore and Restore Last controls remain available.
+Stage and look actions remember the preceding presentation automatically. Undo returns to the captured stage from any current stage and stops an unfinished motion first. It retains the previous stage's camera layout and restores the outgoing motion's baseline when that execution still owns it. A single temporary same-stage look restores its native baseline. Several same-stage changes require a previously observed saved look; otherwise Undo reports that the exact earlier layout is unavailable.
+
+For several temporary actions, add **Remember Current Stage / Look** first to pin the starting destination until Undo succeeds. `previous_stage` and `previous_look` expose it. Memory clears on plugin unload/settings changes, and a successful Undo consumes it. With no remembered destination, Undo retains the native layout-only fallback. This is one return point rather than a history of manual scene edits.
+
+For the newsroom at default timings: Run News intro, Delay 1.5 seconds, Send Custom Overlay Content, Delay 33.8 seconds, Undo Previous Stage / Look. The Undo action goes at the end of the chain or under End of Command after the alert duration.
+
+Version 1.4.1 updates the existing Pulse Weaver Lumia plugin for release, alpha and unstable. It cancels queued controls and ignores late state/event replies after unload or connection-setting changes. It keeps the `pulseweavercontrol` ID, action IDs and field keys so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.4.4.lumiaplugin` over the existing regular plugin. Keep your existing port and credentials; in-place alpha upgrades use the same installation and connection. Motion controls are available when the connected build supports them.
+
+The motion catalogue includes named stage looks such as Game, Chatting, Printer and BRB. Run Stage Look / Motion Action triggers each look from Lumia reactions or LumiCon buttons. Undo is the single restore control exposed to Lumia.
 
 ## Operating controls
 
 - Start/end the whole configured show, or start/stop Twitch, Kick and YouTube individually.
 - Activate an existing Stage, next Stage or previous Stage.
-- Run a named stage look or motion action, stop and restore it, restore the last completed layout, or restore the original scenes.
+- Run a named stage look or motion action, remember the starting presentation, and undo the previous stage/look change.
 - Show/hide/toggle an existing scene item.
 - Mute/unmute/toggle and set volume (0–100%) on existing audio sources.
 - Play, pause, restart, stop, next and previous on existing controllable media sources.
