@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QPointF>
 #include <QPointer>
 #include <QTimer>
@@ -53,6 +54,9 @@ private:
 	QJsonObject createThemedShow(const QJsonObject &choices);
 	void openReferenceWizard();
 	QJsonObject createReferencedShow(const QJsonObject &choices);
+	QJsonObject cloneReferenceStage(const QString &name, const QJsonObject &reference, const QJsonArray &wanted,
+		const QJsonObject &choices, obs_scene_t *horizontal, obs_scene_t *portrait,
+		std::vector<OBSSource> &created, QMap<QString, OBSSource> &units);
 	friend struct PulseMotionEngineTestAccess;
 	struct Transform {
 		vec2 pos{};
@@ -205,6 +209,7 @@ private:
 	void createLook(const QString &name, bool duplicate);
 	void createStarterStage();
 	void openShowWizard();
+	void openLegacyShowWizard();
 	void refreshNavigation();
 	void refreshSourceChips();
 

@@ -24,6 +24,15 @@ You can explore the studio without connecting a platform. For an independent tes
 
 The current conservative minimum for a multi-output 1080p60 show is **Windows 10/11 64-bit, Intel Core i5-12400F, NVIDIA GeForce RTX 3060, 32 GB RAM, and 2 GB free storage**. This is the developer's tested machine baseline. Simpler single-output shows may run on less capable hardware, but are not part of the published support floor yet.
 
+## Custom shows with Codex
+
+Give your own Codex [this custom-show guide](docs/CODEX-CUSTOM-SHOWS.md) to create
+Stages and animated Looks from your description, screenshots and existing
+sources. It includes a copy-and-paste prompt, detailed composition example,
+configuration/identity notes and a backup/rehearsal workflow. For focused code
+changes and adding output destinations, see
+[local modifications and custom outputs](docs/CUSTOM-OUTPUTS-AND-LOCAL-MODS.md).
+
 ## Source and builds
 
 See [BUILD.md](BUILD.md). Native application source is in `engine/obs-studio`; optional Lumia plugin source is in `integrations/lumia-pulseweaver`. The P logo and native theme assets are included.
@@ -35,3 +44,7 @@ This repository starts with a clean source snapshot. Build outputs, personal con
 ## Licensing
 
 Pulse Weaver is derived from OBS Studio and distributed under GPL version 2 or later; see [LICENSE](LICENSE), [UPSTREAM.md](UPSTREAM.md), and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). See the [Privacy Notice](PRIVACY.md) and [Terms of Service](TERMS.md) for the app's data practices and service terms. This is an independent project and is not an official OBS Studio release.
+
+## Wizard implementation requirements
+
+The experimental alpha uses one four-page setup wizard with broader layout options available by default. See [the setup wizard guide](docs/SETUP-WIZARD-GUIDE.md) and [alpha 6 release notes](docs/RELEASE-v1.14.2-alpha.6.md). The older theme builder guide is historical.

@@ -18,6 +18,8 @@ target_sources(
           pulse-motion-engine.cpp
           pulse-motion-engine.hpp
           pulse-show-builder.cpp
+          pulse-setup-wizard.cpp
+          pulse-setup-flexible.hpp
           pulse-show-templates.hpp
           pulse-overlay-alerts.cpp
           pulse-overlay-alerts.hpp

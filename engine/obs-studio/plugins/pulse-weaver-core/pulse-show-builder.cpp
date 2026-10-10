@@ -90,6 +90,7 @@ bool compatible(obs_source_t *source, const QString &role)
 		return kind == "dshow_input" || kind == "ffmpeg_source" || kind == "window_capture" ||
 		       kind == "ndi_source";
 	}
+	if (role.startsWith("feed")) return true;
 	return true;
 }
 void position(obs_sceneitem_t *item, const PulseShow::Panel &panel, int width, int height,
@@ -344,7 +345,7 @@ public:
 };
 } // namespace
 
-void PulseMotionEngine::openShowWizard()
+void PulseMotionEngine::openLegacyShowWizard()
 {
 	if (!mayLeaveDraft()) {
 		return;
@@ -1538,6 +1539,37 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 	if (transition != "fade" && transition != "cut") {
 		return error("Choose Fade or Cut between Stages.");
 	}
+	QSet<QString> availableTransitions{"fade", "cut"};
+	obs_frontend_source_list transitionSources{};
+	obs_frontend_get_transitions(&transitionSources);
+	for (size_t index = 0; index < transitionSources.sources.num; ++index) {
+		auto *source = transitionSources.sources.array[index];
+		if (source && QString::fromUtf8(obs_source_get_id(source)) == "obs_stinger_transition")
+			availableTransitions.insert("stinger:" + QString::fromUtf8(obs_source_get_name(source)));
+	}
+	obs_frontend_source_list_free(&transitionSources);
+	for (const auto &entry : requested) {
+		const auto policy = entry.toObject().value("transitions").toObject();
+		for (const QString &route : {QString("horizontal"), QString("vertical")}) {
+			if (policy.contains(route + "Transition") && !availableTransitions.contains(policy.value(route + "Transition").toString()))
+				return error("Choose an available stage transition. Add the stinger in Studio before selecting it.");
+			if (policy.contains(route + "DurationMs")) {
+				const auto time = policy.value(route + "DurationMs");
+				if (!time.isDouble() || time.toDouble() < 0 || time.toDouble() > 3000 || time.toDouble() != time.toInt())
+					return error("Choose a fade duration from 0 to 3000 ms.");
+			}
+		}
+	}
+	auto withTransitions = [](QJsonObject stage, const QJsonObject &choices) {
+		const auto policy = choices.value("transitions").toObject();
+		for (const QString &route : {QString("horizontal"), QString("vertical")}) {
+			const QString key = route + "Transition";
+			if (!policy.contains(key)) continue;
+			const QString choice = policy.value(key).toString(); stage.insert(key, choice);
+			stage.insert(route + "DurationMs", choice == "fade" ? policy.value(route + "DurationMs").toInt(500) : 0);
+		}
+		return stage;
+	};
 	if (requested.isEmpty()) {
 		return error("Choose at least one Stage.");
 	}
@@ -1648,6 +1680,12 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		if (!reserve(name) || !reserve(name + " · Portrait")) {
 			return error("A scene named “" + name + "” already exists. Choose another show name.");
 		}
+		if (stage.contains("referenceStage")) {
+            bool found = false;
+            for (const auto &entry : oldStages) if (entry.toObject().value("name") == stage.value("referenceStage")) found = true;
+            if (!found || stage.value("referenceLooks").toArray().isEmpty()) return error("Choose a saved layout and its Looks for " + theme->name + ".");
+            continue;
+        }
 		const QJsonArray chosen = stage.value("looks").toArray();
 		if (chosen.isEmpty()) {
 			return error("Choose at least one Look for " + theme->name + ".");
@@ -1697,6 +1735,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 	for (const auto &value : requested) {
 		const QJsonObject stage = value.toObject();
 		const auto *theme = PulseShow::theme(stage.value("theme").toString());
+		if (stage.contains("referenceStage")) continue;
 		for (const auto &id : stage.value("looks").toArray()) {
 			const auto *look = PulseShow::look(*theme, id.toString());
 			if (look->layout == "starting") {
@@ -1795,12 +1834,12 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 					return {};
 				}
 				const QString file = QDir(assetDirectory).filePath(freshId() + ".html");
-				const bool countdown = lookId.startsWith("starting/") ||
+				const bool countdown = lookId == "setup-starting/countdown" || lookId.startsWith("starting/") ||
 						       lookId == "intermission/return";
 				const int seconds = qBound(1, spec.value("minutes").toInt(5), 120) * 60;
 				const QString html =
 					QString("<!doctype html><meta charset='utf-8'><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;color:white;font-family:Arial,sans-serif}body{display:grid;place-content:center;text-align:center}h1{font-size:clamp(30px,6vw,110px);margin:.2em}#timer{font-size:clamp(42px,9vw,150px)}</style><h1>%1</h1><div id='timer'></div><script>let end=Date.now()+%2*1000;function tick(){let n=Math.max(0,Math.ceil((end-Date.now())/1000));document.getElementById('timer').textContent=%3?String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0'):'';}tick();setInterval(tick,1000);</script>")
-						.arg(spec.value("text").toString("Starting soon").toHtmlEscaped())
+						.arg(spec.value("textByLook").toObject().value(lookId.section('/', 1)).toString(spec.value("text").toString("Starting soon")).toHtmlEscaped())
 						.arg(seconds)
 						.arg(countdown ? "true" : "false");
 				QSaveFile out(file);
@@ -1832,6 +1871,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 	char *collectionName = obs_frontend_get_current_scene_collection();
 	const QString collection = QString::fromUtf8(collectionName ? collectionName : "");
 	bfree(collectionName);
+	QMap<QString, OBSSource> referenceUnits;
 	for (const auto &value : requested) {
 		const QJsonObject stage = value.toObject();
 		const auto *theme = PulseShow::theme(stage.value("theme").toString());
@@ -1852,6 +1892,16 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				    obs_source_get_uuid(obs_scene_get_source(horizontal)));
 		obs_data_set_bool(metadata, "pulseweaver.native_vertical", true);
 		obs_data_set_bool(metadata, "pulseweaver.follow_horizontal", false);
+        if (stage.contains("referenceStage")) {
+            QJsonObject reference;
+            for (const auto &entry : oldStages) if (entry.toObject().value("name") == stage.value("referenceStage")) reference = entry.toObject();
+            const auto cloned = cloneReferenceStage(name, reference, stage.value("referenceLooks").toArray(), stage,
+                horizontal, portrait, created, referenceUnits);
+            if (!cloned.value("ok").toBool()) return fail(cloned.value("message").toString());
+            stages.append(withTransitions(cloned.value("stage").toObject(), stage));
+            for (const auto &look : cloned.value("actions").toArray()) newActions.append(look);
+            continue;
+        }
 		const QJsonObject roleIds = stage.value("roles").toObject(),
 				  framing = stage.value("framing").toObject();
 		const int firstLook = newActions.size();
@@ -2061,7 +2111,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 										    .toArray()}});
 			}
 		}
-		stages.append(QJsonObject{{"name", name},
+		stages.append(withTransitions(QJsonObject{{"name", name},
 					  {"horizontal", name},
 					  {"vertical", portraitName},
 					  {"horizontalTransition", transition},
@@ -2071,7 +2121,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 					  {"assignments", assignments},
 					  {"sourceRoles", savedRoles},
 					  {"createdBy", "show-builder-v2"},
-					  {"themeId", theme->id}});
+					  {"themeId", theme->id}}, stage));
 	}
 	if (outputsBusy()) {
 		return fail("An output started during creation. Stop it and try again.");

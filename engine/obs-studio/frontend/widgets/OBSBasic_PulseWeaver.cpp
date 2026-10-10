@@ -1,6 +1,8 @@
 #include "../../shared/qt/PulseChat.hpp"
 #include "../../shared/qt/PulseInteractionFeedback.hpp"
 #include "../../shared/qt/PulseLegal.hpp"
+#include "../../shared/qt/PulseInstructions.hpp"
+#include "../../shared/qt/PulseLumiaBrand.hpp"
 #include "../../shared/qt/PulseWindowChrome.hpp"
 #include <QActionGroup>
 #include "../../shared/qt/PulseLumiaOutput.hpp"
@@ -1234,6 +1236,27 @@ void OBSBasic::InitPulseWeaverShell()
 	controlMode->setObjectName("PulseWeaverControlMode");
 	showMode->setChecked(true);
 	showHead->addStretch();
+	auto *contributorGuides = new QWidget(showBanner);
+	contributorGuides->setObjectName("PulseWeaverContributorGuides");
+	auto *guideButtons = new QHBoxLayout(contributorGuides);
+	guideButtons->setContentsMargins(0, 0, 0, 0);
+	guideButtons->setSpacing(10);
+	auto *lumiaGuide = new QToolButton(contributorGuides);
+	lumiaGuide->setObjectName("PulseWeaverLumiaGuide");
+	QPixmap lumiaGuideLogo;
+	lumiaGuideLogo.loadFromData(QByteArray(pulseLumiaLogo), "SVG");
+	// Show only the bulb from the official logo; keep the wordmark in the wizard.
+	lumiaGuide->setIcon(QIcon(lumiaGuideLogo.copy(0, 0, 25, 40)));
+	lumiaGuide->setIconSize(QSize(23, 36));
+	lumiaGuide->setFixedSize(42, 38);
+	lumiaGuide->setAccessibleName("Lumia Stream setup guide");
+	lumiaGuide->setToolTip("Lumia Stream · overlay setup and command instructions");
+	lumiaGuide->setCursor(Qt::PointingHandCursor);
+	lumiaGuide->setStyleSheet("QToolButton{background:transparent;border:1px solid transparent;border-radius:6px;padding:0;}"
+		"QToolButton:hover,QToolButton:focus{background:#242036;border-color:#FF4076;}");
+	connect(lumiaGuide, &QToolButton::clicked, this, [this] { PulseInstructions::openDialog(this); });
+	guideButtons->addWidget(lumiaGuide);
+	showHead->addWidget(contributorGuides);
 	pulseEngineStatus = new QLabel("Preparing studio…");
 	pulseEngineStatus->setObjectName("PulseWeaverStatus");
 	showHead->addWidget(pulseEngineStatus);

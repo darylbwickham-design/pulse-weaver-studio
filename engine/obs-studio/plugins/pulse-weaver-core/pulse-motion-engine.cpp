@@ -103,7 +103,9 @@ bool motionGraphicSwitch(const QString &sourceName, obs_source_t *source = nullp
 {
 	if (source) {
 		OBSDataAutoRelease metadata = obs_source_get_private_settings(source);
-		if (metadata && obs_data_get_bool(metadata, "pulseweaver.motion_graphic")) return true;
+		// Explicit false means Move, including for a legacy graphic source name.
+		if (metadata && obs_data_has_user_value(metadata, "pulseweaver.motion_graphic"))
+			return obs_data_get_bool(metadata, "pulseweaver.motion_graphic");
 	}
 	const QString name = sourceName.toLower();
 	if (name.endsWith("backdrop")) return true;
@@ -3609,9 +3611,30 @@ void PulseMotionEngine::openReferenceWizard()
 
 QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 {
+	if (obs_frontend_streaming_active() || obs_frontend_recording_active())
+		return {{"ok", false}, {"message", "Stop streaming and recording before creating a show."}};
+	bool busy = false;
+	obs_enum_outputs([](void *opaque, obs_output_t *output) {
+		if (obs_output_active(output)) *static_cast<bool *>(opaque) = true;
+		return true;
+	}, &busy);
+	if (busy) return {{"ok", false}, {"message", "Stop all outputs before creating a show."}};
 	const QString prefix = cleanName(choices.value("name").toString(), "My Show");
 	const QJsonArray requested = choices.value("stages").toArray();
 	const QJsonObject references = choices.value("references").toObject();
+	const bool setupWizard = choices.value("schema").toInt() == 3;
+	const QJsonObject selectedLooks = choices.value("selectedLooks").toObject();
+	const QJsonObject sourceBindings = choices.value("sourceBindings").toObject();
+	for (auto it = sourceBindings.begin(); it != sourceBindings.end(); ++it) {
+		OBSSourceAutoRelease original = obs_get_source_by_uuid(it.key().toUtf8().constData());
+		OBSSourceAutoRelease replacement = obs_get_source_by_uuid(it.value().toString().toUtf8().constData());
+		if (!original || obs_scene_from_source(original) || obs_group_from_source(original) ||
+		    !replacement || obs_scene_from_source(replacement) || obs_group_from_source(replacement) ||
+		    !(obs_source_get_output_flags(replacement) & OBS_SOURCE_VIDEO) ||
+		    QString::fromUtf8(obs_source_get_unversioned_id(original)) !=
+		    QString::fromUtf8(obs_source_get_unversioned_id(replacement)))
+			return {{"ok", false}, {"message", "A source assignment is missing or incompatible. Choose it again."}};
+	}
 	if (requested.isEmpty()) return {{"ok", false}, {"message", "Choose at least one Stage."}};
 	const QString stagePath = QDir(QFileInfo(storagePath).absolutePath()).absoluteFilePath("../../pulseweaver-stages.json");
 	QFile input(stagePath);
@@ -3634,7 +3657,7 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 	const QString collection = motionCollection();
 	for (const QJsonValue &value : requested) {
 		const QString suffix = value.toString();
-		if (!QStringList{"Starting", "Hangout", "Gameplay", "Intermission", "Celebration"}.contains(suffix))
+		if (!QStringList{"Starting", "Hangout", "Gameplay", "Chat", "Game", "Projects", "Intermission", "Celebration"}.contains(suffix))
 			return {{"ok", false}, {"message", "Unknown Stage choice: " + suffix}};
 		const QString name = prefix + " · " + suffix;
 		if (reserved.contains(name)) return {{"ok", false}, {"message", "Each Stage can only be selected once."}};
@@ -3657,13 +3680,22 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 		if (!horizontal || !portrait || !obs_scene_from_source(horizontal) || !obs_scene_from_source(portrait))
 			return {{"ok", false}, {"message", "The landscape or portrait scene for “" + referenceName + "” is missing."}};
 		QJsonArray looks;
+		const QJsonArray wanted = selectedLooks.value(suffix).toArray();
+		QSet<QString> found;
 		for (const QJsonValue &entry : actions) {
 			const QJsonObject look = entry.toObject();
 			if (look.value("kind").toString() == "layout" && !look.value("draft").toBool() &&
 				look.value("container").toString() == reference.value("horizontal").toString() &&
 				(look.value("collection").toString().isEmpty() || look.value("collection").toString() == collection))
-				looks.append(look);
+			{
+				if (!setupWizard || wanted.contains(look.value("id"))) {
+					looks.append(look);
+					found.insert(look.value("id").toString());
+				}
+			}
 		}
+		if (setupWizard && (wanted.isEmpty() || found.size() != wanted.size()))
+			return {{"ok", false}, {"message", "Choose valid saved Looks for " + suffix + "."}};
 		if (looks.isEmpty()) looks.append(QJsonObject{{"name", "Current composition"}, {"kind", "layout"},
 			{"durationMs", 750}, {"items", QJsonArray{}}});
 		plans.push_back({name, reference, OBSSource(horizontal), OBSSource(portrait), looks});
@@ -3679,6 +3711,69 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 	};
 	QJsonArray newActions;
 	QString firstId;
+	// Source units are isolated from the reference; raw captures and business widgets
+	// are reused. One cloned unit is shared by the generated Stage's selected Looks.
+	QMap<QString, OBSSource> units;
+	QString cloneError;
+	std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> copyItemSettings = [](obs_sceneitem_t *original, obs_sceneitem_t *copy) {
+		obs_sceneitem_set_scale_filter(copy, obs_sceneitem_get_scale_filter(original));
+		obs_sceneitem_set_blending_method(copy, obs_sceneitem_get_blending_method(original));
+		obs_sceneitem_set_blending_mode(copy, obs_sceneitem_get_blending_mode(original));
+		OBSDataAutoRelease from = obs_sceneitem_get_private_settings(original);
+		OBSDataAutoRelease to = obs_sceneitem_get_private_settings(copy);
+		obs_data_apply(to, from);
+		for (bool show : {false, true}) {
+			OBSSource transition = obs_sceneitem_get_transition(original, show);
+			obs_sceneitem_set_transition(copy, show, transition);
+			obs_sceneitem_set_transition_duration(copy, show, obs_sceneitem_get_transition_duration(original, show));
+		}
+	};
+	QSet<QString> cloning;
+	std::function<OBSSource(obs_source_t *)> assignedSource;
+	assignedSource = [&](obs_source_t *source) -> OBSSource {
+		const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
+		if (sourceBindings.contains(uuid)) {
+			OBSSourceAutoRelease replacement = obs_get_source_by_uuid(sourceBindings.value(uuid).toString().toUtf8().constData());
+			return OBSSource(replacement);
+		}
+		obs_scene_t *scene = obs_group_from_source(source);
+		if (!scene) scene = obs_scene_from_source(source);
+		if (!setupWizard || !scene) return OBSSource(source);
+		if (units.contains(uuid)) return units.value(uuid);
+		if (cloning.contains(uuid)) { cloneError = "A camera unit contains a circular scene reference."; return {}; }
+		cloning.insert(uuid);
+		const QString unitName = prefix + " · Unit · " + QUuid::createUuid().toString(QUuid::WithoutBraces);
+		OBSSceneAutoRelease copy = obs_scene_create(unitName.toUtf8().constData());
+		if (!copy) { cloneError = "Could not create a camera unit."; return {}; }
+		obs_source_t *unit = obs_scene_get_source(copy);
+		created.emplace_back(unit);
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_bool(settings, "custom_size", true);
+		obs_data_set_int(settings, "cx", obs_source_get_width(source));
+		obs_data_set_int(settings, "cy", obs_source_get_height(source));
+		obs_source_update(unit, settings);
+		obs_source_load(unit);
+		obs_source_copy_filters(unit, source);
+		OBSDataAutoRelease originalMeta = obs_source_get_private_settings(source);
+		OBSDataAutoRelease metadata = obs_source_get_private_settings(unit);
+		obs_data_apply(metadata, originalMeta);
+		obs_data_set_bool(metadata, "pulseweaver.motion_graphic", motionGraphicSwitch(obs_source_get_name(source), source));
+		struct UnitCopy { PulseMotionEngine *engine; obs_scene_t *scene;
+			std::function<OBSSource(obs_source_t *)> *assign; std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; } context{this, copy, &assignedSource, &copyItemSettings};
+		obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
+			auto &context = *static_cast<UnitCopy *>(opaque);
+			OBSSource source = (*context.assign)(obs_sceneitem_get_source(original));
+			OBSSceneItem item = source ? motionAddSource(context.scene, source) : nullptr;
+			if (!item) { context.ok = false; return false; }
+			context.engine->apply(item, PulseMotionEngine::capture(original), true);
+			(*context.settings)(original, item);
+			return true;
+		}, &context);
+		cloning.remove(uuid);
+		if (!context.ok) { cloneError = "Could not preserve a camera unit's layers."; return {}; }
+		units.insert(uuid, OBSSource(unit));
+		return OBSSource(unit);
+	};
 	for (const ReferencePlan &plan : plans) {
 		const QString portraitName = plan.name + " · Portrait";
 		OBSSceneAutoRelease horizontal = obs_scene_create(plan.name.toUtf8().constData());
@@ -3691,19 +3786,24 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 		obs_data_set_string(metadata, "pulseweaver.horizontal_uuid", obs_source_get_uuid(obs_scene_get_source(horizontal)));
 		obs_data_set_bool(metadata, "pulseweaver.follow_horizontal", false);
 		obs_data_set_bool(metadata, "pulseweaver.native_vertical", true);
-		struct CopiedItem { QString oldContainer; qint64 oldId; QString newContainer; OBSSceneItem item; Transform baseline; };
+		struct CopiedItem { QString oldContainer; qint64 oldId; QString newContainer; OBSSceneItem item; Transform baseline; QString oldUuid; QString oldName; };
 		std::vector<CopiedItem> copied;
 		struct CopyContext { PulseMotionEngine *engine; obs_scene_t *destination; QString oldContainer; QString newContainer;
-			std::vector<CopiedItem> *items; bool ok = true; };
+			std::vector<CopiedItem> *items; std::function<OBSSource(obs_source_t *)> *assign;
+			std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; };
 		auto copyCanvas = [&](obs_source_t *reference, obs_scene_t *destination, const QString &newContainer) {
-			CopyContext context{this, destination, QString::fromUtf8(obs_source_get_name(reference)), newContainer, &copied};
+			CopyContext context{this, destination, QString::fromUtf8(obs_source_get_name(reference)), newContainer, &copied, &assignedSource, &copyItemSettings};
 			obs_scene_enum_items(obs_scene_from_source(reference), [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
 				auto &context = *static_cast<CopyContext *>(opaque);
-				OBSSceneItem item = motionAddSource(context.destination, obs_sceneitem_get_source(original));
+				obs_source_t *oldSource = obs_sceneitem_get_source(original);
+				OBSSource source = (*context.assign)(oldSource);
+				OBSSceneItem item = source ? motionAddSource(context.destination, source) : nullptr;
 				if (!item) { context.ok = false; return false; }
 				const Transform baseline = PulseMotionEngine::capture(original);
 				context.engine->apply(item, baseline, true);
-				context.items->push_back({context.oldContainer, obs_sceneitem_get_id(original), context.newContainer, item, baseline});
+				(*context.settings)(original, item);
+				context.items->push_back({context.oldContainer, obs_sceneitem_get_id(original), context.newContainer, item, baseline,
+					QString::fromUtf8(obs_source_get_uuid(oldSource)), QString::fromUtf8(obs_source_get_name(oldSource))});
 				return true;
 			}, &context);
 			return context.ok;
@@ -3724,17 +3824,17 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 					const QJsonObject candidate = originals.at(targetIndex).toObject();
 					if (candidate.value("container").toString(original.value("container").toString()) != entry.oldContainer ||
 						candidate.value("itemId").toVariant().toLongLong() != entry.oldId) continue;
-					obs_source_t *source = obs_sceneitem_get_source(entry.item);
 					const QString uuid = candidate.value("sourceUuid").toString();
-					if ((!uuid.isEmpty() && uuid != QString::fromUtf8(obs_source_get_uuid(source))) ||
+					if ((!uuid.isEmpty() && uuid != entry.oldUuid) ||
 						(uuid.isEmpty() && !candidate.value("source").toString().isEmpty() &&
-						candidate.value("source").toString() != QString::fromUtf8(obs_source_get_name(source))))
+						candidate.value("source").toString() != entry.oldName))
 						return fail("A layer in reference look “" + original.value("name").toString() + "” has changed identity. Save that reference look again.");
 					target = deserialize(candidate.value("transform").toObject());
 					extra = candidate;
 					matched.insert(targetIndex);
 				}
 				obs_source_t *source = obs_sceneitem_get_source(entry.item);
+				if (choices.value("disabledSources").toArray().contains(entry.oldUuid)) target.visible = false;
 				extra.insert("container", entry.newContainer);
 				extra.insert("itemId", QString::number(obs_sceneitem_get_id(entry.item)));
 				extra.insert("source", QString::fromUtf8(obs_source_get_name(source)));
@@ -3755,6 +3855,7 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 			look.insert("policy", "switch"); look.insert("activateScene", true); look.insert("restore", false);
 			look.insert("draft", false); look.insert("items", targets);
 			look.insert("summary", "Move " + plan.name + " to " + label + ".");
+			if (setupWizard) look.insert("referenceLookId", original.value("id"));
 			if (initialTargets.isEmpty()) initialTargets = targets;
 			newActions.append(look);
 		}
@@ -3763,6 +3864,10 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 		QJsonObject stage = plan.stage;
 		stage.insert("name", plan.name); stage.insert("horizontal", plan.name); stage.insert("vertical", portraitName);
 		stage.insert("referenceStage", plan.stage.value("name")); stage.insert("createdBy", "show-builder-reference");
+		if (setupWizard) {
+			stage.insert("createdBy", "setup-wizard-v1");
+			stage.insert("sourceBindings", sourceBindings);
+		}
 		QJsonObject assignments = stage.value("assignments").toObject();
 		for (auto it = assignments.begin(); it != assignments.end(); ++it) {
 			QJsonObject assignment = it.value().toObject();
@@ -3789,6 +3894,196 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 		" editable looks. Landscape and portrait retain their reference framing. Save edits in Control, then run a saved look live when ready.";
 	setStatus(message);
 	return {{"ok", true}, {"message", message}, {"looks", newActions.size()}, {"stages", int(plans.size())}};
+}
+
+QJsonObject PulseMotionEngine::cloneReferenceStage(const QString &name, const QJsonObject &reference,
+    const QJsonArray &wanted, const QJsonObject &choices, obs_scene_t *horizontal, obs_scene_t *portrait,
+    std::vector<OBSSource> &created, QMap<QString, OBSSource> &units)
+{
+    auto fail = [](const QString &message) { return QJsonObject{{"ok", false}, {"message", message}}; };
+    const QString prefix = name, portraitName = name + " · Portrait", collection = motionCollection();
+    const bool setupWizard = true;
+    const QJsonObject sourceBindings = choices.value("sourceBindings").toObject();
+    const QString bindingKey = QString::fromUtf8(QJsonDocument(sourceBindings).toJson(QJsonDocument::Compact));
+    for (auto it = sourceBindings.begin(); it != sourceBindings.end(); ++it) {
+        OBSSourceAutoRelease from = obs_get_source_by_uuid(it.key().toUtf8().constData());
+        OBSSourceAutoRelease to = obs_get_source_by_uuid(it.value().toString().toUtf8().constData());
+        if (!from || !to || obs_scene_from_source(from) || obs_group_from_source(from) ||
+            obs_scene_from_source(to) || obs_group_from_source(to) || !(obs_source_get_output_flags(to) & OBS_SOURCE_VIDEO) ||
+            QString::fromUtf8(obs_source_get_unversioned_id(from)) != QString::fromUtf8(obs_source_get_unversioned_id(to)))
+            return fail("A saved-layout source assignment is missing or incompatible.");
+    }
+    struct ReferencePlan { QString name; QJsonObject stage; OBSSource horizontal, portrait; QJsonArray looks; };
+    OBSSourceAutoRelease fromH = motionSource(reference.value("horizontal").toString());
+    OBSSourceAutoRelease fromV = motionSource(reference.value("vertical").toString());
+    if (!fromH || !fromV || !obs_scene_from_source(fromH) || !obs_scene_from_source(fromV))
+        return fail("A saved layout's landscape or portrait scene is missing.");
+    ReferencePlan plan{name, reference, OBSSource(fromH), OBSSource(fromV), {}};
+    QSet<QString> found;
+    for (const auto &entry : actions) {
+        const auto look = entry.toObject();
+        if (look.value("kind").toString() == "layout" && !look.value("draft").toBool() &&
+            look.value("container") == reference.value("horizontal") && wanted.contains(look.value("id")) &&
+            (look.value("collection").toString().isEmpty() || look.value("collection").toString() == collection)) {
+            plan.looks.append(look); found.insert(look.value("id").toString());
+        }
+    }
+    if (wanted.isEmpty() || found.size() != wanted.size()) return fail("Choose valid saved Looks for this stage.");
+    QString firstId;
+    QJsonArray newActions;
+	// Source units are isolated from the reference; raw captures and business widgets
+	// are reused. One cloned unit is shared by the generated Stage's selected Looks.
+	QString cloneError;
+	std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> copyItemSettings = [](obs_sceneitem_t *original, obs_sceneitem_t *copy) {
+		obs_sceneitem_set_scale_filter(copy, obs_sceneitem_get_scale_filter(original));
+		obs_sceneitem_set_blending_method(copy, obs_sceneitem_get_blending_method(original));
+		obs_sceneitem_set_blending_mode(copy, obs_sceneitem_get_blending_mode(original));
+		OBSDataAutoRelease from = obs_sceneitem_get_private_settings(original);
+		OBSDataAutoRelease to = obs_sceneitem_get_private_settings(copy);
+		obs_data_apply(to, from);
+		for (bool show : {false, true}) {
+			OBSSource transition = obs_sceneitem_get_transition(original, show);
+			obs_sceneitem_set_transition(copy, show, transition);
+			obs_sceneitem_set_transition_duration(copy, show, obs_sceneitem_get_transition_duration(original, show));
+		}
+	};
+	QSet<QString> cloning;
+	std::function<OBSSource(obs_source_t *)> assignedSource;
+	assignedSource = [&](obs_source_t *source) -> OBSSource {
+		const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
+		if (sourceBindings.contains(uuid)) {
+			OBSSourceAutoRelease replacement = obs_get_source_by_uuid(sourceBindings.value(uuid).toString().toUtf8().constData());
+			return OBSSource(replacement);
+		}
+		obs_scene_t *scene = obs_group_from_source(source);
+		if (!scene) scene = obs_scene_from_source(source);
+		if (!setupWizard || !scene) return OBSSource(source);
+		if (units.contains(uuid + bindingKey)) return units.value(uuid + bindingKey);
+		if (cloning.contains(uuid)) { cloneError = "A camera unit contains a circular scene reference."; return {}; }
+		cloning.insert(uuid);
+		const QString unitName = prefix + " · Unit · " + QUuid::createUuid().toString(QUuid::WithoutBraces);
+		OBSSceneAutoRelease copy = obs_scene_create(unitName.toUtf8().constData());
+		if (!copy) { cloneError = "Could not create a camera unit."; return {}; }
+		obs_source_t *unit = obs_scene_get_source(copy);
+		created.emplace_back(unit);
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_bool(settings, "custom_size", true);
+		obs_data_set_int(settings, "cx", obs_source_get_width(source));
+		obs_data_set_int(settings, "cy", obs_source_get_height(source));
+		obs_source_update(unit, settings);
+		obs_source_load(unit);
+		obs_source_copy_filters(unit, source);
+		OBSDataAutoRelease originalMeta = obs_source_get_private_settings(source);
+		OBSDataAutoRelease metadata = obs_source_get_private_settings(unit);
+		obs_data_apply(metadata, originalMeta);
+		obs_data_set_bool(metadata, "pulseweaver.motion_graphic", motionGraphicSwitch(obs_source_get_name(source), source));
+		struct UnitCopy { PulseMotionEngine *engine; obs_scene_t *scene;
+			std::function<OBSSource(obs_source_t *)> *assign; std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; } context{this, copy, &assignedSource, &copyItemSettings};
+		obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
+			auto &context = *static_cast<UnitCopy *>(opaque);
+			OBSSource source = (*context.assign)(obs_sceneitem_get_source(original));
+			OBSSceneItem item = source ? motionAddSource(context.scene, source) : nullptr;
+			if (!item) { context.ok = false; return false; }
+			context.engine->apply(item, PulseMotionEngine::capture(original), true);
+			(*context.settings)(original, item);
+			return true;
+		}, &context);
+		cloning.remove(uuid);
+		if (!context.ok) { cloneError = "Could not preserve a camera unit's layers."; return {}; }
+		units.insert(uuid + bindingKey, OBSSource(unit));
+		return OBSSource(unit);
+	};
+	struct CopiedItem { QString oldContainer; qint64 oldId; QString newContainer; OBSSceneItem item; Transform baseline; QString oldUuid; QString oldName; };
+	std::vector<CopiedItem> copied;
+	struct CopyContext { PulseMotionEngine *engine; obs_scene_t *destination; QString oldContainer; QString newContainer;
+		std::vector<CopiedItem> *items; std::function<OBSSource(obs_source_t *)> *assign;
+		std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; };
+	auto copyCanvas = [&](obs_source_t *reference, obs_scene_t *destination, const QString &newContainer) {
+		CopyContext context{this, destination, QString::fromUtf8(obs_source_get_name(reference)), newContainer, &copied, &assignedSource, &copyItemSettings};
+		obs_scene_enum_items(obs_scene_from_source(reference), [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
+			auto &context = *static_cast<CopyContext *>(opaque);
+			obs_source_t *oldSource = obs_sceneitem_get_source(original);
+			OBSSource source = (*context.assign)(oldSource);
+			OBSSceneItem item = source ? motionAddSource(context.destination, source) : nullptr;
+			if (!item) { context.ok = false; return false; }
+			const Transform baseline = PulseMotionEngine::capture(original);
+			context.engine->apply(item, baseline, true);
+			(*context.settings)(original, item);
+			context.items->push_back({context.oldContainer, obs_sceneitem_get_id(original), context.newContainer, item, baseline,
+				QString::fromUtf8(obs_source_get_uuid(oldSource)), QString::fromUtf8(obs_source_get_name(oldSource))});
+			return true;
+		}, &context);
+		return context.ok;
+	};
+	if (!copyCanvas(plan.horizontal, horizontal, plan.name) || !copyCanvas(plan.portrait, portrait, portraitName))
+		return fail("Could not retain all layers from “" + plan.stage.value("name").toString() + "”.");
+	QJsonArray initialTargets;
+	for (const QJsonValue &value : plan.looks) {
+		const QJsonObject original = value.toObject();
+		QJsonArray targets;
+		QSet<int> matched;
+		for (int index = 0; index < int(copied.size()); ++index) {
+			const CopiedItem &entry = copied[index];
+			Transform target = entry.baseline;
+			QJsonObject extra;
+			const QJsonArray originals = original.value("items").toArray();
+			for (int targetIndex = 0; targetIndex < originals.size(); ++targetIndex) {
+				const QJsonObject candidate = originals.at(targetIndex).toObject();
+				if (candidate.value("container").toString(original.value("container").toString()) != entry.oldContainer ||
+					candidate.value("itemId").toVariant().toLongLong() != entry.oldId) continue;
+				const QString uuid = candidate.value("sourceUuid").toString();
+				if ((!uuid.isEmpty() && uuid != entry.oldUuid) ||
+					(uuid.isEmpty() && !candidate.value("source").toString().isEmpty() &&
+					candidate.value("source").toString() != entry.oldName))
+					return fail("A layer in reference look “" + original.value("name").toString() + "” has changed identity. Save that reference look again.");
+				target = deserialize(candidate.value("transform").toObject());
+				extra = candidate;
+				matched.insert(targetIndex);
+			}
+			obs_source_t *source = obs_sceneitem_get_source(entry.item);
+			if (choices.value("disabledSources").toArray().contains(entry.oldUuid)) target.visible = false;
+			extra.insert("container", entry.newContainer);
+			extra.insert("itemId", QString::number(obs_sceneitem_get_id(entry.item)));
+			extra.insert("source", QString::fromUtf8(obs_source_get_name(source)));
+			extra.insert("sourceUuid", QString::fromUtf8(obs_source_get_uuid(source)));
+			extra.insert("transform", serialize(target));
+			targets.append(extra);
+		}
+		if (matched.size() != original.value("items").toArray().size())
+			return fail("Reference look “" + original.value("name").toString() + "” contains a missing layer. Save it again before using it as a reference.");
+		QJsonObject look = original;
+		const QString referenceName = plan.stage.value("name").toString();
+		QString label = original.value("name").toString();
+		if (label.startsWith(referenceName + " · ")) label = label.mid(referenceName.size() + 3);
+		const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+		if (firstId.isEmpty()) firstId = id;
+		look.insert("version", 1); look.insert("id", id); look.insert("name", plan.name + " · " + label);
+		look.insert("collection", collection); look.insert("container", plan.name); look.insert("stage", plan.name);
+		look.insert("policy", "switch"); look.insert("activateScene", true); look.insert("restore", false);
+		look.insert("draft", false); look.insert("items", targets);
+		look.insert("summary", "Move " + plan.name + " to " + label + ".");
+		if (setupWizard) look.insert("referenceLookId", original.value("id"));
+		if (initialTargets.isEmpty()) initialTargets = targets;
+		newActions.append(look);
+	}
+	for (int index = 0; index < int(copied.size()); ++index)
+		apply(copied[index].item, deserialize(initialTargets.at(index).toObject().value("transform").toObject()), true);
+	QJsonObject stage = plan.stage;
+	stage.insert("name", plan.name); stage.insert("horizontal", plan.name); stage.insert("vertical", portraitName);
+	stage.insert("referenceStage", plan.stage.value("name")); stage.insert("createdBy", "show-builder-reference");
+	if (setupWizard) {
+		stage.insert("createdBy", "setup-wizard-v1");
+		stage.insert("sourceBindings", sourceBindings);
+	}
+	QJsonObject assignments = stage.value("assignments").toObject();
+	for (auto it = assignments.begin(); it != assignments.end(); ++it) {
+		QJsonObject assignment = it.value().toObject();
+		assignment.insert("scene", assignment.value("canvas").toString() == "vertical" ? portraitName : plan.name);
+		it.value() = assignment;
+	}
+	stage.insert("assignments", assignments);
+    stage.insert("createdBy", "show-builder-v2");
+    return {{"ok", true}, {"stage", stage}, {"actions", newActions}};
 }
 
 QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)

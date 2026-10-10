@@ -6,7 +6,8 @@ get_filename_component(REPO_ROOT "../.." ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOUR
 set(OBS_ROOT "${REPO_ROOT}/engine/obs-studio")
 set(OBS_BUILD "${OBS_ROOT}/build_unstable" CACHE PATH "Existing OBS build used for offline tests")
 add_executable(PulseMotionAuditTests main.cpp "${OBS_ROOT}/plugins/pulse-weaver-core/pulse-motion-engine.cpp"
-  "${OBS_ROOT}/plugins/pulse-weaver-core/pulse-show-builder.cpp")
+  "${OBS_ROOT}/plugins/pulse-weaver-core/pulse-show-builder.cpp"
+  "${OBS_ROOT}/plugins/pulse-weaver-core/pulse-setup-wizard.cpp")
 target_compile_options(PulseMotionAuditTests PRIVATE /utf-8)
 target_compile_definitions(PulseMotionAuditTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_include_directories(PulseMotionAuditTests PRIVATE "${OBS_ROOT}/libobs" "${OBS_BUILD}/config" "${OBS_ROOT}/frontend/api")

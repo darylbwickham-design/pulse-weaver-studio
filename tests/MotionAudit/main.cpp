@@ -60,6 +60,12 @@ struct PulseMotionEngineTestAccess {
 	static bool valid(PulseMotionEngine &engine) { return engine.originalStoreValid; }
 	static QJsonArray actions(PulseMotionEngine &engine) { return engine.actions; }
 	static QJsonObject frame(obs_sceneitem_t *item) { return PulseMotionEngine::serialize(PulseMotionEngine::capture(item)); }
+	static bool graphic(PulseMotionEngine &engine, const QJsonObject &action) {
+		PulseMotionEngine::Execution execution; execution.action = action;
+		QString error;
+		check(engine.prepareExecution(execution, error) && !execution.tracks.empty(), "prepare policy fixture");
+		return execution.tracks.front().graphic;
+	}
 	static void movement(PulseMotionEngine &engine, const QJsonObject &from, const QJsonObject &to)
 	{
 		const QString container = to.value("container").toString();
@@ -421,6 +427,171 @@ static void referenceBuilderTests(const obs_video_info &video)
 	obs_canvas_remove(canvas);
 }
 
+static void setupBuilderTests(const obs_video_info &video)
+{
+	QTemporaryDir directory;
+	check(QDir().mkpath(directory.filePath("plugin_config/pulse-weaver-core")), "setup storage directory");
+	const QString motionPath = directory.filePath("plugin_config/pulse-weaver-core/motion.json");
+	const QString stagePath = directory.filePath("pulseweaver-stages.json");
+	PulseMotionEngine engine(nullptr, motionPath);
+	obs_video_info verticalVideo = video; verticalVideo.base_width = verticalVideo.output_width = 480;
+	verticalVideo.base_height = verticalVideo.output_height = 640;
+	OBSCanvasAutoRelease canvas = obs_canvas_create("Pulse Weaver Vertical", &verticalVideo, PROGRAM);
+	OBSSceneAutoRelease horizontal = obs_scene_create("Setup Reference");
+	OBSSceneAutoRelease portrait = obs_canvas_scene_create(canvas, "Setup Reference Portrait");
+	OBSSceneAutoRelease wrapper = obs_scene_create("Setup Camera Unit");
+	OBSSourceAutoRelease camera = obs_source_create("pulse_motion_audit_fixture", "Setup camera", nullptr, nullptr);
+	OBSSourceAutoRelease replacement = obs_source_create("pulse_motion_audit_fixture", "Replacement camera", nullptr, nullptr);
+	OBSSourceAutoRelease border = obs_source_create("pulse_motion_audit_fixture", "Setup border", nullptr, nullptr);
+	obs_sceneitem_t *child = obs_scene_add(wrapper, camera);
+	obs_sceneitem_t *frame = obs_scene_add(wrapper, border);
+	obs_sceneitem_crop crop{7, 11, 13, 19}; obs_sceneitem_set_crop(child, &crop);
+	const QJsonObject childBefore = PulseMotionEngineTestAccess::frame(child);
+	obs_sceneitem_t *h = obs_scene_add(horizontal, obs_scene_get_source(wrapper));
+	obs_sceneitem_t *v = obs_scene_add(portrait, obs_scene_get_source(wrapper));
+	vec2 position{83, 97}; obs_sceneitem_set_pos(v, &position);
+	const QJsonObject hBefore = PulseMotionEngineTestAccess::frame(h), vBefore = PulseMotionEngineTestAccess::frame(v);
+	QJsonObject look{{"id", "setup-first"}, {"name", "Setup Reference · Countdown"}, {"kind", "layout"},
+		{"container", "Setup Reference"}, {"durationMs", 1100},
+		{"items", QJsonArray{QJsonObject{{"container", "Setup Reference"}, {"itemId", QString::number(obs_sceneitem_get_id(h))},
+			{"sourceUuid", obs_source_get_uuid(obs_scene_get_source(wrapper))}, {"transform", hBefore}},
+			QJsonObject{{"container", "Setup Reference Portrait"}, {"itemId", QString::number(obs_sceneitem_get_id(v))},
+			{"sourceUuid", obs_source_get_uuid(obs_scene_get_source(wrapper))}, {"transform", vBefore}}}}};
+	QJsonObject alternate = look; alternate.insert("id", "setup-second"); alternate.insert("name", "Setup Reference · Swap focus");
+	PulseMotionEngineTestAccess::setActions(engine, {look, alternate});
+	writeFile(stagePath, QJsonDocument(QJsonArray{QJsonObject{{"name", "Setup Reference"}, {"horizontal", "Setup Reference"},
+		{"vertical", "Setup Reference Portrait"}, {"horizontalTransition", "cut"}}}).toJson());
+	QJsonObject choices{{"schema", 3}, {"name", "Setup Trial"}, {"stages", QJsonArray{"Starting"}},
+		{"references", QJsonObject{{"Starting", "Setup Reference"}}},
+		{"selectedLooks", QJsonObject{{"Starting", QJsonArray{"setup-first"}}}},
+		{"sourceBindings", QJsonObject{{obs_source_get_uuid(camera), obs_source_get_uuid(replacement)}}}};
+	const auto result = engine.createGuidedShow(choices);
+	check(result.value("ok").toBool() && result.value("looks").toInt() == 1, "setup produces only selected operating Look");
+	const QJsonObject generatedLook = PulseMotionEngineTestAccess::actions(engine).last().toObject();
+	check(generatedLook.value("referenceLookId") == "setup-first" && generatedLook.value("durationMs") == 1100,
+		"setup retains reference identity provenance and duration");
+	const QJsonArray targets = generatedLook.value("items").toArray();
+	check(targets.size() == 2 && targets[0].toObject().value("sourceUuid") == targets[1].toObject().value("sourceUuid"),
+		"paired targets share persistent generated camera unit");
+	OBSSourceAutoRelease unit = obs_get_source_by_uuid(targets[0].toObject().value("sourceUuid").toString().toUtf8().constData());
+	check(unit && unit != obs_scene_get_source(wrapper), "camera unit isolated from reference");
+	obs_sceneitem_t *bound = obs_scene_find_source(obs_scene_from_source(unit), "Replacement camera");
+	check(bound && PulseMotionEngineTestAccess::frame(bound) == childBefore, "source replacement retains nested intentional crop");
+	check(obs_scene_find_source(obs_scene_from_source(unit), "Setup border") != nullptr, "decoration remains attached to movable capture unit");
+	check(PulseMotionEngineTestAccess::frame(child) == childBefore && obs_sceneitem_get_source(child) == camera,
+		"source assignment leaves reference capture and crop intact");
+	check(targets[0].toObject().value("transform").toObject() == hBefore && targets[1].toObject().value("transform").toObject() == vBefore,
+		"setup retains independent landscape and portrait saved targets");
+	const QByteArray beforeFailure = readFile(stagePath);
+	QJsonObject invalid = choices; invalid.insert("name", "Invalid Setup"); invalid.insert("selectedLooks", QJsonObject{{"Starting", QJsonArray{"missing"}}});
+	check(!engine.createGuidedShow(invalid).value("ok").toBool(), "unknown selected Look rejected");
+	invalid.insert("selectedLooks", choices.value("selectedLooks")); invalid.insert("sourceBindings", QJsonObject{{obs_source_get_uuid(camera), "missing"}});
+	check(!engine.createGuidedShow(invalid).value("ok").toBool() && readFile(stagePath) == beforeFailure,
+		"missing source rejected before catalogue mutation");
+	QJsonObject second = choices; second.insert("name", "Two Looks"); second.insert("selectedLooks", QJsonObject{{"Starting", QJsonArray{"setup-first", "setup-second"}}});
+	check(engine.createGuidedShow(second).value("ok").toBool(), "explicit operating focus swap creates alternate Look");
+	const QJsonArray all = PulseMotionEngineTestAccess::actions(engine);
+	OBSSourceAutoRelease secondUnit = obs_get_source_by_uuid(all.last().toObject().value("items").toArray().first().toObject().value("sourceUuid").toString().toUtf8().constData());
+	check(all[all.size()-1].toObject().value("items") == all[all.size()-2].toObject().value("items"),
+		"selected Looks share item identities for native Move");
+	QJsonObject savedStage{{"theme", "setup-starting"}, {"referenceStage", "Setup Reference"},
+		{"referenceLooks", QJsonArray{"setup-first", "setup-second"}}, {"sourceBindings", choices.value("sourceBindings")}};
+	QJsonObject mixed{{"schema", 2}, {"name", "Mixed Trial"}, {"stages", QJsonArray{
+		QJsonObject{{"theme", "setup-chat"}, {"looks", QJsonArray{"just-chatting"}},
+			{"roles", QJsonObject{{"feedA", obs_source_get_uuid(camera)}}}}, savedStage}}};
+	// Resolve the catalogue ID rather than coupling this test to a display label.
+	auto mixedStages = mixed.value("stages").toArray(); auto chatStage = mixedStages[0].toObject();
+	chatStage.insert("looks", QJsonArray{PulseShow::theme("setup-chat")->looks.front().id}); mixedStages[0] = chatStage;
+	mixed.insert("stages", mixedStages);
+	const auto mixedResult = engine.createGuidedShow(mixed);
+	check(mixedResult.value("ok").toBool() && mixedResult.value("looks").toInt() == 3, "single wizard transaction mixes flexible and saved stage layouts");
+	const auto mixedActions = PulseMotionEngineTestAccess::actions(engine);
+	const auto mixedLook = mixedActions.last().toObject();
+	check(mixedLook.value("referenceLookId") == "setup-second" && mixedLook.value("durationMs") == 1100,
+		"saved stage in broader wizard retains selected Look and movement duration");
+	const auto mixedTargets = mixedLook.value("items").toArray();
+	check(mixedTargets.size() == 2 && mixedTargets[0].toObject().value("transform").toObject() == hBefore &&
+		mixedTargets[1].toObject().value("transform").toObject() == vBefore, "mixed wizard preserves independent saved H/V geometry");
+	OBSSourceAutoRelease mixedUnit = obs_get_source_by_uuid(mixedTargets.first().toObject().value("sourceUuid").toString().toUtf8().constData());
+	check(mixedUnit && PulseMotionEngineTestAccess::frame(obs_scene_find_source(obs_scene_from_source(mixedUnit), "Replacement camera")) == childBefore,
+		"mixed wizard retains camera unit crop and chosen replacement");
+	auto generatedStages = QJsonDocument::fromJson(readFile(stagePath)).array();
+	check(generatedStages.last().toObject().value("horizontalTransition") == "cut",
+		"wizard keeps saved stage transition when no replacement is chosen");
+	QJsonObject transitionTrial = mixed; transitionTrial.insert("name", "Transition Trial");
+	QJsonArray transitionStages = mixed.value("stages").toArray();
+	QJsonObject customTransitionStage = transitionStages[0].toObject();
+	customTransitionStage.insert("transitions", QJsonObject{{"horizontalTransition", "cut"}, {"verticalTransition", "fade"}, {"verticalDurationMs", 730}});
+	transitionStages[0] = customTransitionStage;
+	QJsonObject savedTransitionStage = transitionStages[1].toObject();
+	savedTransitionStage.insert("transitions", QJsonObject{{"horizontalTransition", "fade"}, {"horizontalDurationMs", 910}, {"verticalTransition", "cut"}});
+	transitionStages[1] = savedTransitionStage; transitionTrial.insert("stages", transitionStages);
+	check(engine.createGuidedShow(transitionTrial).value("ok").toBool(), "wizard accepts independent transitions for flexible and saved stages");
+	generatedStages = QJsonDocument::fromJson(readFile(stagePath)).array();
+	const auto customPolicy = generatedStages[generatedStages.size()-2].toObject(), savedPolicy = generatedStages.last().toObject();
+	check(customPolicy.value("horizontalTransition") == "cut" && customPolicy.value("horizontalDurationMs") == 0 &&
+		customPolicy.value("verticalTransition") == "fade" && customPolicy.value("verticalDurationMs") == 730,
+		"flexible stage persists independent format choices and fade timing");
+	check(savedPolicy.value("horizontalTransition") == "fade" && savedPolicy.value("horizontalDurationMs") == 910 &&
+		savedPolicy.value("verticalTransition") == "cut" && savedPolicy.value("verticalDurationMs") == 0,
+		"saved stage accepts explicit format overrides without changing Look movement");
+	const auto beforeBadTransition = readFile(stagePath), beforeBadActions = QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson();
+	savedTransitionStage.insert("transitions", QJsonObject{{"horizontalTransition", "stinger:Missing"}});
+	transitionStages[1] = savedTransitionStage; transitionTrial.insert("name", "Missing Stinger Trial"); transitionTrial.insert("stages", transitionStages);
+	check(!engine.createGuidedShow(transitionTrial).value("ok").toBool() && readFile(stagePath) == beforeBadTransition &&
+		QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson() == beforeBadActions,
+		"unavailable stinger rejected without creating stages or changing catalogues");
+	OBSSourceAutoRelease missingTransitionScene = obs_get_source_by_name("Missing Stinger Trial · Chat");
+	check(!missingTransitionScene, "invalid stinger leaves no partially created flexible stage");
+	for (const QString &stageName : {QString("Transition Trial · Chat"), QString("Transition Trial · Starting")}) {
+		OBSSourceAutoRelease hStage = obs_get_source_by_name(stageName.toUtf8().constData());
+		OBSSourceAutoRelease vStage = obs_canvas_get_source_by_name(canvas, (stageName + " · Portrait").toUtf8().constData());
+		if (hStage) obs_source_remove(hStage); if (vStage) obs_source_remove(vStage);
+	}
+	const auto transitionAction = PulseMotionEngineTestAccess::actions(engine).last().toObject();
+	OBSSourceAutoRelease transitionUnit = obs_get_source_by_uuid(transitionAction.value("items").toArray().first().toObject().value("sourceUuid").toString().toUtf8().constData());
+	if (transitionUnit) obs_source_remove(transitionUnit);
+	savedTransitionStage.insert("transitions", QJsonObject{{"verticalTransition", "fade"}, {"verticalDurationMs", -1}});
+	transitionStages[1] = savedTransitionStage; transitionTrial.insert("stages", transitionStages);
+	check(!engine.createGuidedShow(transitionTrial).value("ok").toBool() && readFile(stagePath) == beforeBadTransition,
+		"invalid transition duration rejected without catalogue changes");
+	const auto stagesBeforeInvalid = readFile(stagePath); const auto actionsBeforeInvalid = PulseMotionEngineTestAccess::actions(engine);
+	savedStage.insert("referenceLooks", QJsonArray{"missing"}); mixedStages[1] = savedStage;
+	mixed.insert("name", "Mixed Invalid"); mixed.insert("stages", mixedStages);
+	check(!engine.createGuidedShow(mixed).value("ok").toBool() && readFile(stagePath) == stagesBeforeInvalid &&
+		PulseMotionEngineTestAccess::actions(engine) == actionsBeforeInvalid, "invalid saved Look rolls back earlier flexible stage and both catalogues");
+	OBSSourceAutoRelease rejectedScene = obs_get_source_by_name("Mixed Invalid · Chat");
+	check(!rejectedScene, "failed mixed show leaves no earlier generated stage");
+	// Explicit policy takes precedence over names, and survives source serialization.
+	OBSSourceAutoRelease graphic = obs_source_create("pulse_motion_audit_fixture", "brb scene", nullptr, nullptr);
+	obs_sceneitem_t *graphicItem = obs_scene_add(horizontal, graphic);
+	QJsonObject graphicAction{{"kind", "layout"}, {"policy", "current"}, {"container", "Setup Reference"},
+		{"items", QJsonArray{QJsonObject{{"container", "Setup Reference"}, {"itemId", QString::number(obs_sceneitem_get_id(graphicItem))},
+			{"source", "brb scene"}, {"sourceUuid", obs_source_get_uuid(graphic)}, {"transform", PulseMotionEngineTestAccess::frame(graphicItem)}}}}};
+	check(PulseMotionEngineTestAccess::graphic(engine, graphicAction), "absent policy retains legacy graphic behavior");
+	OBSDataAutoRelease metadata = obs_source_get_private_settings(graphic); obs_data_set_bool(metadata, "pulseweaver.motion_graphic", false);
+	check(!PulseMotionEngineTestAccess::graphic(engine, graphicAction), "explicit false selects Move for legacy BRB name");
+	obs_source_set_name(graphic, "stream ended");
+	check(!PulseMotionEngineTestAccess::graphic(engine, graphicAction), "source rename cannot override explicit Move");
+	OBSDataAutoRelease serialized = obs_save_source(graphic);
+	OBSDataAutoRelease savedMetadata = obs_data_get_obj(serialized, "private_settings");
+	check(obs_data_has_user_value(savedMetadata, "pulseweaver.motion_graphic") && !obs_data_get_bool(savedMetadata, "pulseweaver.motion_graphic"),
+		"explicit Move metadata persists in native source serialization");
+	obs_data_set_bool(metadata, "pulseweaver.motion_graphic", true);
+	check(PulseMotionEngineTestAccess::graphic(engine, graphicAction), "explicit true selects graphic-switch policy");
+	for (const char *name : {"Setup Trial · Starting", "Setup Trial · Starting · Portrait", "Two Looks · Starting", "Two Looks · Starting · Portrait",
+		"Mixed Trial · Chat", "Mixed Trial · Chat · Portrait", "Mixed Trial · Starting", "Mixed Trial · Starting · Portrait"}) {
+		OBSSourceAutoRelease source = obs_get_source_by_name(name); if (!source) source = obs_canvas_get_source_by_name(canvas, name);
+		if (source) obs_source_remove(source);
+	}
+	obs_source_remove(unit);
+	obs_source_remove(secondUnit);
+	obs_source_remove(mixedUnit);
+	obs_source_remove(graphic); obs_source_remove(camera); obs_source_remove(replacement); obs_source_remove(border);
+	obs_source_remove(obs_scene_get_source(wrapper)); obs_source_remove(obs_scene_get_source(horizontal)); obs_source_remove(obs_scene_get_source(portrait));
+	obs_canvas_remove(canvas);
+}
+
 static void themedBuilderTests(const obs_video_info &video)
 {
 	check(PulseShow::catalogue().size() == 6, "six builder themes");
@@ -586,6 +757,90 @@ static void themedBuilderTests(const obs_video_info &video)
 	}
 	check(graphicSources.size()==2,"countdown reuses one browser source per canvas across all three Looks");
 	check(treatedCameras.size()==2,"grey presenter reuses one wrapper per canvas across all three Looks");
+	// Generic setup groups must work with role assignments unlike the saved
+	// printer/presenter reference: here A is a screen and B is a camera.
+	QJsonArray setupStages;
+	int setupCount = 0;
+	check(PulseShow::setupCatalogue().size() == 6, "flexible setup retains the six agreed stage groups");
+	for (const auto &group : PulseShow::setupCatalogue()) {
+		QJsonArray ids; QJsonObject frames;
+		for (const auto &look : group.looks) {
+			ids.append(look.id); ++setupCount;
+			for (const QString &route : {QString("horizontal"), QString("vertical")})
+				frames.insert(look.id + "/" + route, QJsonObject{{"corner", "bottom-right"}, {"divider", .45}, {"durationMs", 1200}});
+		}
+		setupStages.append(QJsonObject{{"theme", group.id}, {"looks", ids}, {"framing", frames},
+			{"roles", QJsonObject{{"feedA", obs_source_get_uuid(screen)}, {"feedB", obs_source_get_uuid(camera)},
+				{"feedC", obs_source_get_uuid(gameSource)}, {"graphic", uuid}}}});
+	}
+	QJsonObject flexible{{"schema", 2}, {"name", "Flexible Trial"}, {"stages", setupStages}, {"transition", "cut"},
+		{"overlays", QJsonArray{QJsonObject{{"canvas", "horizontal"}, {"order", 1}, {"source", obs_source_get_uuid(alerts)},
+			{"looks", QJsonArray{"setup-celebration/reaction", "setup-celebration/announcement"}}}}}};
+	const auto flexibleResult = engine.createGuidedShow(flexible);
+	check(flexibleResult.value("ok").toBool() && flexibleResult.value("looks").toInt() == setupCount,
+		"all flexible Looks create with screens, cameras and games in neutral slots");
+	for (const auto &value : PulseMotionEngineTestAccess::actions(engine)) {
+		const auto action = value.toObject(); if (!action.value("stage").toString().startsWith("Flexible Trial · ")) continue;
+		check(action.value("durationMs").toInt() == 1200, "flexible Look movement option reaches the native action");
+		bool foundAlert = false;
+		for (const auto &value : action.value("items").toArray()) {
+			const auto item = value.toObject(), transform = item.value("transform").toObject();
+			if (item.value("sourceUuid").toString() == obs_source_get_uuid(alerts) && transform.value("visible").toBool()) foundAlert = true;
+			if (action.value("templateId").toString() != "setup-chat/reaction" || item.value("sourceUuid").toString() != obs_source_get_uuid(screen)) continue;
+			if (item.value("container").toString().endsWith("Portrait"))
+				check(std::abs(transform.value("boundsHeight").toDouble() - 640 * .45) < .01,
+					"portrait panel proportion matches the selected option");
+			// Native transforms snap to half pixels.
+			else check(std::abs(transform.value("positionX").toDouble() - 640 * .73) <= .25 &&
+				std::abs(transform.value("positionY").toDouble() - 480 * .68) <= .25,
+				"landscape inset reaches the selected bottom-right corner");
+		}
+		check(foundAlert == action.value("stage").toString().endsWith("Celebration"),
+			"an optional celebration overlay stays out of the other stage groups");
+	}
+	QJsonObject optional{{"schema", 2}, {"name", "Flexible No Camera"}, {"stages", QJsonArray{QJsonObject{
+		{"theme", "setup-chat"}, {"looks", QJsonArray{"reaction"}}, {"roles", QJsonObject{{"feedB", uuid}, {"feedA", ""}}}}}}};
+	check(engine.createGuidedShow(optional).value("ok").toBool(), "flexible content-only setup allows an omitted supporting camera");
+	check(PulseMotionEngineTestAccess::actions(engine).last().toObject().value("items").toArray().size() == 2,
+		"omitting support produces exactly one feed on each canvas");
+	const QByteArray beforeMissingFeed = readFile(stagePath);
+	optional.insert("name", "Flexible Missing Main"); optional.insert("stages", QJsonArray{QJsonObject{
+		{"theme", "setup-chat"}, {"looks", QJsonArray{"reaction"}}, {"roles", QJsonObject{{"feedB", ""}}}}});
+	check(!engine.createGuidedShow(optional).value("ok").toBool() && readFile(stagePath) == beforeMissingFeed,
+		"a missing main feed is rejected without changing the stage catalogue");
+	const auto *reaction = PulseShow::look(*PulseShow::theme("setup-chat"), "reaction");
+	check(PulseShow::layout(*reaction, false, true, {{"composition", "split"}})[0].rect !=
+		PulseShow::layout(*reaction, false, true, {{"composition", "corner"}})[0].rect,
+		"composition choice changes the generated landscape layout");
+	QJsonObject titles{{"schema", 2}, {"name", "Flexible Titles"}, {"stages", QJsonArray{QJsonObject{
+		{"theme", "setup-starting"}, {"looks", QJsonArray{"countdown", "welcome"}}, {"roles", QJsonObject{{"graphic", "new:title"}}}}}},
+		{"newSources", QJsonObject{{"title", QJsonObject{{"kind", "builtin_graphic"}, {"name", "Flexible title fixture"}, {"minutes", 4},
+			{"textByLook", QJsonObject{{"countdown", "Starting in a moment"}, {"welcome", "Welcome everyone"}}}}}}}};
+	check(engine.createGuidedShow(titles).value("ok").toBool(), "flexible Starting creates separate operating messages");
+	QSet<QString> flexibleSources;
+	for (const auto &value : PulseMotionEngineTestAccess::actions(engine)) {
+		const auto action = value.toObject(); if (action.value("stage").toString() != "Flexible Titles · Starting") continue;
+		for (const auto &value : action.value("items").toArray()) {
+			const auto item = value.toObject(); if (!item.value("transform").toObject().value("visible").toBool()) continue;
+			OBSSourceAutoRelease title = obs_get_source_by_uuid(item.value("sourceUuid").toString().toUtf8().constData());
+			OBSDataAutoRelease settings = obs_source_get_settings(title); const QByteArray html = readFile(obs_data_get_string(settings, "local_file"));
+			const bool countdown = action.value("templateId").toString().endsWith("/countdown");
+			check(html.contains(countdown ? "Starting in a moment" : "Welcome everyone") && html.contains(countdown ? "textContent=true?" : "textContent=false?"),
+				"Countdown runs a timer; Welcome displays its own message without one");
+			if (countdown) check(html.contains("Date.now()+240*1000"), "selected countdown duration reaches both canvas assets");
+			flexibleSources.insert(item.value("sourceUuid").toString());
+		}
+	}
+	for (const auto &group : PulseShow::setupCatalogue()) for (const QString &route : {QString(""), QString(" · Portrait")}) {
+		const QString name = "Flexible Trial · " + group.name + route;
+		OBSSourceAutoRelease owner = route.isEmpty() ? obs_get_source_by_name(name.toUtf8().constData()) : obs_canvas_get_source_by_name(canvas, name.toUtf8().constData());
+		if (owner) obs_source_remove(owner);
+	}
+	for (const QString &name : {QString("Flexible No Camera · Chat"), QString("Flexible Titles · Starting")}) for (const QString &route : {QString(""), QString(" · Portrait")}) {
+		OBSSourceAutoRelease owner = route.isEmpty() ? obs_get_source_by_name((name + route).toUtf8().constData()) : obs_canvas_get_source_by_name(canvas, (name + route).toUtf8().constData());
+		if (owner) obs_source_remove(owner);
+	}
+	for (const QString &id : flexibleSources) { OBSSourceAutoRelease title = obs_get_source_by_uuid(id.toUtf8().constData()); if (title) obs_source_remove(title); }
 	for(const auto &theme:PulseShow::catalogue()){
 		OBSSourceAutoRelease h=obs_get_source_by_name(("All Themes · "+theme.name).toUtf8().constData());
 		OBSSourceAutoRelease p=obs_canvas_get_source_by_name(canvas,("All Themes · "+theme.name+" · Portrait").toUtf8().constData());obs_source_remove(h);obs_source_remove(p);
@@ -618,10 +873,11 @@ int main(int argc, char **argv)
 	video.base_height = video.output_height = 480;
 	video.output_format = VIDEO_FORMAT_RGBA;
 	check(obs_reset_video(&video) == OBS_VIDEO_SUCCESS, "isolated graphics startup");
-	storageTests();
-	sceneTests();
-	referenceBuilderTests(video);
-	themedBuilderTests(video);
+	std::fprintf(stderr, "Motion audit: storage preservation\n"); storageTests();
+	std::fprintf(stderr, "Motion audit: scene isolation\n"); sceneTests(); obs_wait_for_destroy_queue();
+	std::fprintf(stderr, "Motion audit: reference builder\n"); referenceBuilderTests(video); obs_wait_for_destroy_queue();
+	std::fprintf(stderr, "Motion audit: setup wizard\n"); setupBuilderTests(video); obs_wait_for_destroy_queue();
+	std::fprintf(stderr, "Motion audit: themed builder\n"); themedBuilderTests(video);
 	obs_wait_for_destroy_queue();
 	obs_shutdown();
 	check(runtimeErrors == 0, "no unexpected OBS runtime errors");

@@ -71,6 +71,35 @@ inline const std::vector<Theme> &catalogue()
 		   "graphic", "presenter", "corner", true, .20, "bottom-left"}}}};
 	return themes;
 }
+// Feed roles belong to a Stage and may use cameras, media or captures.
+inline const std::vector<Theme> &setupCatalogue()
+{
+	static const std::vector<Theme> groups{
+		{"setup-starting", "Starting", {
+			{"countdown", "Countdown", "A countdown with an optional supporting feed", "graphic", "feedA", "corner", true},
+			{"welcome", "Welcome", "Welcome viewers with an optional supporting feed", "graphic", "feedA", "rail", true},
+			{"ready", "Getting ready", "A main feed with a getting-ready message", "feedA", "graphic", "footer"}}},
+		{"setup-chat", "Chat", {
+			{"talk", "Just chatting", "Focus on one feed", "feedA", {}, "full"},
+			{"reaction", "Content reaction", "Content with an optional reaction feed", "feedB", "feedA", "corner", true},
+			{"explain", "Explain or showcase", "Lead with feed A alongside supporting content", "feedA", "feedB", "split"}}},
+		{"setup-game", "Game", {
+			{"play", "Gameplay", "Game or content feed with an optional camera", "feedB", "feedA", "corner", true},
+			{"commentary", "Commentary", "Feed A alongside the game or content", "feedA", "feedB", "split"},
+			{"secondary", "Secondary view", "An alternate capture or camera with optional support", "feedC", "feedA", "corner", true}}},
+		{"setup-projects", "Projects", {
+			{"activity", "Activity", "Work area, pet, instrument, making or other activity", "feedB", "feedA", "corner", true},
+			{"explain", "Explain the project", "Feed A leads alongside the activity", "feedA", "feedB", "split"},
+			{"detail", "Detail view", "Focus on a close-up or alternate activity feed", "feedC", "feedA", "corner", true}}},
+		{"setup-celebration", "Celebration", {
+			{"reaction", "Celebration reaction", "A reaction feed with your optional celebration overlay", "feedA", {}, "full"},
+			{"announcement", "Announcement", "A message with an optional supporting feed", "graphic", "feedA", "holding", true}}},
+		{"setup-intermission", "Intermission", {
+			{"brb", "Be right back", "An away message with optional activity", "graphic", "feedB", "holding", true},
+			{"activity", "Activity continues", "Keep an activity visible while away", "feedB", "graphic", "label"},
+			{"ending", "Ending", "A closing message with an optional supporting feed", "graphic", "feedA", "corner", true}}}};
+	return groups;
+}
 inline const Theme *theme(const QString &id)
 {
 	for (const auto &value : catalogue()) {
@@ -78,6 +107,7 @@ inline const Theme *theme(const QString &id)
 			return &value;
 		}
 	}
+	for (const auto &value : setupCatalogue()) if (value.id == id) return &value;
 	return nullptr;
 }
 inline const Look *look(const Theme &theme, const QString &id)
@@ -91,6 +121,9 @@ inline const Look *look(const Theme &theme, const QString &id)
 }
 inline QString roleName(const QString &role)
 {
+	if (role == "feedA") return "Feed A";
+	if (role == "feedB") return "Feed B";
+	if (role == "feedC") return "Feed C";
 	if (role == "presenter") {
 		return "Presenter camera";
 	}
@@ -117,6 +150,7 @@ inline bool graphic(const QString &role)
 }
 inline QString graphicVariant(const QString &lookId)
 {
+	if (lookId.startsWith("setup-")) return lookId;
 	const QString theme = lookId.section('/', 0, 0);
 	return theme + "/" +
 	       (theme == "starting"               ? "countdown"
@@ -144,6 +178,13 @@ struct Panel {
 };
 inline std::vector<Panel> layout(const Look &look, bool portrait, bool support, const QJsonObject &options = {})
 {
+	const QString composition = options.value("composition").toString();
+	if (!composition.isEmpty() && composition != look.layout &&
+	    (composition == "corner" || composition == "rail" || composition == "split")) {
+		Look adjusted = look; adjusted.layout = composition;
+		QJsonObject framing = options; framing.remove("composition");
+		return layout(adjusted, portrait, support, framing);
+	}
 	const double divider = qBound(.15, options.value("divider").toDouble(look.divider), .65);
 	const bool mainCamera = look.main == "presenter" || look.main == "activity" || look.main == "detail";
 	std::vector<Panel> result{{look.main, {0, 0, 1, 1}, mainCamera, false}};
@@ -152,7 +193,7 @@ inline std::vector<Panel> layout(const Look &look, bool portrait, bool support, 
 	} else if (look.layout == "label" || look.layout == "footer") {
 		result.push_back({look.support, {0, look.layout == "footer" ? .80 : .03, 1, .17}, false, false});
 	} else if (portrait) {
-		const bool presenterMain = look.main == "presenter";
+		const bool presenterMain = look.main == "presenter" || look.main == "feedA";
 		const double top = divider;
 		result[0].rect = presenterMain ? QRectF(0, 0, 1, top) : QRectF(0, top, 1, 1 - top);
 		result.push_back({look.support, presenterMain ? QRectF(0, top, 1, 1 - top) : QRectF(0, 0, 1, top),
