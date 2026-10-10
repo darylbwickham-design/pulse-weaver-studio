@@ -1,0 +1,23 @@
+Starting countdown
+PW-MAIN01-H: https://api.lumiastream.com/shared/download/a2f38b4f-50b6-4733-a26c-e8610557564d
+PW-MAIN01-V: https://api.lumiastream.com/shared/download/a2f38b68-98a4-426a-b4d3-9b073f539d90
+
+Getting ready
+PW-READY01-H: https://api.lumiastream.com/shared/download/a2f38b6a-264d-442f-a79d-59cd0be76fa7
+PW-READY01-V: https://api.lumiastream.com/shared/download/a2f38b6b-f146-4b08-82a4-f31284fbf23a
+
+Be right back
+PW-BRB01-H: https://api.lumiastream.com/shared/download/a2f38b6d-3094-478b-8fb7-a8016dfc9cbe
+PW-BRB01-V: https://api.lumiastream.com/shared/download/a2f38b6e-c0bd-4dcf-a9bb-a7f036cc58cf
+
+Ending + Credits
+PW-END01-H: https://api.lumiastream.com/shared/download/a2f38b76-7ac2-4f2a-96bb-1c150ef6c7f8
+PW-END01-V: https://api.lumiastream.com/shared/download/a2f38b7c-a5a9-4be1-8aa6-d83f9f10f94c
+
+Shared alerts + Fortnite
+PW-ALERT01-H: https://api.lumiastream.com/shared/download/a2f38b7e-f534-4553-add7-cd2644a64489
+PW-ALERT01-V: https://api.lumiastream.com/shared/download/a2f38ba7-de88-4b45-a79c-068c63182298
+
+Newsroom / news intro
+PW-NEWS01-H: https://api.lumiastream.com/shared/download/a2f38ba9-478c-4d1b-880a-d1953294ef2a
+PW-NEWS01-V: https://api.lumiastream.com/shared/download/a2f38baa-cc3f-4f42-b629-6e26b50d60bc

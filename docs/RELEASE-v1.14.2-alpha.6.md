@@ -9,7 +9,7 @@ Build my show now follows one four-page setup flow: connect Lumia, choose stage 
 - Import twelve shared Lumia templates for Starting, Getting ready, BRB, Ending with native Credits, alerts with Fortnite challenges, and Newsroom. Each family has landscape and portrait versions with editable branding.
 - Follow the countdown and Stage-switch instructions, connect your own Twitch rewards, and choose optional stingers through Profounder.
 
-This release includes the existing alpha branch's Lumia undo action and companion plugin 1.4.3. It is an experimental alpha release; the regular release remains 1.14.1.
+This release includes the existing alpha branch's Lumia undo action and companion plugin 1.4.4. It is an experimental alpha release; the regular release remains 1.14.1.
 
 Enable **Studio → Updates → Include experimental alpha builds**, stop all outputs, then check for updates. The installer preserves configuration using the existing backup and recovery flow.
 
