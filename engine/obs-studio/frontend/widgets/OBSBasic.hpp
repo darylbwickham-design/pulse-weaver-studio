@@ -18,6 +18,7 @@
 #pragma once
 #include <QJsonObject>
 #include "../../shared/qt/PulseYouTubeChatSessions.hpp"
+#include "../../shared/qt/PulseChatPanel.hpp"
 #include "../../shared/qt/PulseEditorCanvas.hpp"
 #include "../../shared/qt/PulseTwitchStart.hpp"
 
@@ -106,6 +107,7 @@ class QPushButton;
 class QComboBox;
 class QSpinBox;
 class QStackedWidget;
+class QToolButton;
 class QTimer;
 class OBSQTDisplay;
 class PulseVerticalEditor;
@@ -369,6 +371,20 @@ private:
 	QPointer<QLineEdit> pulseChatInput;
 	QPointer<QPushButton> pulseChatSend;
 	QPointer<QListWidget> pulseChatFeed;
+	QPointer<QToolButton> pulseChatPanelButton;
+	QPointer<QWidget> pulseChatPanelCard;
+	QPointer<QLabel> pulseChatPanelDescription;
+	QPointer<QStackedWidget> pulseChatPanelStack;
+	QPointer<QWidget> pulseChatNativePage;
+	QPointer<QWidget> pulseChatBrowserPage;
+	QPointer<QLabel> pulseChatBrowserStatus;
+	QPointer<QWidget> pulseChatBrowser;
+	PulseChatPanel::Preferences pulseChatPanelPreferences;
+	QString pulseChatBrowserUrl;
+	bool pulseChatBrowserReady = false;
+	bool pulseChatBrowserFailed = false;
+	bool pulseChatBrowserBusy = false;
+	bool pulseChatBrowserZoomPending = false;
 	QPointer<QTimer> pulseYouTubeChatTimer;
 	PulseYouTubeChat::Sessions pulseYouTubeChatSessions;
 	struct PulseYouTubePendingChatMessage {
@@ -406,6 +422,12 @@ private:
 	QByteArray pulseStageSignature;
 
 	void InitPulseWeaverShell();
+	void RefreshPulseWeaverChatPanel();
+	void SelectPulseWeaverChatPanel(const QString &provider);
+	void ConfigurePulseWeaverChatPanel(const QString &panelId = QString());
+	void ReleasePulseWeaverChatBrowser();
+	void ApplyPulseWeaverChatZoom();
+	void SetPulseWeaverChatZoom(int direction);
 	void RestorePulseWeaverYouTubeAccount();
 	void ShutdownPulseWeaverShell();
 	void SetPulseWeaverWorkspace(int index);

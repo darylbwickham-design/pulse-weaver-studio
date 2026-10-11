@@ -3712,7 +3712,7 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 	QJsonArray newActions;
 	QString firstId;
 	// Source units are isolated from the reference; raw captures and business widgets
-	// are reused. One cloned unit is shared by the generated Stage's selected Looks.
+	// are reused. Selected Looks share one cloned unit per destination canvas.
 	QMap<QString, OBSSource> units;
 	QString cloneError;
 	std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> copyItemSettings = [](obs_sceneitem_t *original, obs_sceneitem_t *copy) {
@@ -3729,8 +3729,8 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 		}
 	};
 	QSet<QString> cloning;
-	std::function<OBSSource(obs_source_t *)> assignedSource;
-	assignedSource = [&](obs_source_t *source) -> OBSSource {
+	std::function<OBSSource(obs_source_t *, obs_canvas_t *)> assignedSource;
+	assignedSource = [&](obs_source_t *source, obs_canvas_t *canvas) -> OBSSource {
 		const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
 		if (sourceBindings.contains(uuid)) {
 			OBSSourceAutoRelease replacement = obs_get_source_by_uuid(sourceBindings.value(uuid).toString().toUtf8().constData());
@@ -3739,11 +3739,12 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 		obs_scene_t *scene = obs_group_from_source(source);
 		if (!scene) scene = obs_scene_from_source(source);
 		if (!setupWizard || !scene) return OBSSource(source);
-		if (units.contains(uuid)) return units.value(uuid);
-		if (cloning.contains(uuid)) { cloneError = "A camera unit contains a circular scene reference."; return {}; }
-		cloning.insert(uuid);
+		const QString unitKey = uuid + "/" + QString::fromUtf8(obs_canvas_get_uuid(canvas));
+		if (units.contains(unitKey)) return units.value(unitKey);
+		if (cloning.contains(unitKey)) { cloneError = "A camera unit contains a circular scene reference."; return {}; }
+		cloning.insert(unitKey);
 		const QString unitName = prefix + " · Unit · " + QUuid::createUuid().toString(QUuid::WithoutBraces);
-		OBSSceneAutoRelease copy = obs_scene_create(unitName.toUtf8().constData());
+		OBSSceneAutoRelease copy = obs_canvas_scene_create(canvas, unitName.toUtf8().constData());
 		if (!copy) { cloneError = "Could not create a camera unit."; return {}; }
 		obs_source_t *unit = obs_scene_get_source(copy);
 		created.emplace_back(unit);
@@ -3758,20 +3759,20 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 		OBSDataAutoRelease metadata = obs_source_get_private_settings(unit);
 		obs_data_apply(metadata, originalMeta);
 		obs_data_set_bool(metadata, "pulseweaver.motion_graphic", motionGraphicSwitch(obs_source_get_name(source), source));
-		struct UnitCopy { PulseMotionEngine *engine; obs_scene_t *scene;
-			std::function<OBSSource(obs_source_t *)> *assign; std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; } context{this, copy, &assignedSource, &copyItemSettings};
+		struct UnitCopy { PulseMotionEngine *engine; obs_scene_t *scene; obs_canvas_t *canvas;
+			std::function<OBSSource(obs_source_t *, obs_canvas_t *)> *assign; std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; } context{this, copy, canvas, &assignedSource, &copyItemSettings};
 		obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
 			auto &context = *static_cast<UnitCopy *>(opaque);
-			OBSSource source = (*context.assign)(obs_sceneitem_get_source(original));
+			OBSSource source = (*context.assign)(obs_sceneitem_get_source(original), context.canvas);
 			OBSSceneItem item = source ? motionAddSource(context.scene, source) : nullptr;
 			if (!item) { context.ok = false; return false; }
 			context.engine->apply(item, PulseMotionEngine::capture(original), true);
 			(*context.settings)(original, item);
 			return true;
 		}, &context);
-		cloning.remove(uuid);
+		cloning.remove(unitKey);
 		if (!context.ok) { cloneError = "Could not preserve a camera unit's layers."; return {}; }
-		units.insert(uuid, OBSSource(unit));
+		units.insert(unitKey, OBSSource(unit));
 		return OBSSource(unit);
 	};
 	for (const ReferencePlan &plan : plans) {
@@ -3788,15 +3789,17 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 		obs_data_set_bool(metadata, "pulseweaver.native_vertical", true);
 		struct CopiedItem { QString oldContainer; qint64 oldId; QString newContainer; OBSSceneItem item; Transform baseline; QString oldUuid; QString oldName; };
 		std::vector<CopiedItem> copied;
-		struct CopyContext { PulseMotionEngine *engine; obs_scene_t *destination; QString oldContainer; QString newContainer;
-			std::vector<CopiedItem> *items; std::function<OBSSource(obs_source_t *)> *assign;
+		struct CopyContext { PulseMotionEngine *engine; obs_scene_t *destination; obs_canvas_t *canvas; QString oldContainer; QString newContainer;
+			std::vector<CopiedItem> *items; std::function<OBSSource(obs_source_t *, obs_canvas_t *)> *assign;
 			std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; };
 		auto copyCanvas = [&](obs_source_t *reference, obs_scene_t *destination, const QString &newContainer) {
-			CopyContext context{this, destination, QString::fromUtf8(obs_source_get_name(reference)), newContainer, &copied, &assignedSource, &copyItemSettings};
+			OBSCanvasAutoRelease canvas = obs_source_get_canvas(obs_scene_get_source(destination));
+			if (!canvas) return false;
+			CopyContext context{this, destination, canvas, QString::fromUtf8(obs_source_get_name(reference)), newContainer, &copied, &assignedSource, &copyItemSettings};
 			obs_scene_enum_items(obs_scene_from_source(reference), [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
 				auto &context = *static_cast<CopyContext *>(opaque);
 				obs_source_t *oldSource = obs_sceneitem_get_source(original);
-				OBSSource source = (*context.assign)(oldSource);
+				OBSSource source = (*context.assign)(oldSource, context.canvas);
 				OBSSceneItem item = source ? motionAddSource(context.destination, source) : nullptr;
 				if (!item) { context.ok = false; return false; }
 				const Transform baseline = PulseMotionEngine::capture(original);
@@ -3932,7 +3935,7 @@ QJsonObject PulseMotionEngine::cloneReferenceStage(const QString &name, const QJ
     QString firstId;
     QJsonArray newActions;
 	// Source units are isolated from the reference; raw captures and business widgets
-	// are reused. One cloned unit is shared by the generated Stage's selected Looks.
+	// are reused. Selected Looks share one cloned unit per destination canvas.
 	QString cloneError;
 	std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> copyItemSettings = [](obs_sceneitem_t *original, obs_sceneitem_t *copy) {
 		obs_sceneitem_set_scale_filter(copy, obs_sceneitem_get_scale_filter(original));
@@ -3948,8 +3951,8 @@ QJsonObject PulseMotionEngine::cloneReferenceStage(const QString &name, const QJ
 		}
 	};
 	QSet<QString> cloning;
-	std::function<OBSSource(obs_source_t *)> assignedSource;
-	assignedSource = [&](obs_source_t *source) -> OBSSource {
+	std::function<OBSSource(obs_source_t *, obs_canvas_t *)> assignedSource;
+	assignedSource = [&](obs_source_t *source, obs_canvas_t *canvas) -> OBSSource {
 		const QString uuid = QString::fromUtf8(obs_source_get_uuid(source));
 		if (sourceBindings.contains(uuid)) {
 			OBSSourceAutoRelease replacement = obs_get_source_by_uuid(sourceBindings.value(uuid).toString().toUtf8().constData());
@@ -3958,11 +3961,12 @@ QJsonObject PulseMotionEngine::cloneReferenceStage(const QString &name, const QJ
 		obs_scene_t *scene = obs_group_from_source(source);
 		if (!scene) scene = obs_scene_from_source(source);
 		if (!setupWizard || !scene) return OBSSource(source);
-		if (units.contains(uuid + bindingKey)) return units.value(uuid + bindingKey);
-		if (cloning.contains(uuid)) { cloneError = "A camera unit contains a circular scene reference."; return {}; }
-		cloning.insert(uuid);
+		const QString unitKey = uuid + "/" + QString::fromUtf8(obs_canvas_get_uuid(canvas)) + "/" + bindingKey;
+		if (units.contains(unitKey)) return units.value(unitKey);
+		if (cloning.contains(unitKey)) { cloneError = "A camera unit contains a circular scene reference."; return {}; }
+		cloning.insert(unitKey);
 		const QString unitName = prefix + " · Unit · " + QUuid::createUuid().toString(QUuid::WithoutBraces);
-		OBSSceneAutoRelease copy = obs_scene_create(unitName.toUtf8().constData());
+		OBSSceneAutoRelease copy = obs_canvas_scene_create(canvas, unitName.toUtf8().constData());
 		if (!copy) { cloneError = "Could not create a camera unit."; return {}; }
 		obs_source_t *unit = obs_scene_get_source(copy);
 		created.emplace_back(unit);
@@ -3977,33 +3981,35 @@ QJsonObject PulseMotionEngine::cloneReferenceStage(const QString &name, const QJ
 		OBSDataAutoRelease metadata = obs_source_get_private_settings(unit);
 		obs_data_apply(metadata, originalMeta);
 		obs_data_set_bool(metadata, "pulseweaver.motion_graphic", motionGraphicSwitch(obs_source_get_name(source), source));
-		struct UnitCopy { PulseMotionEngine *engine; obs_scene_t *scene;
-			std::function<OBSSource(obs_source_t *)> *assign; std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; } context{this, copy, &assignedSource, &copyItemSettings};
+		struct UnitCopy { PulseMotionEngine *engine; obs_scene_t *scene; obs_canvas_t *canvas;
+			std::function<OBSSource(obs_source_t *, obs_canvas_t *)> *assign; std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; } context{this, copy, canvas, &assignedSource, &copyItemSettings};
 		obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
 			auto &context = *static_cast<UnitCopy *>(opaque);
-			OBSSource source = (*context.assign)(obs_sceneitem_get_source(original));
+			OBSSource source = (*context.assign)(obs_sceneitem_get_source(original), context.canvas);
 			OBSSceneItem item = source ? motionAddSource(context.scene, source) : nullptr;
 			if (!item) { context.ok = false; return false; }
 			context.engine->apply(item, PulseMotionEngine::capture(original), true);
 			(*context.settings)(original, item);
 			return true;
 		}, &context);
-		cloning.remove(uuid);
+		cloning.remove(unitKey);
 		if (!context.ok) { cloneError = "Could not preserve a camera unit's layers."; return {}; }
-		units.insert(uuid + bindingKey, OBSSource(unit));
+		units.insert(unitKey, OBSSource(unit));
 		return OBSSource(unit);
 	};
 	struct CopiedItem { QString oldContainer; qint64 oldId; QString newContainer; OBSSceneItem item; Transform baseline; QString oldUuid; QString oldName; };
 	std::vector<CopiedItem> copied;
-	struct CopyContext { PulseMotionEngine *engine; obs_scene_t *destination; QString oldContainer; QString newContainer;
-		std::vector<CopiedItem> *items; std::function<OBSSource(obs_source_t *)> *assign;
+	struct CopyContext { PulseMotionEngine *engine; obs_scene_t *destination; obs_canvas_t *canvas; QString oldContainer; QString newContainer;
+		std::vector<CopiedItem> *items; std::function<OBSSource(obs_source_t *, obs_canvas_t *)> *assign;
 		std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; };
 	auto copyCanvas = [&](obs_source_t *reference, obs_scene_t *destination, const QString &newContainer) {
-		CopyContext context{this, destination, QString::fromUtf8(obs_source_get_name(reference)), newContainer, &copied, &assignedSource, &copyItemSettings};
+		OBSCanvasAutoRelease canvas = obs_source_get_canvas(obs_scene_get_source(destination));
+		if (!canvas) return false;
+		CopyContext context{this, destination, canvas, QString::fromUtf8(obs_source_get_name(reference)), newContainer, &copied, &assignedSource, &copyItemSettings};
 		obs_scene_enum_items(obs_scene_from_source(reference), [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
 			auto &context = *static_cast<CopyContext *>(opaque);
 			obs_source_t *oldSource = obs_sceneitem_get_source(original);
-			OBSSource source = (*context.assign)(oldSource);
+			OBSSource source = (*context.assign)(oldSource, context.canvas);
 			OBSSceneItem item = source ? motionAddSource(context.destination, source) : nullptr;
 			if (!item) { context.ok = false; return false; }
 			const Transform baseline = PulseMotionEngine::capture(original);

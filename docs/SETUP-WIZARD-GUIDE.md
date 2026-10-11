@@ -23,4 +23,16 @@ The shared countdown starts through the `start-screen` payload described in the 
 
 Native Credits use Lumia's session data. Repeated activation uses the tested viewer compatibility bridge; populated session entries and separate-account import still need acceptance testing.
 
+## Choose your chat panel
+
+Named web chat panels are available in alpha 7 and later.
+
+On **Show Control → Show**, the heading keeps its original plain white style. Click its text to cycle through native **Chat** and your saved panels, shown by the names you choose. Click the adjacent emblem and choose **Add chat…** to enter a **Name** and complete HTTP or HTTPS **Link**. You can add any compatible web chat page. Each panel keeps its own name, link and page size; editing one panel does not replace another. The page appears inside the main Chat card, which retains its normal 270 px minimum width.
+
+With a saved panel selected, its emblem menu offers **Edit this chat…**, **Reload**, **Open in browser**, **Page size** and **Remove this chat panel**. Returning to **Chat** restores Pulse Weaver's usual feed and controls; its emblem offers the generic **Add chat…** action.
+
+For example, name a panel **Lumia** and use `https://lumiastream.com/dock/chat` for its focused Chatbox. A new Lumia panel starts at **67%**; other new panels start at 100%. Saved sizes are retained independently. **Lumia view** options appear only when the selected panel's link uses the exact `lumiastream.com` or `www.lumiastream.com` host. They switch that panel between **Show Lumia chat only** and **Show full Control Room**. The native Chat menu provides the same generic add flow for every service.
+
+External pages use the current app's shared browser context and retained login storage. They close when you return to **Chat** or leave the Show view; returning opens the remembered page with that storage intact. Sign in to a third-party service yourself when it asks. Pulse Weaver's connected chat events remain available to Action rules. Changing the displayed panel does not promise reduced YouTube receiving quota: the current incoming YouTube reader already uses web chat.
+
 The older [theme builder guide](BUILD-MY-SHOW-GUIDE.md) records the previous builder and remains historical.

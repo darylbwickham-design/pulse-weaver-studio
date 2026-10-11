@@ -1,7 +1,28 @@
 #pragma once
 
 #include "pulse-show-templates.hpp"
+#include "pulse-source-canvas.hpp"
+#include <obs-frontend-api.h>
+#include <obs.hpp>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDesktopServices>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMap>
+#include <QPainter>
+#include <QPushButton>
+#include <QSet>
 #include <QSpinBox>
+#include <QStackedWidget>
+#include <QTabWidget>
+#include <QUrl>
+#include <QVBoxLayout>
+#include <QVector>
+#include <QWizard>
+#include <functional>
 
 // UI state only. Creation uses the same validated, transactional native builder
 // as the previous wizard, without editing any existing source configuration.
@@ -13,7 +34,7 @@ class FlexibleSetup {
 		QLineEdit *message;
 	};
 	struct Question {
-		QString group, role;
+		QString group, role, canvas;
 		QWidget *panel;
 		QComboBox *choice, *scope = nullptr;
 		QLineEdit *url = nullptr;
@@ -46,8 +67,9 @@ class FlexibleSetup {
 		for (const auto &look : group.looks) if (looks.value(group.id + "/" + look.id).selected->isChecked()) ids.append(look.id);
 		return PulseShow::roles(group, ids);
 	}
-	const Question *question(const QString &group, const QString &role) const {
-		for (const auto &q : inventory) if (q.group == group && q.role == role) return &q;
+	const Question *question(const QString &group, const QString &role, const QString &canvas = {}) const {
+		const QString route = role == "graphic" && canvas.isEmpty() ? "horizontal" : canvas;
+		for (const auto &q : inventory) if (q.group == group && q.role == role && q.canvas == route) return &q;
 		return nullptr;
 	}
 	QJsonObject framing(const PulseShow::Theme &group, const PulseShow::Look &look) const {
@@ -186,18 +208,23 @@ public:
 		navigation->addWidget(previous); navigation->addWidget(next); navigation->addStretch(); layout->addLayout(navigation);
 		QObject::connect(previous, &QPushButton::clicked, &owner, [this] { --sourceIndex; showQuestion(); });
 		QObject::connect(next, &QPushButton::clicked, &owner, [this] { ++sourceIndex; showQuestion(); });
-		auto addQuestion = [&](const QString &group, const QString &role) {
-			Question q{}; q.group = group; q.role = role; q.panel = new QWidget(questions); auto *body = new QVBoxLayout(q.panel);
-			const QString label = group == "Overlay" ? (role.startsWith("horizontal") ? "Landscape overlay " : "Portrait overlay ") + role.section('/', 1) : group + " · " + PulseShow::roleName(role);
+		QMap<QString, QSpinBox *> countdownDurations;
+		auto addQuestion = [&](const QString &group, const QString &role, const QString &canvas = QString()) {
+			Question q{}; q.group = group; q.role = role; q.canvas = canvas; q.panel = new QWidget(questions); auto *body = new QVBoxLayout(q.panel);
+			const QString label = group == "Overlay" ? (role.startsWith("horizontal") ? "Landscape overlay " : "Portrait overlay ") + role.section('/', 1) :
+				group + " · " + (role == "graphic" ? (canvas == "vertical" ? "Portrait title / countdown" : "Landscape title / countdown") : PulseShow::roleName(role));
 			text(body, q.panel, label);
 			q.choice = new QComboBox(q.panel); q.choice->setAccessibleName(label);
 			q.choice->addItem("None / skip when optional", "");
 			if (role == "graphic") { q.choice->addItem("Built-in title / countdown", "builtin"); q.choice->setCurrentIndex(1); }
 			const bool overlay = group == "Overlay";
-			struct Scan { QComboBox *choice; bool feed; } scan{q.choice, role.startsWith("feed")};
+			const int orientation = overlay ? (role.startsWith("horizontal") ? 0 : 1) :
+				canvas.isEmpty() ? -1 : canvas == "vertical" ? 1 : 0;
+			struct Scan { QComboBox *choice; bool feed; int orientation; } scan{q.choice, role.startsWith("feed"), orientation};
 			obs_enum_sources([](void *opaque, obs_source_t *source) {
 				auto &scan = *static_cast<Scan *>(opaque); const QString type = obs_source_get_unversioned_id(source);
 				if (!(obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) || obs_scene_from_source(source) || obs_group_from_source(source)) return true;
+				if (scan.orientation >= 0 && !pulseBrowserMatchesCanvas(source, scan.orientation == 1)) return true;
 				if (!scan.feed || type == "dshow_input" || type == "game_capture" || type == "window_capture" || type == "monitor_capture" ||
 				    type == "ffmpeg_source" || type == "vlc_source" || type.contains("ndi", Qt::CaseInsensitive))
 					scan.choice->addItem(obs_source_get_name(source), obs_source_get_uuid(source));
@@ -205,11 +232,18 @@ public:
 			}, &scan);
 			if (!role.startsWith("feed")) {
 				q.choice->addItem("New browser / Lumia overlay link", "url"); q.url = new QLineEdit(q.panel);
-				q.url->setPlaceholderText("https://…"); q.url->setAccessibleName(group + " " + role + " browser URL"); body->addWidget(q.url);
+				q.url->setPlaceholderText("https://…"); q.url->setAccessibleName(label + " browser URL"); body->addWidget(q.url);
 			}
 			body->addWidget(q.choice);
 			if (role == "graphic") { q.minutes = new QSpinBox(q.panel); q.minutes->setRange(1, 120); q.minutes->setValue(5); q.minutes->setSuffix(" minutes");
-				text(body, q.panel, "Countdown duration (built-in Countdown Look)"); body->addWidget(q.minutes); }
+				q.minutes->setAccessibleName(label + " countdown duration");
+				if (countdownDurations.contains(group)) {
+					auto *paired = countdownDurations.value(group);
+					q.minutes->setValue(paired->value());
+					QObject::connect(paired, &QSpinBox::valueChanged, q.minutes, &QSpinBox::setValue);
+					QObject::connect(q.minutes, &QSpinBox::valueChanged, paired, &QSpinBox::setValue);
+				} else countdownDurations.insert(group, q.minutes);
+				text(body, q.panel, "Countdown duration (shared by landscape and portrait)"); body->addWidget(q.minutes); }
 			if (overlay) {
 				q.scope = new QComboBox(q.panel); q.scope->addItem("All selected stage groups", "");
 				for (const auto &g : PulseShow::setupCatalogue()) q.scope->addItem(g.name, g.name);
@@ -225,7 +259,12 @@ public:
 		};
 		for (const auto &g : PulseShow::setupCatalogue()) {
 			QJsonArray ids; for (const auto &look : g.looks) ids.append(look.id);
-			for (const auto &role : PulseShow::roles(g, ids)) addQuestion(g.name, role);
+			for (const auto &role : PulseShow::roles(g, ids)) {
+				if (role == "graphic") {
+					addQuestion(g.name, role, "horizontal");
+					addQuestion(g.name, role, "vertical");
+				} else addQuestion(g.name, role);
+			}
 			QSet<QString> seen; QStringList sources;
 			std::function<void(obs_source_t *)> scan;
 			scan = [&](obs_source_t *source) {
@@ -299,21 +338,28 @@ public:
 			for (const auto &look : g.looks) {
 				if (!looks.value(g.id + "/" + look.id).selected->isChecked()) continue; any = true;
 				if (sources) for (const QString &role : {look.main, look.optionalPresenter ? QString() : look.support}) {
-					if (role.isEmpty()) continue; const auto *q = question(g.name, role);
-					if (!q || q->choice->currentData().toString().isEmpty()) return "Choose " + PulseShow::roleName(role) + " for " + g.name + " · " + look.name + ".";
+					if (role.isEmpty()) continue;
+					const QStringList routes = role == "graphic" ? QStringList{"horizontal", "vertical"} : QStringList{QString()};
+					for (const QString &route : routes) {
+						const auto *q = question(g.name, role, route);
+						if (!q || q->choice->currentData().toString().isEmpty()) return "Choose " +
+							(route.isEmpty() ? PulseShow::roleName(role) : route == "vertical" ? "portrait artwork" : "landscape artwork") +
+							" for " + g.name + " · " + look.name + ".";
+					}
 				}
 			}
 			if (!any) return "Choose at least one Look for " + g.name + ".";
 		}
 		if (sources) for (int i : activeQuestions) { const auto &q = inventory[i]; if (q.choice->currentData().toString() != "url") continue;
 			const QUrl url(q.url->text().trimmed()); if (!url.isValid() || url.host().isEmpty() || (url.scheme() != "https" && url.scheme() != "http"))
-				return "Enter a complete browser URL for " + q.group + " · " + q.role + "."; }
+				return "Enter a complete browser URL for " + q.choice->accessibleName() + "."; }
 		return {};
 	}
 	QJsonObject draft(const QString &name) const {
 		QJsonArray stages, overlays; QJsonObject definitions;
 		auto sourceId = [&](const Question &q) {
-			const QString choice = q.choice->currentData().toString(); const QString key = q.group + "/" + q.role;
+			const QString choice = q.choice->currentData().toString(); const QString key = q.group + "/" + q.role +
+				(q.canvas.isEmpty() ? QString() : "/" + q.canvas);
 			if (choice != "builtin" && choice != "url") return choice;
 			QJsonObject spec{{"name", name + " · " + key}, {"kind", choice == "builtin" ? "builtin_graphic" : "browser_source"}};
 			if (choice == "url") spec.insert("url", q.url->text().trimmed());
@@ -348,7 +394,10 @@ public:
 				ids.append(look.id); selectedKeys.append(g.id + "/" + look.id);
 				for (const QString &route : {QString("horizontal"), QString("vertical")}) frames.insert(look.id + "/" + route, framing(g, look));
 			}
-			for (const auto &role : PulseShow::roles(g, ids)) roles.insert(role, sourceId(*question(g.name, role)));
+			for (const auto &role : PulseShow::roles(g, ids)) {
+				roles.insert(role, sourceId(*question(g.name, role)));
+				if (role == "graphic") roles.insert("graphicPortrait", sourceId(*question(g.name, role, "vertical")));
+			}
 			stages.append(QJsonObject{{"theme", g.id}, {"looks", ids}, {"roles", roles}, {"framing", frames}, {"transitions", transitionChoices}});
 		}
 		for (const auto &q : inventory) if (q.group == "Overlay" && !q.choice->currentData().toString().isEmpty()) {

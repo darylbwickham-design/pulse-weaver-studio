@@ -462,12 +462,14 @@ void QCefWidgetInternal::allowAllPopups(bool allow)
 	allowAllPopups_ = allow;
 }
 
-bool QCefWidgetInternal::zoomPage(int direction)
+static bool zoomBrowserPage(const CefRefPtr<CefBrowser> &browser, int direction)
 {
-	if (!cefBrowser || direction < -1 || direction > 1)
+	if (!browser || !browser->IsValid() || direction < -1 || direction > 1)
 		return false;
 
-	CefRefPtr<CefBrowserHost> host = cefBrowser->GetHost();
+	CefRefPtr<CefBrowserHost> host = browser->GetHost();
+	if (!host)
+		return false;
 	if (direction == 0) {
 		// Reset zoom
 		host->SetZoomLevel(0);
@@ -503,6 +505,19 @@ bool QCefWidgetInternal::zoomPage(int direction)
 		return true;
 	}
 	return false;
+}
+
+bool QCefWidgetInternal::zoomPage(int direction)
+{
+	if (!cefBrowser || direction < -1 || direction > 1)
+		return false;
+	const CefRefPtr<CefBrowser> browser = cefBrowser;
+	/* GetZoomLevel requires CEF's UI thread. Queue Qt callers here so a reset
+	 * followed by relative steps reads each preceding applied level in order.
+	 * Hold the browser, never the widget, while a queued operation is pending. */
+	if (!CefCurrentlyOn(TID_UI))
+		return QueueCEFTask([browser, direction] { zoomBrowserPage(browser, direction); });
+	return zoomBrowserPage(browser, direction);
 }
 
 /* ------------------------------------------------------------------------- */

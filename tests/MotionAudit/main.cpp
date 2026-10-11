@@ -1,12 +1,14 @@
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-motion-engine.hpp"
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-scene-item-ref.hpp"
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-show-templates.hpp"
+#include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-flexible.hpp"
 
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QSize>
 #include <QTemporaryDir>
 #include <util/base.h>
 #include <algorithm>
@@ -15,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <tuple>
 
 static int checks = 0, runtimeErrors = 0;
 static std::atomic<uint32_t> fixtureWidth{640}, fixtureHeight{480};
@@ -440,13 +443,72 @@ static void setupBuilderTests(const obs_video_info &video)
 	OBSSceneAutoRelease horizontal = obs_scene_create("Setup Reference");
 	OBSSceneAutoRelease portrait = obs_canvas_scene_create(canvas, "Setup Reference Portrait");
 	OBSSceneAutoRelease wrapper = obs_scene_create("Setup Camera Unit");
+	OBSSceneAutoRelease croppedCamera = obs_scene_create("Setup Camera Crop Unit");
+	for (const auto &[scene, width, height] : std::vector<std::tuple<obs_scene_t *, int, int>>{
+		{wrapper, 431, 277}, {croppedCamera, 391, 257}}) {
+		OBSDataAutoRelease size = obs_data_create();
+		obs_data_set_bool(size, "custom_size", true);
+		obs_data_set_int(size, "cx", width); obs_data_set_int(size, "cy", height);
+		obs_source_update(obs_scene_get_source(scene), size);
+		obs_source_load(obs_scene_get_source(scene));
+	}
+	check(obs_source_get_width(obs_scene_get_source(wrapper)) == 431 && obs_source_get_height(obs_scene_get_source(wrapper)) == 277 &&
+		obs_source_get_width(obs_scene_get_source(croppedCamera)) == 391 && obs_source_get_height(obs_scene_get_source(croppedCamera)) == 257,
+		"reference fixture starts with deliberate nested custom coordinate spaces");
 	OBSSourceAutoRelease camera = obs_source_create("pulse_motion_audit_fixture", "Setup camera", nullptr, nullptr);
 	OBSSourceAutoRelease replacement = obs_source_create("pulse_motion_audit_fixture", "Replacement camera", nullptr, nullptr);
 	OBSSourceAutoRelease border = obs_source_create("pulse_motion_audit_fixture", "Setup border", nullptr, nullptr);
-	obs_sceneitem_t *child = obs_scene_add(wrapper, camera);
+	obs_sceneitem_t *child = obs_scene_add(croppedCamera, camera);
+	obs_sceneitem_t *croppedItem = obs_scene_add(wrapper, obs_scene_get_source(croppedCamera));
 	obs_sceneitem_t *frame = obs_scene_add(wrapper, border);
 	obs_sceneitem_crop crop{7, 11, 13, 19}; obs_sceneitem_set_crop(child, &crop);
+	vec2 scale{-0.7f, 0.85f}; obs_sceneitem_set_scale(child, &scale);
+	obs_sceneitem_set_rot(croppedItem, 8); obs_sceneitem_set_locked(croppedItem, true);
+	obs_sceneitem_set_scale_filter(croppedItem, OBS_SCALE_LANCZOS);
+	obs_sceneitem_set_blending_mode(frame, OBS_BLEND_SCREEN);
 	const QJsonObject childBefore = PulseMotionEngineTestAccess::frame(child);
+	const QJsonObject cropUnitBefore = PulseMotionEngineTestAccess::frame(croppedItem);
+	const QJsonObject borderBefore = PulseMotionEngineTestAccess::frame(frame);
+	OBSCanvasAutoRelease mainCanvas = obs_get_main_canvas();
+	QSet<QString> clonedUnits;
+	auto checkUnit = [&](obs_source_t *unit, obs_canvas_t *destination) {
+		check(unit && unit != obs_scene_get_source(wrapper), "camera unit isolated from reference");
+		OBSCanvasAutoRelease unitCanvas = obs_source_get_canvas(unit);
+		check(unitCanvas == destination, "generated camera unit belongs to its destination canvas");
+		if (obs_source_get_width(unit) != 431 || obs_source_get_height(unit) != 277)
+			std::fprintf(stderr, "Camera unit dimensions: %s %u x %u; reference %u x %u\n", obs_source_get_name(unit),
+				obs_source_get_width(unit), obs_source_get_height(unit), obs_source_get_width(obs_scene_get_source(wrapper)),
+				obs_source_get_height(obs_scene_get_source(wrapper)));
+		check(obs_source_get_width(unit) == 431 && obs_source_get_height(unit) == 277,
+			"canvas assignment preserves the camera unit's intended local dimensions");
+		obs_sceneitem_t *nested = nullptr;
+		obs_scene_enum_items(obs_scene_from_source(unit), [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
+			if (obs_scene_from_source(obs_sceneitem_get_source(item))) *static_cast<obs_sceneitem_t **>(opaque) = item;
+			return true;
+		}, &nested);
+		check(nested && PulseMotionEngineTestAccess::frame(nested) == cropUnitBefore,
+			"recursive camera clone preserves nested framing rotation and lock");
+		obs_source_t *nestedUnit = obs_sceneitem_get_source(nested);
+		OBSCanvasAutoRelease nestedCanvas = obs_source_get_canvas(nestedUnit);
+		check(nestedCanvas == destination && nestedUnit != obs_scene_get_source(croppedCamera),
+			"nested camera unit is isolated on the same destination canvas");
+		check(obs_source_get_width(nestedUnit) == 391 && obs_source_get_height(nestedUnit) == 257,
+			"recursive clone preserves nested custom dimensions");
+		check(obs_sceneitem_get_scale_filter(nested) == OBS_SCALE_LANCZOS,
+			"recursive clone preserves source-item sampling settings");
+		obs_sceneitem_t *bound = obs_scene_find_source(obs_scene_from_source(nestedUnit), "Replacement camera");
+		check(bound && PulseMotionEngineTestAccess::frame(bound) == childBefore && obs_sceneitem_get_source(bound) == replacement,
+			"source replacement reuses raw capture and retains nested crop and flip");
+		obs_sceneitem_t *decoration = obs_scene_find_source(obs_scene_from_source(unit), "Setup border");
+		check(decoration && PulseMotionEngineTestAccess::frame(decoration) == borderBefore &&
+			obs_sceneitem_get_source(decoration) == border && obs_sceneitem_get_blending_mode(decoration) == OBS_BLEND_SCREEN,
+			"decoration remains attached with its original frame and blending settings");
+		OBSDataAutoRelease savedUnit = obs_save_source(unit), savedChild = obs_save_source(nestedUnit);
+		check(QString::fromUtf8(obs_data_get_string(savedUnit, "canvas_uuid")) == obs_canvas_get_uuid(destination) &&
+			QString::fromUtf8(obs_data_get_string(savedChild, "canvas_uuid")) == obs_canvas_get_uuid(destination),
+			"native serialization records correct canvas ownership at each camera nesting level");
+		clonedUnits.insert(obs_source_get_uuid(unit)); clonedUnits.insert(obs_source_get_uuid(nestedUnit));
+	};
 	obs_sceneitem_t *h = obs_scene_add(horizontal, obs_scene_get_source(wrapper));
 	obs_sceneitem_t *v = obs_scene_add(portrait, obs_scene_get_source(wrapper));
 	vec2 position{83, 97}; obs_sceneitem_set_pos(v, &position);
@@ -471,13 +533,21 @@ static void setupBuilderTests(const obs_video_info &video)
 	check(generatedLook.value("referenceLookId") == "setup-first" && generatedLook.value("durationMs") == 1100,
 		"setup retains reference identity provenance and duration");
 	const QJsonArray targets = generatedLook.value("items").toArray();
-	check(targets.size() == 2 && targets[0].toObject().value("sourceUuid") == targets[1].toObject().value("sourceUuid"),
-		"paired targets share persistent generated camera unit");
+	check(targets.size() == 2 && targets[0].toObject().value("sourceUuid") != targets[1].toObject().value("sourceUuid"),
+		"paired targets use distinct generated camera units on their own canvases");
 	OBSSourceAutoRelease unit = obs_get_source_by_uuid(targets[0].toObject().value("sourceUuid").toString().toUtf8().constData());
-	check(unit && unit != obs_scene_get_source(wrapper), "camera unit isolated from reference");
-	obs_sceneitem_t *bound = obs_scene_find_source(obs_scene_from_source(unit), "Replacement camera");
-	check(bound && PulseMotionEngineTestAccess::frame(bound) == childBefore, "source replacement retains nested intentional crop");
-	check(obs_scene_find_source(obs_scene_from_source(unit), "Setup border") != nullptr, "decoration remains attached to movable capture unit");
+	OBSSourceAutoRelease portraitUnit = obs_get_source_by_uuid(targets[1].toObject().value("sourceUuid").toString().toUtf8().constData());
+	checkUnit(unit, mainCanvas); checkUnit(portraitUnit, canvas);
+	for (obs_source_t *saved : {unit.Get(), portraitUnit.Get()}) {
+		OBSDataAutoRelease serializedUnit = obs_save_source(saved);
+		const bool vertical = saved == portraitUnit.Get();
+		obs_data_set_string(serializedUnit, "name", vertical ? "Reloaded Portrait Unit" : "Reloaded Landscape Unit");
+		obs_data_set_string(serializedUnit, "uuid", vertical ? "reloaded-portrait-unit" : "reloaded-landscape-unit");
+		OBSSourceAutoRelease reloaded = obs_load_source(serializedUnit);
+		obs_source_load2(reloaded);
+		checkUnit(reloaded, vertical ? canvas.Get() : mainCanvas.Get());
+		obs_source_remove(reloaded);
+	}
 	check(PulseMotionEngineTestAccess::frame(child) == childBefore && obs_sceneitem_get_source(child) == camera,
 		"source assignment leaves reference capture and crop intact");
 	check(targets[0].toObject().value("transform").toObject() == hBefore && targets[1].toObject().value("transform").toObject() == vBefore,
@@ -494,6 +564,10 @@ static void setupBuilderTests(const obs_video_info &video)
 	OBSSourceAutoRelease secondUnit = obs_get_source_by_uuid(all.last().toObject().value("items").toArray().first().toObject().value("sourceUuid").toString().toUtf8().constData());
 	check(all[all.size()-1].toObject().value("items") == all[all.size()-2].toObject().value("items"),
 		"selected Looks share item identities for native Move");
+	const auto secondTargets = all.last().toObject().value("items").toArray();
+	OBSSourceAutoRelease secondPortraitUnit = obs_get_source_by_uuid(secondTargets[1].toObject().value("sourceUuid").toString().toUtf8().constData());
+	check(secondUnit != secondPortraitUnit, "multiple saved Looks keep horizontal and portrait units separate");
+	checkUnit(secondUnit, mainCanvas); checkUnit(secondPortraitUnit, canvas);
 	QJsonObject savedStage{{"theme", "setup-starting"}, {"referenceStage", "Setup Reference"},
 		{"referenceLooks", QJsonArray{"setup-first", "setup-second"}}, {"sourceBindings", choices.value("sourceBindings")}};
 	QJsonObject mixed{{"schema", 2}, {"name", "Mixed Trial"}, {"stages", QJsonArray{
@@ -513,8 +587,11 @@ static void setupBuilderTests(const obs_video_info &video)
 	check(mixedTargets.size() == 2 && mixedTargets[0].toObject().value("transform").toObject() == hBefore &&
 		mixedTargets[1].toObject().value("transform").toObject() == vBefore, "mixed wizard preserves independent saved H/V geometry");
 	OBSSourceAutoRelease mixedUnit = obs_get_source_by_uuid(mixedTargets.first().toObject().value("sourceUuid").toString().toUtf8().constData());
-	check(mixedUnit && PulseMotionEngineTestAccess::frame(obs_scene_find_source(obs_scene_from_source(mixedUnit), "Replacement camera")) == childBefore,
-		"mixed wizard retains camera unit crop and chosen replacement");
+	OBSSourceAutoRelease mixedPortraitUnit = obs_get_source_by_uuid(mixedTargets[1].toObject().value("sourceUuid").toString().toUtf8().constData());
+	check(mixedUnit != mixedPortraitUnit, "mixed wizard keeps saved camera units separate for both canvases");
+	checkUnit(mixedUnit, mainCanvas); checkUnit(mixedPortraitUnit, canvas);
+	check(mixedActions[mixedActions.size()-2].toObject().value("items") == mixedTargets,
+		"mixed wizard reuses each canvas unit across the selected saved Looks");
 	auto generatedStages = QJsonDocument::fromJson(readFile(stagePath)).array();
 	check(generatedStages.last().toObject().value("horizontalTransition") == "cut",
 		"wizard keeps saved stage transition when no replacement is chosen");
@@ -550,7 +627,8 @@ static void setupBuilderTests(const obs_video_info &video)
 	}
 	const auto transitionAction = PulseMotionEngineTestAccess::actions(engine).last().toObject();
 	OBSSourceAutoRelease transitionUnit = obs_get_source_by_uuid(transitionAction.value("items").toArray().first().toObject().value("sourceUuid").toString().toUtf8().constData());
-	if (transitionUnit) obs_source_remove(transitionUnit);
+	OBSSourceAutoRelease transitionPortraitUnit = obs_get_source_by_uuid(transitionAction.value("items").toArray()[1].toObject().value("sourceUuid").toString().toUtf8().constData());
+	checkUnit(transitionUnit, mainCanvas); checkUnit(transitionPortraitUnit, canvas);
 	savedTransitionStage.insert("transitions", QJsonObject{{"verticalTransition", "fade"}, {"verticalDurationMs", -1}});
 	transitionStages[1] = savedTransitionStage; transitionTrial.insert("stages", transitionStages);
 	check(!engine.createGuidedShow(transitionTrial).value("ok").toBool() && readFile(stagePath) == beforeBadTransition,
@@ -584,12 +662,91 @@ static void setupBuilderTests(const obs_video_info &video)
 		OBSSourceAutoRelease source = obs_get_source_by_name(name); if (!source) source = obs_canvas_get_source_by_name(canvas, name);
 		if (source) obs_source_remove(source);
 	}
-	obs_source_remove(unit);
-	obs_source_remove(secondUnit);
-	obs_source_remove(mixedUnit);
+	for (const QString &uuid : clonedUnits) {
+		OBSSourceAutoRelease clone = obs_get_source_by_uuid(uuid.toUtf8().constData());
+		if (clone) obs_source_remove(clone);
+	}
 	obs_source_remove(graphic); obs_source_remove(camera); obs_source_remove(replacement); obs_source_remove(border);
-	obs_source_remove(obs_scene_get_source(wrapper)); obs_source_remove(obs_scene_get_source(horizontal)); obs_source_remove(obs_scene_get_source(portrait));
+	obs_source_remove(obs_scene_get_source(wrapper)); obs_source_remove(obs_scene_get_source(croppedCamera));
+	obs_source_remove(obs_scene_get_source(horizontal)); obs_source_remove(obs_scene_get_source(portrait));
 	obs_canvas_remove(canvas);
+}
+
+static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *portrait,
+	obs_source_t *square, obs_source_t *unknown)
+{
+	QWizard wizard;
+	QWidget lookPage(&wizard), sourcePage(&wizard);
+	auto *lookLayout = new QVBoxLayout(&lookPage), *sourceLayout = new QVBoxLayout(&sourcePage);
+	FlexibleSetup setup(wizard, &lookPage, lookLayout, &sourcePage, sourceLayout, {}, {}, {});
+	for (auto *box : lookPage.findChildren<QCheckBox *>()) if (box->text() == "Getting ready") box->setChecked(false);
+	setup.update({"Starting"});
+	auto combo = [&](const QString &name) -> QComboBox * {
+		for (auto *widget : sourcePage.findChildren<QComboBox *>()) if (widget->accessibleName() == name) return widget;
+		return nullptr;
+	};
+	auto input = [&](const QString &name) -> QLineEdit * {
+		for (auto *widget : sourcePage.findChildren<QLineEdit *>()) if (widget->accessibleName() == name) return widget;
+		return nullptr;
+	};
+	auto time = [&](const QString &name) -> QSpinBox * {
+		for (auto *widget : sourcePage.findChildren<QSpinBox *>()) if (widget->accessibleName() == name) return widget;
+		return nullptr;
+	};
+	const QString horizontalLabel = "Starting · Landscape title / countdown", verticalLabel = "Starting · Portrait title / countdown";
+	QComboBox *horizontal = combo(horizontalLabel), *vertical = combo(verticalLabel);
+	check(horizontal && vertical && horizontal != vertical,
+		"wizard presents independent landscape and portrait graphic questions");
+	check(horizontal->findData(obs_source_get_uuid(landscape)) >= 0 && horizontal->findData(obs_source_get_uuid(portrait)) < 0 &&
+		vertical->findData(obs_source_get_uuid(portrait)) >= 0 && vertical->findData(obs_source_get_uuid(landscape)) < 0,
+		"graphic dropdowns filter existing browser artwork by matching orientation");
+	for (QComboBox *field : {horizontal,vertical})
+		check(field->findData(obs_source_get_uuid(square)) >= 0 && field->findData(obs_source_get_uuid(unknown)) >= 0,
+			"both format questions retain square and unknown-size compatible graphics");
+	horizontal->setCurrentIndex(horizontal->findData(obs_source_get_uuid(landscape)));
+	vertical->setCurrentIndex(vertical->findData(obs_source_get_uuid(portrait)));
+	check(setup.problem(true).isEmpty(), "independent valid H/V artwork completes the selected Starting questions");
+	QJsonObject draft = setup.draft("UI Questions Trial");
+	QJsonObject roles = draft.value("stages").toArray().first().toObject().value("roles").toObject();
+	check(roles.value("graphic").toString() == obs_source_get_uuid(landscape) &&
+		roles.value("graphicPortrait").toString() == obs_source_get_uuid(portrait),
+		"wizard draft stores each graphic assignment under its correct canvas role");
+	vertical->setCurrentIndex(vertical->findData(""));
+	check(setup.problem(true).contains("portrait artwork"), "wizard asks for required portrait artwork when that answer is empty");
+	vertical->setCurrentIndex(vertical->findData(obs_source_get_uuid(portrait)));
+	horizontal->setCurrentIndex(horizontal->findData(""));
+	check(setup.problem(true).contains("landscape artwork"), "wizard asks for required landscape artwork when that answer is empty");
+	horizontal->setCurrentIndex(horizontal->findData("builtin")); vertical->setCurrentIndex(vertical->findData("builtin"));
+	QSpinBox *horizontalTime = time(horizontalLabel+" countdown duration"), *verticalTime = time(verticalLabel+" countdown duration");
+	check(horizontalTime && verticalTime, "both built-in graphic questions expose countdown duration");
+	horizontalTime->setValue(3);
+	check(verticalTime->value() == 3, "landscape countdown edit updates the paired portrait duration");
+	verticalTime->setValue(7);
+	check(horizontalTime->value() == 7, "portrait countdown edit updates the paired landscape duration");
+	draft = setup.draft("UI Questions Trial");
+	const auto builtins = draft.value("newSources").toObject();
+	check(builtins.value("Starting/graphic/horizontal").toObject().value("minutes").toInt() == 7 &&
+		builtins.value("Starting/graphic/vertical").toObject().value("minutes").toInt() == 7,
+		"both generated graphic definitions carry the shared countdown duration");
+	horizontal->setCurrentIndex(horizontal->findData("url")); vertical->setCurrentIndex(vertical->findData("url"));
+	QLineEdit *horizontalUrl = input(horizontalLabel+" browser URL"), *verticalUrl = input(verticalLabel+" browser URL");
+	check(horizontalUrl && verticalUrl, "wizard provides a browser link field for each format");
+	horizontalUrl->setText("https://example.invalid/landscape"); verticalUrl->setText("https://example.invalid/portrait");
+	check(setup.problem(true).isEmpty(), "separate valid browser URLs complete the artwork questions");
+	setup.update({"Chat"}); setup.update({"Starting"});
+	for (auto *button : sourcePage.findChildren<QPushButton *>()) if (button->text() == "Next source") button->click();
+	for (auto *button : sourcePage.findChildren<QPushButton *>()) if (button->text() == "Previous source") button->click();
+	check(horizontal->currentData() == "url" && vertical->currentData() == "url" &&
+		horizontalUrl->text() == "https://example.invalid/landscape" && verticalUrl->text() == "https://example.invalid/portrait",
+		"group and source back-navigation retains independent format answers");
+	draft = setup.draft("UI Questions Trial");
+	roles = draft.value("stages").toArray().first().toObject().value("roles").toObject();
+	const auto links = draft.value("newSources").toObject();
+	check(roles.value("graphic") == "new:Starting/graphic/horizontal" &&
+		roles.value("graphicPortrait") == "new:Starting/graphic/vertical" &&
+		links.value("Starting/graphic/horizontal").toObject().value("url") == "https://example.invalid/landscape" &&
+		links.value("Starting/graphic/vertical").toObject().value("url") == "https://example.invalid/portrait",
+		"wizard emits independent new browser definitions and format roles after navigating back");
 }
 
 static void themedBuilderTests(const obs_video_info &video)
@@ -671,7 +828,16 @@ static void themedBuilderTests(const obs_video_info &video)
 	for (const char *kind : {"dshow_input", "game_capture", "monitor_capture", "browser_source"}) {
 		obs_source_info type{}; type.id=kind; type.type=OBS_SOURCE_TYPE_INPUT; type.output_flags=OBS_SOURCE_VIDEO;
 		type.get_name=[](void *){return "Inert builder fixture";}; type.get_width=[](void *){return 640u;}; type.get_height=[](void *){return 480u;};
-		type.create=[](obs_data_t *,obs_source_t *)->void *{return new int(1);}; type.destroy=[](void *p){delete static_cast<int *>(p);}; obs_register_source(&type);
+		type.create=[](obs_data_t *,obs_source_t *)->void *{return new int(1);}; type.destroy=[](void *p){delete static_cast<int *>(p);};
+		if (std::strcmp(kind, "browser_source") == 0) {
+			type.create=[](obs_data_t *settings,obs_source_t *)->void *{
+				return new QSize(int(obs_data_get_int(settings,"width")),int(obs_data_get_int(settings,"height")));
+			};
+			type.destroy=[](void *p){delete static_cast<QSize *>(p);};
+			type.get_width=[](void *p){return uint32_t(static_cast<QSize *>(p)->width());};
+			type.get_height=[](void *p){return uint32_t(static_cast<QSize *>(p)->height());};
+		}
+		obs_register_source(&type);
 	}
 	for (const char *kind : {"color_filter", "mask_filter"}) {
 		obs_source_info type{};type.id=kind;type.type=OBS_SOURCE_TYPE_FILTER;type.output_flags=OBS_SOURCE_VIDEO;
@@ -757,6 +923,118 @@ static void themedBuilderTests(const obs_video_info &video)
 	}
 	check(graphicSources.size()==2,"countdown reuses one browser source per canvas across all three Looks");
 	check(treatedCameras.size()==2,"grey presenter reuses one wrapper per canvas across all three Looks");
+	OBSCanvasAutoRelease mainCanvas = obs_get_main_canvas();
+	for (const QString &uuid : treatedCameras) {
+		OBSSourceAutoRelease treatment = obs_get_source_by_uuid(uuid.toUtf8().constData());
+		const bool vertical = QString::fromUtf8(obs_source_get_name(treatment)).contains(" · vertical camera");
+		OBSCanvasAutoRelease owner = obs_source_get_canvas(treatment);
+		check(owner == (vertical ? canvas.Get() : mainCanvas.Get()),
+			"new treated camera wrapper belongs to its destination canvas");
+		check(obs_source_filter_count(treatment) == 2 &&
+			obs_scene_find_source(obs_scene_from_source(treatment), "Builder camera fixture") != nullptr,
+			"canvas-specific treatment retains both wrapper filters and reuses raw capture");
+		OBSDataAutoRelease saved = obs_save_source(treatment);
+		check(QString::fromUtf8(obs_data_get_string(saved,"canvas_uuid")) == obs_canvas_get_uuid(owner),
+			"treated wrapper persists correct native canvas ownership");
+	}
+	QJsonObject browserStage{{"theme","starting"},{"looks",QJsonArray{"countdown","introduction"}},
+		{"roles",QJsonObject{{"graphic","new:browser"}}}};
+	QJsonObject browserChoices{{"schema",2},{"name","Canvas Browser Trial"},{"stages",QJsonArray{browserStage}},
+		{"newSources",QJsonObject{{"browser",QJsonObject{{"name","Canvas browser fixture"},{"kind","browser_source"},
+			{"url","https://example.invalid/offline-audit"}}}}}};
+	check(engine.createGuidedShow(browserChoices).value("ok").toBool(),
+		"one browser definition creates both canvas variants without network activity");
+	QHash<QString,QString> browserSources, browserItems;
+	for (const auto &value : PulseMotionEngineTestAccess::actions(engine)) {
+		const auto action = value.toObject();
+		if(action.value("stage").toString() != "Canvas Browser Trial · Starting") continue;
+		check(action.value("items").toArray().size() == 2, "browser-only Look contains one input per canvas");
+		for (const auto &value : action.value("items").toArray()) {
+			const auto target = value.toObject();
+			const QString container = target.value("container").toString(), uuid = target.value("sourceUuid").toString();
+			const bool vertical = container.endsWith(" · Portrait");
+			OBSSourceAutoRelease browser = obs_get_source_by_uuid(uuid.toUtf8().constData());
+			OBSDataAutoRelease settings = obs_source_get_settings(browser);
+			const int width = vertical ? 480 : 640, height = vertical ? 640 : 480;
+			check(obs_source_get_width(browser) == width && obs_source_get_height(browser) == height &&
+				obs_data_get_int(settings,"width") == width && obs_data_get_int(settings,"height") == height,
+				"each browser renders with its destination canvas dimensions");
+			check(QString::fromUtf8(obs_source_get_name(browser)) ==
+				QString("Canvas browser fixture · ") + (vertical ? "vertical" : "horizontal"),
+				"separate browser variants have collision-free canvas-specific names");
+			check(!browserSources.contains(container) || browserSources.value(container) == uuid,
+				"browser source UUID stays stable across Looks on the same canvas");
+			check(!browserItems.contains(container) || browserItems.value(container) == target.value("itemId").toString(),
+				"browser scene-item identity stays stable across Looks on the same canvas");
+			browserSources.insert(container,uuid); browserItems.insert(container,target.value("itemId").toString());
+		}
+	}
+	check(browserSources.size() == 2 && browserSources.values()[0] != browserSources.values()[1],
+		"horizontal and portrait browser variants never share the same cached source");
+	OBSDataAutoRelease landscapeBrowserSettings = obs_data_create(), portraitBrowserSettings = obs_data_create();
+	obs_data_set_int(landscapeBrowserSettings,"width",640); obs_data_set_int(landscapeBrowserSettings,"height",480);
+	obs_data_set_int(portraitBrowserSettings,"width",480); obs_data_set_int(portraitBrowserSettings,"height",640);
+	OBSSourceAutoRelease landscapeGraphic = obs_source_create("browser_source","Existing landscape graphic",landscapeBrowserSettings,nullptr);
+	OBSSourceAutoRelease portraitGraphic = obs_source_create("browser_source","Existing portrait graphic",portraitBrowserSettings,nullptr);
+	QJsonObject separateGraphics{{"schema",2},{"name","Separate Graphics Trial"},{"stages",QJsonArray{QJsonObject{
+		{"theme","starting"},{"looks",QJsonArray{"countdown"}},
+		{"roles",QJsonObject{{"graphic",obs_source_get_uuid(landscapeGraphic)},{"graphicPortrait",obs_source_get_uuid(portraitGraphic)}}}}}}};
+	check(engine.createGuidedShow(separateGraphics).value("ok").toBool(),
+		"wizard accepts independently assigned landscape and portrait graphic inputs");
+	const auto separateTargets = PulseMotionEngineTestAccess::actions(engine).last().toObject().value("items").toArray();
+	check(separateTargets.size() == 2 &&
+		separateTargets[0].toObject().value("sourceUuid").toString() == obs_source_get_uuid(landscapeGraphic) &&
+		separateTargets[1].toObject().value("sourceUuid").toString() == obs_source_get_uuid(portraitGraphic),
+		"explicit portrait graphic is selected only on the portrait canvas");
+	const QByteArray beforeGraphicFailure = readFile(stagePath);
+	const QJsonArray beforeGraphicActions = PulseMotionEngineTestAccess::actions(engine);
+	auto rejectedGraphic = [&](const QJsonObject &request, const char *message) {
+		check(!engine.createGuidedShow(request).value("ok").toBool() && readFile(stagePath) == beforeGraphicFailure &&
+			PulseMotionEngineTestAccess::actions(engine) == beforeGraphicActions,message);
+	};
+	QJsonObject invalidGraphic = separateGraphics;
+	invalidGraphic.insert("name","Missing Portrait Graphic Trial");
+	QJsonObject invalidStage = invalidGraphic.value("stages").toArray().first().toObject();
+	QJsonObject invalidRoles = invalidStage.value("roles").toObject();
+	invalidRoles.insert("graphicPortrait",""); invalidStage.insert("roles",invalidRoles);
+	invalidGraphic.insert("stages",QJsonArray{invalidStage});
+	rejectedGraphic(invalidGraphic,"an explicitly unassigned required portrait graphic fails without catalogue mutation");
+	invalidGraphic.insert("name","Wrong Landscape Graphic Trial");
+	invalidRoles.insert("graphic",obs_source_get_uuid(portraitGraphic));
+	invalidRoles.insert("graphicPortrait",obs_source_get_uuid(portraitGraphic)); invalidStage.insert("roles",invalidRoles);
+	invalidGraphic.insert("stages",QJsonArray{invalidStage});
+	rejectedGraphic(invalidGraphic,"existing portrait browser graphic cannot silently stretch onto landscape");
+	invalidGraphic.insert("name","Wrong Portrait Graphic Trial");
+	invalidRoles.insert("graphic",obs_source_get_uuid(landscapeGraphic));
+	invalidRoles.insert("graphicPortrait",obs_source_get_uuid(landscapeGraphic)); invalidStage.insert("roles",invalidRoles);
+	invalidGraphic.insert("stages",QJsonArray{invalidStage});
+	rejectedGraphic(invalidGraphic,"existing landscape browser graphic cannot silently stretch onto portrait");
+	for (const QString &route : {QString("horizontal"),QString("vertical")}) {
+		QJsonObject invalidOverlay = separateGraphics;
+		invalidOverlay.insert("name","Wrong Overlay "+route);
+		invalidOverlay.insert("overlays",QJsonArray{QJsonObject{{"canvas",route},{"order",1},
+			{"source",obs_source_get_uuid(route == "horizontal" ? portraitGraphic.Get() : landscapeGraphic.Get())},
+			{"looks",QJsonArray{"starting/countdown"}}}});
+		rejectedGraphic(invalidOverlay,"existing full-canvas browser overlay must match its assigned orientation");
+	}
+	OBSDataAutoRelease squareBrowserSettings = obs_data_create();
+	obs_data_set_int(squareBrowserSettings,"width",480); obs_data_set_int(squareBrowserSettings,"height",480);
+	OBSSourceAutoRelease squareGraphic = obs_source_create("browser_source","Square graphic fixture",squareBrowserSettings,nullptr);
+	OBSSourceAutoRelease unknownGraphic = obs_source_create("browser_source","Unknown-size graphic fixture",nullptr,nullptr);
+	setupGraphicQuestionTests(landscapeGraphic,portraitGraphic,squareGraphic,unknownGraphic);
+	for (const auto &[name, graphic] : std::vector<std::pair<QString,obs_source_t *>>{
+		{"Square Graphics Trial",squareGraphic},{"Unknown Graphics Trial",unknownGraphic}}) {
+		QJsonObject adaptable = separateGraphics; adaptable.insert("name",name);
+		QJsonObject adaptableStage = adaptable.value("stages").toArray().first().toObject();
+		adaptableStage.insert("roles",QJsonObject{{"graphic",obs_source_get_uuid(graphic)}});
+		adaptable.insert("stages",QJsonArray{adaptableStage});
+		check(engine.createGuidedShow(adaptable).value("ok").toBool(),
+			"square or unknown-size browser graphics retain shared-source fallback for both formats");
+		const auto adaptableTargets = PulseMotionEngineTestAccess::actions(engine).last().toObject().value("items").toArray();
+		check(adaptableTargets.size() == 2 && adaptableTargets[0].toObject().value("sourceUuid") ==
+			adaptableTargets[1].toObject().value("sourceUuid"),
+			"omitting portrait assignment preserves compatible legacy fallback");
+	}
 	// Generic setup groups must work with role assignments unlike the saved
 	// printer/presenter reference: here A is a screen and B is a camera.
 	QJsonArray setupStages;
@@ -846,10 +1124,17 @@ static void themedBuilderTests(const obs_video_info &video)
 		OBSSourceAutoRelease p=obs_canvas_get_source_by_name(canvas,("All Themes · "+theme.name+" · Portrait").toUtf8().constData());obs_source_remove(h);obs_source_remove(p);
 	}
 	for(const QString &route:{QString("horizontal"),QString("vertical")}){OBSSourceAutoRelease treatment=obs_get_source_by_name(("All Themes · Starting · Presenter camera · "+route+" camera").toUtf8().constData());if(treatment)obs_source_remove(treatment);}
-	for(const QString &name:{QString("Shared Countdown · Starting"),QString("Shared Countdown · Starting · Portrait")}){
+	for(const QString &name:{QString("Shared Countdown · Starting"),QString("Shared Countdown · Starting · Portrait"),
+		QString("Canvas Browser Trial · Starting"),QString("Canvas Browser Trial · Starting · Portrait"),
+		QString("Separate Graphics Trial · Starting"),QString("Separate Graphics Trial · Starting · Portrait"),
+		QString("Square Graphics Trial · Starting"),QString("Square Graphics Trial · Starting · Portrait"),
+		QString("Unknown Graphics Trial · Starting"),QString("Unknown Graphics Trial · Starting · Portrait")}){
 		OBSSourceAutoRelease owner=name.endsWith(" · Portrait")?obs_canvas_get_source_by_name(canvas,name.toUtf8().constData()):obs_get_source_by_name(name.toUtf8().constData());if(owner)obs_source_remove(owner);
 	}
 	for(const QString &uuid:graphicSources+treatedCameras){OBSSourceAutoRelease source=obs_get_source_by_uuid(uuid.toUtf8().constData());if(source)obs_source_remove(source);}
+	for(const QString &uuid:browserSources){OBSSourceAutoRelease browser=obs_get_source_by_uuid(uuid.toUtf8().constData());if(browser)obs_source_remove(browser);}
+	obs_source_remove(landscapeGraphic); obs_source_remove(portraitGraphic);
+	obs_source_remove(squareGraphic); obs_source_remove(unknownGraphic);
 	obs_source_remove(camera);obs_source_remove(screen);obs_source_remove(gameSource);
 	obs_source_remove(alerts);obs_source_remove(stickers);obs_source_remove(chat);
 	obs_source_remove(generated); obs_source_remove(generatedPortrait); obs_source_remove(source); obs_canvas_remove(canvas);

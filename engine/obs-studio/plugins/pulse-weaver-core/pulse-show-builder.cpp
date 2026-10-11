@@ -1,6 +1,7 @@
 #include "pulse-motion-engine.hpp"
 #include "pulse-show-templates.hpp"
 #include "pulse-scene-item-ref.hpp"
+#include "pulse-source-canvas.hpp"
 #include <obs-module.h>
 #include <graphics/vec4.h>
 #include <QCheckBox>
@@ -127,10 +128,10 @@ void position(obs_sceneitem_t *item, const PulseShow::Panel &panel, int width, i
 }
 // Filters belong to a wrapper scene, never to a reused capture source.
 obs_scene_t *treatedCamera(obs_source_t *camera, const QString &name, bool temporary, int width, int height,
-			   const QString &maskPath, const QJsonObject &options)
+			   const QString &maskPath, const QJsonObject &options, obs_canvas_t *canvas = nullptr)
 {
 	OBSSceneAutoRelease scene = temporary ? obs_scene_create_private(name.toUtf8().constData())
-					      : obs_scene_create(name.toUtf8().constData());
+					      : obs_canvas_scene_create(canvas, name.toUtf8().constData());
 	if (!scene) {
 		return nullptr;
 	}
@@ -1609,10 +1610,12 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		return true;
 	};
 	QString validationError;
-	auto validateSource = [&](const QString &id, const QString &role, bool required) {
+	auto validateSource = [&](const QString &id, const QString &role, bool required, const QString &route = QString()) {
 		if (id.isEmpty()) {
 			if (required) {
-				validationError = "Choose " + PulseShow::roleName(role) + " for each selected Look.";
+				validationError = "Choose " + (role == "graphic" && !route.isEmpty() ?
+					QString(route == "vertical" ? "portrait artwork" : "landscape artwork") : PulseShow::roleName(role)) +
+					" for each selected Look.";
 			}
 			return !required;
 		}
@@ -1648,9 +1651,17 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				validationError = "Choose a device or window for " + name + ".";
 				return false;
 			}
-			if (!usedDefinitions.contains(key) && !reserve(name)) {
-				validationError = "The source name “" + name + "” is already in use.";
-				return false;
+			if (!usedDefinitions.contains(key)) {
+				QStringList names{name};
+				if (kind == "browser_source") {
+					names << name + " · horizontal" << name + " · vertical";
+				}
+				for (const QString &candidate : names) {
+					if (!reserve(candidate)) {
+						validationError = "The source name “" + candidate + "” is already in use.";
+						return false;
+					}
+				}
 			}
 			usedDefinitions.insert(key);
 			return true;
@@ -1659,6 +1670,12 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		if (!compatible(source, role)) {
 			validationError = "The selected " + PulseShow::roleName(role) +
 					  " is missing or incompatible. Choose it again.";
+			return false;
+		}
+		if (!route.isEmpty() && (role == "graphic" || role == "chat" || role == "overlay") &&
+		    !pulseBrowserMatchesCanvas(source, route == "vertical")) {
+			validationError = "Choose the " + QString(route == "vertical" ? "portrait" : "landscape") +
+				" browser overlay for this canvas.";
 			return false;
 		}
 		return true;
@@ -1691,6 +1708,20 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			return error("Choose at least one Look for " + theme->name + ".");
 		}
 		const QJsonObject roles = stage.value("roles").toObject();
+		auto validateRole = [&](const QString &role, bool required) {
+			if (!validateSource(roles.value(role).toString(), role, required, "horizontal")) return false;
+			if (role == "graphic") {
+				const QString portraitId = roles.contains("graphicPortrait") ?
+					roles.value("graphicPortrait").toString() : roles.value("graphic").toString();
+				return validateSource(portraitId, role, required, "vertical");
+			}
+			if (role == "chat") {
+				const QString portraitId = roles.value("chatPortrait").toString().isEmpty() ?
+					roles.value("chat").toString() : roles.value("chatPortrait").toString();
+				return validateSource(portraitId, role, required, "vertical");
+			}
+			return true;
+		};
 		for (const auto &lookId : chosen) {
 			const auto *look = PulseShow::look(*theme, lookId.toString());
 			const QString key = id + "/" + lookId.toString();
@@ -1698,9 +1729,8 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				return error("Unknown or duplicate Look: " + key);
 			}
 			selectedLooks.insert(key);
-			if (!validateSource(roles.value(look->main).toString(), look->main, true) ||
-			    (!look->support.isEmpty() && !validateSource(roles.value(look->support).toString(),
-									 look->support, !look->optionalPresenter))) {
+			if (!validateRole(look->main, true) ||
+			    (!look->support.isEmpty() && !validateRole(look->support, !look->optionalPresenter))) {
 				return error(theme->name + " → " + look->name + ": " + validationError);
 			}
 		}
@@ -1721,13 +1751,13 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				return error("An overlay refers to an unselected Look.");
 			}
 		}
-		if (!validateSource(overlay.value("source").toString(), "overlay", true)) {
+		if (!validateSource(overlay.value("source").toString(), "overlay", true, route)) {
 			return error(validationError);
 		}
 	}
 	for (const auto &value : requested) {
 		const QJsonObject roleIds = value.toObject().value("roles").toObject();
-		if (!validateSource(roleIds.value("chatPortrait").toString(), "chat", false)) {
+		if (!validateSource(roleIds.value("chatPortrait").toString(), "chat", false, "vertical")) {
 			return error(validationError);
 		}
 	}
@@ -1784,8 +1814,9 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		const QJsonObject spec = definitions.value(key.mid(4)).toObject();
 		const QString kind = spec.value("kind").toString();
 		const bool graphic = kind == "builtin_graphic";
-		const QString cacheKey =
-			key + (graphic ? "/" + PulseShow::graphicVariant(lookId) + "/" + route : QString());
+		// Browser viewports belong to a canvas; capture devices remain shared.
+		const QString cacheKey = key + (graphic ? "/" + PulseShow::graphicVariant(lookId) + "/" + route
+						: kind == "browser_source" ? "/" + route : QString());
 		if (resolved.contains(cacheKey)) {
 			OBSSourceAutoRelease source =
 				obs_get_source_by_uuid(resolved.value(cacheKey).toUtf8().constData());
@@ -1826,6 +1857,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			obs_data_set_bool(settings, "shutdown", true);
 			obs_data_set_bool(settings, "reroute_audio", true);
 			if (!graphic) {
+				name += " · " + route;
 				obs_data_set_string(settings, "url", spec.value("url").toString().toUtf8().constData());
 			} else {
 				name += " · " + PulseShow::graphicVariant(lookId).replace('/', " · ") + " · " + route;
@@ -1956,6 +1988,9 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				};
 				for (const auto &panel : PulseShow::layout(*look, vertical, supporting, settings)) {
 					QString sourceId = roleIds.value(panel.role).toString();
+					if (vertical && panel.role == "graphic" && roleIds.contains("graphicPortrait")) {
+						sourceId = roleIds.value("graphicPortrait").toString();
+					}
 					if (vertical && panel.role == "chat" &&
 					    !roleIds.value("chatPortrait").toString().isEmpty()) {
 						sourceId = roleIds.value("chatPortrait").toString();
@@ -1978,11 +2013,13 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 							const QString treatmentName = name + " · " +
 										      PulseShow::roleName(panel.role) +
 										      " · " + route + " camera";
+							OBSCanvasAutoRelease treatmentCanvas =
+								obs_source_get_canvas(obs_scene_get_source(scene));
 							OBSSceneAutoRelease treatment = treatedCamera(
 								source, treatmentName, false,
 								qMax(1, int(panel.rect.width() * width)),
 								qMax(1, int(panel.rect.height() * height)), maskPath,
-								settings);
+								settings, treatmentCanvas);
 							if (!treatment) {
 								return fail(
 									"Could not create the dimmed clipped-corner camera. Check the colour and mask filters.");

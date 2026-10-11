@@ -387,7 +387,7 @@ void QCefBrowserClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> f
 	frame->ExecuteJavaScript(script, "", 0);
 }
 
-void QCefBrowserClient::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int)
+void QCefBrowserClient::OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int)
 {
 	if (!frame->IsMain())
 		return;
@@ -396,6 +396,9 @@ void QCefBrowserClient::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> fra
 		frame->ExecuteJavaScript(widget->script, CefString(), 0);
 	else if (!script.empty())
 		frame->ExecuteJavaScript(script, CefString(), 0);
+
+	if (widget && widget->cefBrowser && widget->cefBrowser->IsSame(browser))
+		QMetaObject::invokeMethod(widget, "pageLoaded", Qt::QueuedConnection);
 }
 
 bool QCefBrowserClient::OnJSDialog(CefRefPtr<CefBrowser>, const CefString &,

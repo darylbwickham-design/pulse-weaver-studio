@@ -23,6 +23,10 @@
 #include "OBSBasic.hpp"
 #include "OBSApp.hpp"
 #include "PulseVerticalEditor.hpp"
+#ifdef BROWSER_AVAILABLE
+#include <browser-panel.hpp>
+extern QCef *cef;
+#endif
 #include <oauth/YoutubeAuth.hpp>
 #include <utility/YoutubeApiWrappers.hpp>
 
@@ -71,6 +75,7 @@
 #include <QScrollArea>
 #include <QSaveFile>
 #include <QSettings>
+#include <QScopedValueRollback>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
@@ -83,6 +88,7 @@
 #include <QTabBar>
 #include <QTimer>
 #include <QToolButton>
+#include <QUuid>
 #include <QVBoxLayout>
 #include <QStandardPaths>
 
@@ -766,7 +772,32 @@ QFrame *pulseBanner(const QString &title, const QString &copy, const QString &ic
     return frame;
 }
 
-QFrame *card(const QString &title, const QString &copy, const QString &accent, QWidget *parent = nullptr)
+void pulsePlainCardHeading(QToolButton *heading)
+{
+	auto update = [heading] {
+		/* Resolve the original label's typography from the active theme instead
+		 * of inheriting the native tool button's smaller font and boxed chrome. */
+		QLabel originalTitle(heading->parentWidget());
+		originalTitle.setObjectName("PulseWeaverCardTitle");
+		originalTitle.ensurePolished();
+		const QFont font = originalTitle.font();
+		const QString size = font.pixelSize() > 0 ? QString("%1px").arg(font.pixelSize()) :
+			QString("%1pt").arg(font.pointSizeF());
+		const QString color = originalTitle.palette().color(QPalette::WindowText).name();
+		heading->setFont(font);
+		heading->setStyleSheet(QString(
+			"QToolButton,QToolButton:hover,QToolButton:pressed,QToolButton:checked{"
+			"background:transparent;border:0;border-bottom:1px solid transparent;"
+			"border-radius:0;padding:0;margin:0;color:%1;font-size:%2;font-weight:%3;}"
+			"QToolButton:focus{border-bottom-color:%1;}")
+			.arg(color, size).arg(int(font.weight())));
+	};
+	QObject::connect(App(), &OBSApp::StyleChanged, heading, update);
+	update();
+}
+
+QFrame *card(const QString &title, const QString &copy, const QString &accent, QWidget *parent = nullptr,
+	     QToolButton **titleButton = nullptr, QToolButton **optionsButton = nullptr)
 {
 	auto *frame = new QFrame(parent);
 	frame->setObjectName("PulseWeaverCard");
@@ -774,12 +805,44 @@ QFrame *card(const QString &title, const QString &copy, const QString &accent, Q
 	auto *layout = new QVBoxLayout(frame);
 	layout->setContentsMargins(12, 8, 12, 8);
 	layout->setSpacing(8);
-	auto *heading = new QLabel(title);
-	heading->setObjectName("PulseWeaverCardTitle");
 	auto *titleRow = new QHBoxLayout;
 	titleRow->setSpacing(8);
-    titleRow->addWidget(pulseEmblem(title.contains("Chat") ? "chat" : "lights", 30));
-    titleRow->addWidget(heading, 1);
+	if (optionsButton) {
+		auto *options = new QToolButton(frame);
+		options->setObjectName("PulseWeaverChatPanelOptions");
+		pulseIcon(options, title.contains("Chat") ? "chat" : "lights", 30);
+		options->setFixedSize(30, 30);
+		options->setAutoRaise(true);
+		options->setPopupMode(QToolButton::InstantPopup);
+		options->setFocusPolicy(Qt::StrongFocus);
+		options->setCursor(Qt::PointingHandCursor);
+		options->setStyleSheet(
+			"QToolButton,QToolButton:hover,QToolButton:pressed,QToolButton:checked{"
+			"background:transparent;border:0;border-bottom:1px solid transparent;"
+			"border-radius:0;padding:0;margin:0;}"
+			"QToolButton:focus{border-bottom-color:white;}"
+			"QToolButton::menu-indicator{image:none;}");
+		titleRow->addWidget(options);
+		*optionsButton = options;
+	} else {
+		titleRow->addWidget(pulseEmblem(title.contains("Chat") ? "chat" : "lights", 30));
+	}
+	if (titleButton) {
+		auto *heading = new QToolButton(frame);
+		heading->setText(title);
+		heading->setObjectName("PulseWeaverCardTitle");
+		heading->setAutoRaise(true);
+		heading->setFocusPolicy(Qt::StrongFocus);
+		heading->setCursor(Qt::PointingHandCursor);
+		pulsePlainCardHeading(heading);
+		titleRow->addWidget(heading, 0, Qt::AlignLeft);
+		titleRow->addStretch();
+		*titleButton = heading;
+	} else {
+		auto *heading = new QLabel(title);
+		heading->setObjectName("PulseWeaverCardTitle");
+		titleRow->addWidget(heading, 1);
+	}
     layout->addLayout(titleRow);
 	auto *description = new QLabel(copy);
 	description->setObjectName("PulseWeaverMuted");
@@ -1393,8 +1456,108 @@ void OBSBasic::InitPulseWeaverShell()
 	});
 	showMainLayout->addWidget(statsCard);
 
-	auto *activityCard = card("Chat", "Twitch · YouTube · Kick",
-				  "#F97316");
+	QSettings chatPanelSettings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+	pulseChatPanelPreferences = PulseChatPanel::load(chatPanelSettings);
+	QToolButton *chatHeading = nullptr;
+	QToolButton *chatOptions = nullptr;
+	auto *activityCard = card("Chat", "Pulse Weaver chat", "#F97316", nullptr, &chatHeading, &chatOptions);
+	pulseChatPanelCard = activityCard;
+	pulseChatPanelButton = chatHeading;
+	chatHeading->setAccessibleName("Switch chat panel");
+	chatHeading->setToolTip("Click to switch to the next configured chat panel");
+	connect(chatHeading, &QToolButton::clicked, this, [this] {
+		SelectPulseWeaverChatPanel(PulseChatPanel::nextProvider(pulseChatPanelPreferences));
+	});
+	chatOptions->setAccessibleName("Chat panel options");
+	chatOptions->setToolTip("Add or configure chat panels");
+	pulseChatPanelDescription = activityCard->findChild<QLabel *>("PulseWeaverMuted");
+	if (pulseChatPanelDescription) {
+		pulseChatPanelDescription->setMinimumWidth(0);
+		pulseChatPanelDescription->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+	}
+	auto *chatMenu = new QMenu(chatOptions);
+	chatOptions->setMenu(chatMenu);
+	auto *addChat = chatMenu->addAction("Add chat…");
+	connect(addChat, &QAction::triggered, this, [this] {
+		ConfigurePulseWeaverChatPanel();
+	});
+	auto *toolsSeparator = chatMenu->addSeparator();
+	auto *editChat = chatMenu->addAction("Edit this chat…");
+	connect(editChat, &QAction::triggered, this, [this] {
+		ConfigurePulseWeaverChatPanel(pulseChatPanelPreferences.provider);
+	});
+	auto *lumiaView = chatMenu->addMenu("Lumia view");
+	auto *lumiaChatOnly = lumiaView->addAction("Show Lumia chat only");
+	auto *lumiaControlRoom = lumiaView->addAction("Show full Control Room");
+	lumiaChatOnly->setCheckable(true);
+	lumiaControlRoom->setCheckable(true);
+	auto *lumiaViews = new QActionGroup(lumiaView);
+	lumiaViews->addAction(lumiaChatOnly);
+	lumiaViews->addAction(lumiaControlRoom);
+	connect(lumiaChatOnly, &QAction::triggered, this, [this] {
+		if (auto *panel = PulseChatPanel::selectedPanel(pulseChatPanelPreferences);
+		    panel && PulseChatPanel::isLumiaLink(panel->url)) {
+			panel->url = PulseChatPanel::LumiaDockUrl;
+			SelectPulseWeaverChatPanel(panel->id);
+		}
+	});
+	connect(lumiaControlRoom, &QAction::triggered, this, [this] {
+		if (auto *panel = PulseChatPanel::selectedPanel(pulseChatPanelPreferences);
+		    panel && PulseChatPanel::isLumiaLink(panel->url)) {
+			panel->url = PulseChatPanel::LumiaControlRoomUrl;
+			SelectPulseWeaverChatPanel(panel->id);
+		}
+	});
+	auto *reloadChat = chatMenu->addAction("Reload");
+	connect(reloadChat, &QAction::triggered, this, [this] {
+		ReleasePulseWeaverChatBrowser();
+		pulseChatBrowserFailed = false;
+		RefreshPulseWeaverChatPanel();
+	});
+	auto *openChat = chatMenu->addAction("Open in browser");
+	connect(openChat, &QAction::triggered, this, [this] {
+		const QString link = pulseChatPanelPreferences.url();
+		if (!link.isEmpty())
+			QDesktopServices::openUrl(QUrl(link));
+	});
+	auto *pageSizeMenu = chatMenu->addMenu("Page size");
+	auto *smallerChat = pageSizeMenu->addAction("Smaller");
+	auto *largerChat = pageSizeMenu->addAction("Larger");
+	auto *resetChatSize = pageSizeMenu->addAction("Reset");
+	connect(smallerChat, &QAction::triggered, this, [this] { SetPulseWeaverChatZoom(-1); });
+	connect(largerChat, &QAction::triggered, this, [this] { SetPulseWeaverChatZoom(1); });
+	connect(resetChatSize, &QAction::triggered, this, [this] { SetPulseWeaverChatZoom(0); });
+	auto *removeSeparator = chatMenu->addSeparator();
+	auto *removeChat = chatMenu->addAction("Remove this chat panel");
+	connect(removeChat, &QAction::triggered, this, [this] {
+		pulseChatPanelPreferences = PulseChatPanel::removeProvider(pulseChatPanelPreferences,
+			pulseChatPanelPreferences.provider);
+		SelectPulseWeaverChatPanel(pulseChatPanelPreferences.provider);
+	});
+	connect(chatMenu, &QMenu::aboutToShow, this,
+		[this, toolsSeparator, editChat, lumiaView, lumiaChatOnly, lumiaControlRoom,
+		 reloadChat, openChat, pageSizeMenu, removeSeparator,
+		 smallerChat, largerChat, resetChatSize, removeChat] {
+			const auto *panel = PulseChatPanel::selectedPanel(pulseChatPanelPreferences);
+			const bool external = panel != nullptr;
+			const QString link = panel ? panel->url : QString();
+			toolsSeparator->setVisible(external);
+			editChat->setVisible(external);
+			lumiaView->menuAction()->setVisible(external && PulseChatPanel::isLumiaLink(link));
+			lumiaChatOnly->setChecked(link == PulseChatPanel::LumiaDockUrl);
+			lumiaControlRoom->setChecked(link == PulseChatPanel::LumiaControlRoomUrl);
+			reloadChat->setVisible(external);
+			openChat->setVisible(external);
+			pageSizeMenu->menuAction()->setVisible(external);
+			pageSizeMenu->setTitle(QString("Page size · %1%").arg(PulseChatPanel::zoomPercent(pulseChatPanelPreferences)));
+			pageSizeMenu->setEnabled(external && pulseChatBrowser);
+			const int zoom = PulseChatPanel::zoomSteps(pulseChatPanelPreferences);
+			smallerChat->setEnabled(zoom > -7);
+			largerChat->setEnabled(zoom < 8);
+			resetChatSize->setEnabled(zoom != 0);
+			removeSeparator->setVisible(external);
+			removeChat->setVisible(external);
+		});
 	auto *audienceTabs = new QTabWidget(activityCard);
 	auto *chatPage = new QWidget(audienceTabs);
 	auto *chatLayout = new QVBoxLayout(chatPage);
@@ -1595,7 +1758,28 @@ void OBSBasic::InitPulseWeaverShell()
 	 * operator-ready feature yet.  Keep Show Control focused on working chat. */
 	audienceTabs->setTabVisible(1, false);
 	audienceTabs->tabBar()->hide();
-	activityCard->layout()->addWidget(audienceTabs);
+	auto *chatPanelStack = new QStackedWidget(activityCard);
+	chatPanelStack->setObjectName("PulseWeaverChatPanelStack");
+	pulseChatPanelStack = chatPanelStack;
+	pulseChatNativePage = audienceTabs;
+	chatPanelStack->addWidget(audienceTabs);
+	auto *browserPage = new QWidget(chatPanelStack);
+	browserPage->setObjectName("PulseWeaverExternalChatPage");
+	browserPage->setAttribute(Qt::WA_NativeWindow);
+	pulseChatBrowserPage = browserPage;
+	auto *browserLayout = new QVBoxLayout(browserPage);
+	browserLayout->setContentsMargins(0, 0, 0, 0);
+	auto *browserStatus = new QLabel("Opening chat…", browserPage);
+	browserStatus->setObjectName("PulseWeaverExternalChatStatus");
+	browserStatus->setTextFormat(Qt::PlainText);
+	browserStatus->setWordWrap(true);
+	browserStatus->setAlignment(Qt::AlignCenter);
+	browserStatus->setMinimumWidth(0);
+	browserStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+	pulseChatBrowserStatus = browserStatus;
+	browserLayout->addWidget(browserStatus, 1);
+	chatPanelStack->addWidget(browserPage);
+	activityCard->layout()->addWidget(chatPanelStack);
 	activityCard->setMinimumWidth(270);
 	activityCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 	showMainLayout->addLayout(showGrid, 1);
@@ -1638,6 +1822,9 @@ void OBSBasic::InitPulseWeaverShell()
 	motionMountLayout->setSpacing(0);
 	showContent->addWidget(motionMount);
 	showLayout->addWidget(showContent, 1);
+	connect(showContent, &QStackedWidget::currentChanged, this, [this](int) {
+		RefreshPulseWeaverChatPanel();
+	});
 	connect(showMode, &QPushButton::clicked, this, [this, showContent, showTitle] {
 		showContent->setCurrentIndex(0);
 		showTitle->setText("Show Control");
@@ -3766,8 +3953,254 @@ void OBSBasic::ImportPulseWeaverObsSetup()
 		pulseVerticalEditor->Refresh();
 }
 
+void OBSBasic::SelectPulseWeaverChatPanel(const QString &provider)
+{
+	pulseChatPanelPreferences.provider = provider;
+	pulseChatPanelPreferences = PulseChatPanel::normalize(pulseChatPanelPreferences);
+	QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+	PulseChatPanel::save(settings, pulseChatPanelPreferences);
+	pulseChatBrowserFailed = false;
+	pulseChatBrowserZoomPending = pulseChatPanelPreferences.provider != "native";
+	RefreshPulseWeaverChatPanel();
+}
+
+void OBSBasic::ConfigurePulseWeaverChatPanel(const QString &panelId)
+{
+	const auto *existing = PulseChatPanel::findPanel(pulseChatPanelPreferences, panelId);
+	const bool editing = existing != nullptr;
+	if (!panelId.isEmpty() && !editing)
+		return;
+	const QString id = panelId;
+	QDialog dialog(this);
+	dialog.setWindowTitle(editing ? "Edit chat" : "Add chat");
+	dialog.setMinimumWidth(440);
+	auto *layout = new QVBoxLayout(&dialog);
+	auto *form = new QFormLayout;
+	auto *name = new QLineEdit(&dialog);
+	name->setAccessibleName("Chat panel name");
+	name->setText(editing ? existing->name : QString());
+	name->setPlaceholderText("Name shown above chat");
+	auto *link = new QLineEdit(&dialog);
+	link->setAccessibleName("Chat page link");
+	link->setText(editing ? existing->url : QString());
+	link->setPlaceholderText("https://…");
+	form->addRow("Name", name);
+	form->addRow("Link", link);
+	layout->addLayout(form);
+	auto *hint = new QLabel("Enter a complete http:// or https:// chat page link.", &dialog);
+	hint->setObjectName("PulseWeaverMuted");
+	hint->setWordWrap(true);
+	layout->addWidget(hint);
+	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
+	buttons->button(QDialogButtonBox::Save)->setText(editing ? "Save" : "Add chat");
+	auto updateForm = [name, link, hint, buttons] {
+		const QString validLink = PulseChatPanel::normalizeLink(link->text());
+		const bool valid = !validLink.isEmpty();
+		buttons->button(QDialogButtonBox::Save)->setEnabled(valid);
+		hint->setVisible(!valid && !link->text().trimmed().isEmpty());
+		name->setPlaceholderText(valid ? PulseChatPanel::defaultPanelName(validLink) :
+			"Name shown above chat");
+	};
+	connect(link, &QLineEdit::textChanged, &dialog, updateForm);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	layout->addWidget(buttons);
+	updateForm();
+	if (dialog.exec() != QDialog::Accepted)
+		return;
+	const QString validLink = PulseChatPanel::normalizeLink(link->text());
+	if (validLink.isEmpty())
+		return;
+	const QString panelName = name->text().trimmed().isEmpty() ?
+		PulseChatPanel::defaultPanelName(validLink) : name->text().trimmed();
+	QString selectedId = id;
+	if (editing) {
+		auto *panel = PulseChatPanel::findPanel(pulseChatPanelPreferences, id);
+		if (!panel)
+			return;
+		panel->name = panelName;
+		panel->url = validLink;
+	} else {
+		selectedId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+		pulseChatPanelPreferences.panels.append({selectedId, panelName, validLink,
+			PulseChatPanel::defaultZoomSteps(validLink)});
+	}
+	SelectPulseWeaverChatPanel(selectedId);
+}
+
+void OBSBasic::ReleasePulseWeaverChatBrowser()
+{
+	QWidget *browser = pulseChatBrowser.data();
+	pulseChatBrowser = nullptr;
+	pulseChatBrowserUrl.clear();
+	pulseChatBrowserZoomPending = false;
+	if (!browser)
+		return;
+	/* CEF closes through a nested event loop. Clear ownership first and block
+	 * refresh from creating another browser during that close. The default
+	 * request context retains the user's login for the next Show visit. */
+	QScopedValueRollback<bool> busy(pulseChatBrowserBusy, true);
+	if (pulseChatBrowserPage)
+		pulseChatBrowserPage->layout()->removeWidget(browser);
+	delete browser;
+}
+
+void OBSBasic::SetPulseWeaverChatZoom(int direction)
+{
+	if (pulseChatPanelPreferences.provider == "native" || direction < -1 || direction > 1)
+		return;
+	PulseChatPanel::setZoomSteps(pulseChatPanelPreferences,
+		direction == 0 ? 0 : PulseChatPanel::zoomSteps(pulseChatPanelPreferences) + direction);
+	QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+	PulseChatPanel::save(settings, pulseChatPanelPreferences);
+	pulseChatBrowserZoomPending = true;
+	ApplyPulseWeaverChatZoom();
+}
+
+void OBSBasic::ApplyPulseWeaverChatZoom()
+{
+#ifdef BROWSER_AVAILABLE
+	if (!pulseChatBrowser || !pulseChatBrowserZoomPending || pulseChatBrowserBusy)
+		return;
+	auto *browser = static_cast<QCefWidget *>(pulseChatBrowser.data());
+	/* Reset first so each provider has its own saved page size, even when
+	 * both links share a domain. CEF can report not-ready before its native
+	 * browser exists; keep this pending until a URL/title callback or refresh. */
+	if (!browser->zoomPage(0))
+		return;
+	const int steps = PulseChatPanel::zoomSteps(pulseChatPanelPreferences);
+	for (int index = 0; index < std::abs(steps); ++index)
+		if (!browser->zoomPage(steps < 0 ? -1 : 1))
+			return;
+	pulseChatBrowserZoomPending = false;
+#endif
+}
+
+void OBSBasic::RefreshPulseWeaverChatPanel()
+{
+	if (!pulseChatPanelStack || property("pulseChatPanelShuttingDown").toBool())
+		return;
+	const bool native = pulseChatPanelPreferences.provider == "native";
+	pulseChatPanelStack->setCurrentWidget(native ? pulseChatNativePage.data() : pulseChatBrowserPage.data());
+	const QString name = PulseChatPanel::title(pulseChatPanelPreferences);
+	if (pulseChatPanelCard)
+		pulseChatPanelCard->setMinimumWidth(270);
+	if (pulseChatPanelDescription) {
+		pulseChatPanelDescription->setText("Twitch · YouTube · Kick");
+		pulseChatPanelDescription->setVisible(native);
+	}
+	if (pulseChatPanelButton) {
+		QString displayedName = name;
+		displayedName.replace('&', "&&");
+		pulseChatPanelButton->setText(displayedName);
+		pulseChatPanelButton->setAccessibleName("Switch chat panel: " + name);
+		pulseChatPanelButton->setAccessibleDescription("Current panel: " + name);
+	}
+	if (pulseChatBrowserBusy)
+		return;
+	const auto *showContent = findChild<QStackedWidget *>("PulseWeaverShowContentStack");
+	const bool showActive = pulsePages && pulsePages->currentIndex() == 0 &&
+		(!showContent || showContent->currentIndex() == 0);
+	bool browserAvailable = false;
+#ifdef BROWSER_AVAILABLE
+	browserAvailable = cef != nullptr;
+#endif
+	const auto action = PulseChatPanel::browserAction(pulseChatPanelPreferences, pulseChatBrowserReady,
+		browserAvailable, showActive, pulseChatBrowser ? pulseChatBrowserUrl : QString());
+	auto showStatus = [this](const QString &text) {
+		if (pulseChatBrowserStatus) {
+			pulseChatBrowserStatus->setText(text);
+			pulseChatBrowserStatus->show();
+		}
+	};
+	if (action == PulseChatPanel::BrowserAction::Release) {
+		ReleasePulseWeaverChatBrowser();
+		showStatus("Chat opens when you return to Show Control.");
+		return;
+	}
+	if (action == PulseChatPanel::BrowserAction::Wait) {
+		showStatus("Opening chat when the studio is ready…");
+		return;
+	}
+	if (action == PulseChatPanel::BrowserAction::Unavailable) {
+		ReleasePulseWeaverChatBrowser();
+		showStatus("Browser chat is unavailable. Click the panel name to switch, or use Open in browser from the chat icon.");
+		return;
+	}
+#ifdef BROWSER_AVAILABLE
+	if (action == PulseChatPanel::BrowserAction::Create) {
+		if (pulseChatBrowserFailed) {
+			showStatus("Chat could not be opened. Use Reload or Open in browser from the chat icon.");
+			return;
+		}
+		showStatus("Opening " + name + "…");
+		QPointer<OBSBasic> guard(this);
+		{
+			QScopedValueRollback<bool> busy(pulseChatBrowserBusy, true);
+			InitBrowserPanelSafeBlock();
+		}
+		/* Browser startup can process UI events, including another provider
+		 * selection or shutdown. Re-evaluate before constructing its widget. */
+		if (!guard || property("pulseChatPanelShuttingDown").toBool() || !pulseChatBrowserReady)
+			return;
+		if (PulseChatPanel::browserAction(pulseChatPanelPreferences, pulseChatBrowserReady,
+			cef != nullptr, pulsePages && pulsePages->currentIndex() == 0 &&
+			(!showContent || showContent->currentIndex() == 0), QString()) !=
+		    PulseChatPanel::BrowserAction::Create) {
+			RefreshPulseWeaverChatPanel();
+			return;
+		}
+		const QString link = pulseChatPanelPreferences.url();
+		QCefWidget *browser = cef->create_widget(pulseChatBrowserPage, link.toStdString(), nullptr);
+		if (!browser) {
+			pulseChatBrowserFailed = true;
+			showStatus("Chat could not be opened. Use Reload or Open in browser from the chat icon.");
+			return;
+		}
+		if (obs_browser_qcef_version() >= 1)
+			browser->allowAllPopups(true);
+		browser->setAccessibleName("External chat panel");
+		browser->setMinimumSize(0, 100);
+		browser->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+		pulseChatBrowser = browser;
+		pulseChatBrowserUrl = link;
+		pulseChatBrowserZoomPending = true;
+		const QPointer<QWidget> browserGuard(browser);
+		connect(browser, &QCefWidget::urlChanged, this, [this, browserGuard](const QString &) {
+			if (browserGuard && browserGuard == pulseChatBrowser) {
+				pulseChatBrowserZoomPending = true;
+				ApplyPulseWeaverChatZoom();
+			}
+		});
+		connect(browser, &QCefWidget::titleChanged, this, [this, browserGuard](const QString &) {
+			if (browserGuard && browserGuard == pulseChatBrowser)
+				ApplyPulseWeaverChatZoom();
+		});
+		connect(browser, &QCefWidget::pageLoaded, this, [this, browserGuard]() {
+			if (browserGuard && browserGuard == pulseChatBrowser) {
+				/* Navigation may restore CEF's host zoom after the URL/title
+				 * callbacks. Apply the provider's size after its main page loads. */
+				pulseChatBrowserZoomPending = true;
+				ApplyPulseWeaverChatZoom();
+			}
+		});
+		pulseChatBrowserPage->layout()->addWidget(browser);
+	} else if (action == PulseChatPanel::BrowserAction::Navigate) {
+		static_cast<QCefWidget *>(pulseChatBrowser.data())->setURL(pulseChatPanelPreferences.url().toStdString());
+		pulseChatBrowserUrl = pulseChatPanelPreferences.url();
+		pulseChatBrowserZoomPending = true;
+	}
+	ApplyPulseWeaverChatZoom();
+#endif
+	if (pulseChatBrowserStatus)
+		pulseChatBrowserStatus->hide();
+}
+
 void OBSBasic::ShutdownPulseWeaverShell()
 {
+	setProperty("pulseChatPanelShuttingDown", true);
+	pulseChatBrowserReady = false;
+	ReleasePulseWeaverChatBrowser();
 	setProperty("pulseWeaverGoLiveSession", false);
 	/* Cancel detached YouTube work before shutdown starts releasing any state.
 	 * StopPulseWeaverSecondaryOutputs drains an in-flight request through the
@@ -3826,6 +4259,7 @@ void OBSBasic::ShutdownPulseWeaverShell()
 void OBSBasic::UpdatePulseWeaverShell()
 {
 	UpdatePulseWeaverPreviewVisibility();
+	RefreshPulseWeaverChatPanel();
 	/* Some upstream actions can request these widgets again. Keep native
 	 * commands functional while preventing the old OBS chrome from leaking
 	 * back into the Pulse Weaver shell. */

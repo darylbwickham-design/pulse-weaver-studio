@@ -1287,6 +1287,10 @@ void OBSBasic::OBSInit()
 		LoadExtraBrowserDocks();
 	}
 #endif
+	/* Show's remembered chat panel can now use the browser module. The shell
+	 * itself is constructed before modules load; native chat needs no browser. */
+	pulseChatBrowserReady = true;
+	RefreshPulseWeaverChatPanel();
 
 #ifdef YOUTUBE_ENABLED
 	/* setup YouTube app dock */
