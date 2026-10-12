@@ -14,9 +14,9 @@ without this identity do not guess an installation channel.
 | --- | --- | --- |
 | windows-public | v1.12.6 | PulseWeaver-Public-Dist-1.12.6-Setup.exe |
 | windows-private | v1.12.15 | PulseWeaver-Setup-1.12.15-BETA.exe |
-| windows-private | v1.14.2 | PulseWeaver-Setup-1.14.2.exe |
-| windows-alpha (superseded preview) | v1.14.2-alpha.8 | Updates to regular v1.14.2 |
-| windows-unstable (superseded preview) | v1.14.0-unstable.12 | Updates to regular v1.14.2 |
+| windows-private | v1.14.3 | PulseWeaver-Setup-1.14.3.exe |
+| windows-alpha (superseded preview) | v1.14.2-alpha.8 | Updates to regular v1.14.3 |
+| windows-unstable (superseded preview) | v1.14.0-unstable.12 | Updates to regular v1.14.3 |
 | mac-arm64-preview | mac-v0.1.0-alpha.2 | PulseWeaver-Mac-mac-v0.1.0-alpha.2-AppleSilicon.dmg |
 
 Windows 1.12.2 and Mac alpha 2 introduce the updater. The unstable channel is available after an update to alpha 6 or a later regular release. Windows installers use

@@ -5,7 +5,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <ReleaseVersion Condition="'$(ReleaseVersion)' == ''">1.14.2</ReleaseVersion>
+    <ReleaseVersion Condition="'$(ReleaseVersion)' == ''">1.14.3</ReleaseVersion>
     <InstallerSuffix Condition="'$(InstallerSuffix)' == ''">RELEASE</InstallerSuffix>
     <PayloadArchive Condition="'$(PayloadArchive)' == ''">..\..\artifacts\channel-v$(ReleaseVersion)\payload.zip</PayloadArchive>
     <AssemblyName>PulseWeaver-Setup-$(ReleaseVersion)-$(InstallerSuffix)</AssemblyName>

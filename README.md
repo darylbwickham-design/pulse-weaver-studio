@@ -1,8 +1,8 @@
-# Pulse Weaver Studio — 1.14.2
+# Pulse Weaver Studio — 1.14.3
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
-**1.14.2** brings the four-page layout wizard, separate landscape/portrait artwork for each Look, shared Lumia templates and named web chat panels to the regular release. Chat panels retain their state when switching views, and setup guidance explains overlay imports, countdown actions and optional stingers. It also includes the stinger memory and preview improvements from the 1.14.2 previews. Download the Windows installer from this repository's **Releases** page. Regular, alpha and unstable installations can update to 1.14.2 with backup and recovery support; the older **Pulse Weaver Public Preview** is a separate legacy installation. See [UPDATES.md](UPDATES.md) for channel behavior and [the release notes](docs/RELEASE-v1.14.2.md).
+**1.14.3** makes the four-page show wizard use Lumia browser artwork and countdowns throughout. It adds independent source choices, three shared alert layers per canvas, optional stingers, and guided Chat Box Physics setup for landscape and portrait. The Lumia bulb explains the countdown completion command and how to coordinate chat mode and camera clearances with Look changes. Download the Windows installer from this repository's **Releases** page. See [UPDATES.md](UPDATES.md) for channel behavior and [the release notes](docs/RELEASE-v1.14.3.md).
 
 Incoming YouTube chat automatically uses the web scanner in the combined chat box. Sending and moderation use the official API. No reader dropdown or API-receive fallback is exposed, and old reader preferences cannot re-enable API reception.
 
@@ -53,4 +53,4 @@ Each stage group has its own source assignments. Reuse existing inputs or create
 
 **Lumia Stream is required for the Lumia overlay templates for Pulse Weaver, including the countdown and widgets**, and its [companion plugin](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/download/v1.14.2/PulseWeaver-Lumia-1.4.4.lumiaplugin) is the recommended way to control animations and show actions. Install Lumia, import and connect the plugin, then import the templates. On page 4, reuse the corresponding Lumia browser sources or add their browser links. The Lumia bulb on Show Control explains the countdown start payload and the command to run when the timer reaches zero.
 
-In **Control**, design and rehearse Looks, then save them. **Show** contains the live Stage, chat, audio and output controls. The Lumia bulb opens that service's overlay and command instructions. See [the current setup guide](docs/SETUP-WIZARD-GUIDE.md) for the full flow and [1.14.2 release notes](docs/RELEASE-v1.14.2.md) for the published release. The older theme-builder guide is historical.
+In **Control**, design and rehearse Looks, then save them. **Show** contains the live Stage, chat, audio and output controls. The Lumia bulb opens that service's overlay and command instructions. See [the current setup guide](docs/SETUP-WIZARD-GUIDE.md) for the full flow and [1.14.3 release notes](docs/RELEASE-v1.14.3.md) for this update. The older theme-builder guide is historical.
