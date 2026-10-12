@@ -269,14 +269,14 @@ inline void save(QSettings &settings, const Preferences &value)
 	settings.sync();
 }
 
-enum class BrowserAction { Release, Wait, Unavailable, Create, Navigate, Keep };
+enum class BrowserAction { Hide, Wait, Unavailable, Create, Navigate, Keep };
 
 inline BrowserAction browserAction(const Preferences &preferences, bool startupReady, bool browserAvailable,
 				  bool showActive, const QString &loadedUrl)
 {
 	const Preferences normalized = normalize(preferences);
 	if (normalized.provider == "native" || !showActive)
-		return BrowserAction::Release;
+		return BrowserAction::Hide;
 	if (!startupReady)
 		return BrowserAction::Wait;
 	if (!browserAvailable)

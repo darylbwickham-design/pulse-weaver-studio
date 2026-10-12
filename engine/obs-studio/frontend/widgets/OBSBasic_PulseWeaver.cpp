@@ -1510,8 +1510,7 @@ void OBSBasic::InitPulseWeaverShell()
 	});
 	auto *reloadChat = chatMenu->addAction("Reload");
 	connect(reloadChat, &QAction::triggered, this, [this] {
-		ReleasePulseWeaverChatBrowser();
-		pulseChatBrowserFailed = false;
+		ReleasePulseWeaverChatBrowser(pulseChatPanelPreferences.provider);
 		RefreshPulseWeaverChatPanel();
 	});
 	auto *openChat = chatMenu->addAction("Open in browser");
@@ -3959,8 +3958,11 @@ void OBSBasic::SelectPulseWeaverChatPanel(const QString &provider)
 	pulseChatPanelPreferences = PulseChatPanel::normalize(pulseChatPanelPreferences);
 	QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
 	PulseChatPanel::save(settings, pulseChatPanelPreferences);
-	pulseChatBrowserFailed = false;
-	pulseChatBrowserZoomPending = pulseChatPanelPreferences.provider != "native";
+	if (pulseChatBrowsers.contains(pulseChatPanelPreferences.provider)) {
+		auto &entry = pulseChatBrowsers[pulseChatPanelPreferences.provider];
+		entry.failed = false;
+		entry.zoomPending = true;
+	}
 	RefreshPulseWeaverChatPanel();
 }
 
@@ -4028,21 +4030,23 @@ void OBSBasic::ConfigurePulseWeaverChatPanel(const QString &panelId)
 	SelectPulseWeaverChatPanel(selectedId);
 }
 
-void OBSBasic::ReleasePulseWeaverChatBrowser()
+void OBSBasic::ReleasePulseWeaverChatBrowser(const QString &panelId)
 {
-	QWidget *browser = pulseChatBrowser.data();
-	pulseChatBrowser = nullptr;
-	pulseChatBrowserUrl.clear();
-	pulseChatBrowserZoomPending = false;
-	if (!browser)
-		return;
-	/* CEF closes through a nested event loop. Clear ownership first and block
-	 * refresh from creating another browser during that close. The default
-	 * request context retains the user's login for the next Show visit. */
+	/* Ordinary panel/tab switching hides retained pages. Only explicit Reload,
+	 * removal, an unavailable runtime or shutdown closes them. CEF closes through
+	 * a nested event loop: remove ownership before closing and block refresh. */
+	const QStringList ids = panelId.isEmpty() ? pulseChatBrowsers.keys() : QStringList{panelId};
 	QScopedValueRollback<bool> busy(pulseChatBrowserBusy, true);
-	if (pulseChatBrowserPage)
-		pulseChatBrowserPage->layout()->removeWidget(browser);
-	delete browser;
+	for (const QString &id : ids) {
+		QWidget *browser = pulseChatBrowsers.take(id).browser.data();
+		if (pulseChatBrowser == browser)
+			pulseChatBrowser = nullptr;
+		if (!browser)
+			continue;
+		if (pulseChatBrowserPage)
+			pulseChatBrowserPage->layout()->removeWidget(browser);
+		delete browser;
+	}
 }
 
 void OBSBasic::SetPulseWeaverChatZoom(int direction)
@@ -4053,16 +4057,18 @@ void OBSBasic::SetPulseWeaverChatZoom(int direction)
 		direction == 0 ? 0 : PulseChatPanel::zoomSteps(pulseChatPanelPreferences) + direction);
 	QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
 	PulseChatPanel::save(settings, pulseChatPanelPreferences);
-	pulseChatBrowserZoomPending = true;
+	if (pulseChatBrowsers.contains(pulseChatPanelPreferences.provider))
+		pulseChatBrowsers[pulseChatPanelPreferences.provider].zoomPending = true;
 	ApplyPulseWeaverChatZoom();
 }
 
 void OBSBasic::ApplyPulseWeaverChatZoom()
 {
 #ifdef BROWSER_AVAILABLE
-	if (!pulseChatBrowser || !pulseChatBrowserZoomPending || pulseChatBrowserBusy)
+	auto entry = pulseChatBrowsers.find(pulseChatPanelPreferences.provider);
+	if (entry == pulseChatBrowsers.end() || !entry->browser || !entry->zoomPending || pulseChatBrowserBusy)
 		return;
-	auto *browser = static_cast<QCefWidget *>(pulseChatBrowser.data());
+	auto *browser = static_cast<QCefWidget *>(entry->browser.data());
 	/* Reset first so each provider has its own saved page size, even when
 	 * both links share a domain. CEF can report not-ready before its native
 	 * browser exists; keep this pending until a URL/title callback or refresh. */
@@ -4072,7 +4078,7 @@ void OBSBasic::ApplyPulseWeaverChatZoom()
 	for (int index = 0; index < std::abs(steps); ++index)
 		if (!browser->zoomPage(steps < 0 ? -1 : 1))
 			return;
-	pulseChatBrowserZoomPending = false;
+	entry->zoomPending = false;
 #endif
 }
 
@@ -4101,21 +4107,31 @@ void OBSBasic::RefreshPulseWeaverChatPanel()
 	const auto *showContent = findChild<QStackedWidget *>("PulseWeaverShowContentStack");
 	const bool showActive = pulsePages && pulsePages->currentIndex() == 0 &&
 		(!showContent || showContent->currentIndex() == 0);
+	/* Keep one lazily opened page for each saved identity. Native Chat and other
+	 * studio tabs hide it without losing its DOM, scroll position or draft. */
+	for (const QString &id : pulseChatBrowsers.keys())
+		if (!PulseChatPanel::findPanel(pulseChatPanelPreferences, id))
+			ReleasePulseWeaverChatBrowser(id);
+	const QString panelId = pulseChatPanelPreferences.provider;
+	pulseChatBrowser = pulseChatBrowsers.value(panelId).browser;
+	if (pulseChatBrowser)
+		pulseChatBrowser->setAccessibleName("External chat panel: " + name);
+	for (auto entry = pulseChatBrowsers.begin(); entry != pulseChatBrowsers.end(); ++entry)
+		if (entry->browser)
+			entry->browser->setVisible(!native && showActive && entry.key() == panelId);
 	bool browserAvailable = false;
 #ifdef BROWSER_AVAILABLE
 	browserAvailable = cef != nullptr;
 #endif
 	const auto action = PulseChatPanel::browserAction(pulseChatPanelPreferences, pulseChatBrowserReady,
-		browserAvailable, showActive, pulseChatBrowser ? pulseChatBrowserUrl : QString());
+		browserAvailable, showActive, pulseChatBrowser ? pulseChatBrowsers.value(panelId).configuredUrl : QString());
 	auto showStatus = [this](const QString &text) {
 		if (pulseChatBrowserStatus) {
 			pulseChatBrowserStatus->setText(text);
 			pulseChatBrowserStatus->show();
 		}
 	};
-	if (action == PulseChatPanel::BrowserAction::Release) {
-		ReleasePulseWeaverChatBrowser();
-		showStatus("Chat opens when you return to Show Control.");
+	if (action == PulseChatPanel::BrowserAction::Hide) {
 		return;
 	}
 	if (action == PulseChatPanel::BrowserAction::Wait) {
@@ -4129,7 +4145,7 @@ void OBSBasic::RefreshPulseWeaverChatPanel()
 	}
 #ifdef BROWSER_AVAILABLE
 	if (action == PulseChatPanel::BrowserAction::Create) {
-		if (pulseChatBrowserFailed) {
+		if (pulseChatBrowsers.value(panelId).failed) {
 			showStatus("Chat could not be opened. Use Reload or Open in browser from the chat icon.");
 			return;
 		}
@@ -4145,15 +4161,24 @@ void OBSBasic::RefreshPulseWeaverChatPanel()
 			return;
 		if (PulseChatPanel::browserAction(pulseChatPanelPreferences, pulseChatBrowserReady,
 			cef != nullptr, pulsePages && pulsePages->currentIndex() == 0 &&
-			(!showContent || showContent->currentIndex() == 0), QString()) !=
+			(!showContent || showContent->currentIndex() == 0),
+			pulseChatBrowsers.value(pulseChatPanelPreferences.provider).browser ?
+				pulseChatBrowsers.value(pulseChatPanelPreferences.provider).configuredUrl : QString()) !=
 		    PulseChatPanel::BrowserAction::Create) {
 			RefreshPulseWeaverChatPanel();
 			return;
 		}
+		const QString creatingId = pulseChatPanelPreferences.provider;
 		const QString link = pulseChatPanelPreferences.url();
-		QCefWidget *browser = cef->create_widget(pulseChatBrowserPage, link.toStdString(), nullptr);
+		QCefWidget *browser = nullptr;
+		{
+			QScopedValueRollback<bool> busy(pulseChatBrowserBusy, true);
+			browser = cef->create_widget(pulseChatBrowserPage, link.toStdString(), nullptr);
+		}
+		if (!guard || property("pulseChatPanelShuttingDown").toBool())
+			return;
 		if (!browser) {
-			pulseChatBrowserFailed = true;
+			pulseChatBrowsers[creatingId].failed = true;
 			showStatus("Chat could not be opened. Use Reload or Open in browser from the chat icon.");
 			return;
 		}
@@ -4162,33 +4187,38 @@ void OBSBasic::RefreshPulseWeaverChatPanel()
 		browser->setAccessibleName("External chat panel");
 		browser->setMinimumSize(0, 100);
 		browser->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-		pulseChatBrowser = browser;
-		pulseChatBrowserUrl = link;
-		pulseChatBrowserZoomPending = true;
+		pulseChatBrowsers.insert(creatingId, {browser, link, false, true});
 		const QPointer<QWidget> browserGuard(browser);
-		connect(browser, &QCefWidget::urlChanged, this, [this, browserGuard](const QString &) {
-			if (browserGuard && browserGuard == pulseChatBrowser) {
-				pulseChatBrowserZoomPending = true;
-				ApplyPulseWeaverChatZoom();
+		connect(browser, &QCefWidget::urlChanged, this, [this, browserGuard, creatingId](const QString &) {
+			if (browserGuard && pulseChatBrowsers.value(creatingId).browser == browserGuard) {
+				pulseChatBrowsers[creatingId].zoomPending = true;
+				if (pulseChatPanelPreferences.provider == creatingId)
+					ApplyPulseWeaverChatZoom();
 			}
 		});
-		connect(browser, &QCefWidget::titleChanged, this, [this, browserGuard](const QString &) {
-			if (browserGuard && browserGuard == pulseChatBrowser)
+		connect(browser, &QCefWidget::titleChanged, this, [this, browserGuard, creatingId](const QString &) {
+			if (browserGuard && pulseChatBrowsers.value(creatingId).browser == browserGuard &&
+			    pulseChatPanelPreferences.provider == creatingId)
 				ApplyPulseWeaverChatZoom();
 		});
-		connect(browser, &QCefWidget::pageLoaded, this, [this, browserGuard]() {
-			if (browserGuard && browserGuard == pulseChatBrowser) {
+		connect(browser, &QCefWidget::pageLoaded, this, [this, browserGuard, creatingId]() {
+			if (browserGuard && pulseChatBrowsers.value(creatingId).browser == browserGuard) {
 				/* Navigation may restore CEF's host zoom after the URL/title
 				 * callbacks. Apply the provider's size after its main page loads. */
-				pulseChatBrowserZoomPending = true;
-				ApplyPulseWeaverChatZoom();
+				pulseChatBrowsers[creatingId].zoomPending = true;
+				if (pulseChatPanelPreferences.provider == creatingId)
+					ApplyPulseWeaverChatZoom();
 			}
 		});
 		pulseChatBrowserPage->layout()->addWidget(browser);
+		/* Startup/creation can dispatch selection changes. Show the latest saved
+		 * selection after ownership is established, without a second load. */
+		RefreshPulseWeaverChatPanel();
+		return;
 	} else if (action == PulseChatPanel::BrowserAction::Navigate) {
+		pulseChatBrowsers[panelId].configuredUrl = pulseChatPanelPreferences.url();
+		pulseChatBrowsers[panelId].zoomPending = true;
 		static_cast<QCefWidget *>(pulseChatBrowser.data())->setURL(pulseChatPanelPreferences.url().toStdString());
-		pulseChatBrowserUrl = pulseChatPanelPreferences.url();
-		pulseChatBrowserZoomPending = true;
 	}
 	ApplyPulseWeaverChatZoom();
 #endif

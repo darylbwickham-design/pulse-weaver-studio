@@ -311,10 +311,10 @@ static void lifecycle()
 			for (bool show : {false, true}) {
 				for (const auto &url : {QString(), LumiaDockUrl, A}) {
 					check(browserAction(native, ready, available, show, url) ==
-						      BrowserAction::Release,
-					      "native release all states");
+						      BrowserAction::Hide,
+					      "native hides retained pages in all states");
 					check(browserAction(invalid, ready, available, show, url) ==
-						      BrowserAction::Release,
+						      BrowserAction::Hide,
 					      "invalid never creates/navigates");
 				}
 			}
@@ -324,8 +324,8 @@ static void lifecycle()
 		for (bool ready : {false, true}) {
 			for (bool available : {false, true}) {
 				for (const auto &url : {QString(), LumiaDockUrl, A}) {
-					check(browserAction(p, ready, available, false, url) == BrowserAction::Release,
-					      "leaving Show releases");
+					check(browserAction(p, ready, available, false, url) == BrowserAction::Hide,
+					      "leaving Show hides without releasing");
 				}
 			}
 		}
@@ -342,8 +342,23 @@ static void lifecycle()
 		check(browserAction(p, true, true, true, {}) == BrowserAction::Create, "create after readiness");
 		check(browserAction(p, true, true, true, p.url()) == BrowserAction::Keep, "same target no reload");
 		check(browserAction(p, true, true, true, "https://old.example.invalid/chat") == BrowserAction::Navigate,
-		      "new target reuses browser");
+		      "editing a retained panel link navigates that panel");
 	}
+	// A previously opened panel keeps its configured URL while it is hidden.
+	// Returning from native or another web panel must not create/navigate it.
+	check(browserAction(lumia, true, true, true, lumia.url()) == BrowserAction::Keep,
+	      "returning to cached Lumia retains its page state");
+	check(browserAction(other, true, true, true, other.url()) == BrowserAction::Keep,
+	      "returning to cached other panel retains its page state");
+	auto renamed = lumia;
+	findPanel(renamed, "lumia")->name = "My room";
+	check(browserAction(renamed, true, true, true, lumia.url()) == BrowserAction::Keep,
+	      "renaming a panel does not reload it");
+	auto sameLink = lumia;
+	sameLink.panels.append({"second-room", "Second room", LumiaDockUrl, 0});
+	sameLink.provider = "second-room";
+	check(browserAction(sameLink, true, true, true, {}) == BrowserAction::Create,
+	      "an unvisited identity gets its own page even with the same link");
 }
 int main(int argc, char **argv)
 {

@@ -379,12 +379,16 @@ private:
 	QPointer<QWidget> pulseChatBrowserPage;
 	QPointer<QLabel> pulseChatBrowserStatus;
 	QPointer<QWidget> pulseChatBrowser;
+	struct PulseChatBrowserEntry {
+		QPointer<QWidget> browser;
+		QString configuredUrl;
+		bool failed = false;
+		bool zoomPending = true;
+	};
+	QHash<QString, PulseChatBrowserEntry> pulseChatBrowsers;
 	PulseChatPanel::Preferences pulseChatPanelPreferences;
-	QString pulseChatBrowserUrl;
 	bool pulseChatBrowserReady = false;
-	bool pulseChatBrowserFailed = false;
 	bool pulseChatBrowserBusy = false;
-	bool pulseChatBrowserZoomPending = false;
 	QPointer<QTimer> pulseYouTubeChatTimer;
 	PulseYouTubeChat::Sessions pulseYouTubeChatSessions;
 	struct PulseYouTubePendingChatMessage {
@@ -425,7 +429,7 @@ private:
 	void RefreshPulseWeaverChatPanel();
 	void SelectPulseWeaverChatPanel(const QString &provider);
 	void ConfigurePulseWeaverChatPanel(const QString &panelId = QString());
-	void ReleasePulseWeaverChatBrowser();
+	void ReleasePulseWeaverChatBrowser(const QString &panelId = QString());
 	void ApplyPulseWeaverChatZoom();
 	void SetPulseWeaverChatZoom(int direction);
 	void RestorePulseWeaverYouTubeAccount();
