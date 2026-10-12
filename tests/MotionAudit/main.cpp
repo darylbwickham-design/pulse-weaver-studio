@@ -953,6 +953,10 @@ static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *por
 	check(horizontal->currentData().toString().startsWith("new:") && setup.problem(true).isEmpty() &&
 		draft.value("newSources").toObject().value(horizontal->currentData().toString().mid(4)).toObject().value("kind") == "browser_source",
 		"creating artwork inside the wizard produces a browser overlay draft");
+	const QString landscapeDraft = horizontal->currentData().toString();
+	check(vertical->findData(landscapeDraft) < 0 && combo("Portrait overlay 1")->findData(landscapeDraft) < 0 &&
+		combo("Landscape overlay 1")->findData(landscapeDraft) >= 0,
+		"landscape artwork drafts stay reusable on landscape without appearing in portrait artwork lists");
 	horizontal->setCurrentIndex(horizontal->findData("url")); vertical->setCurrentIndex(vertical->findData("url"));
 	QLineEdit *horizontalUrl = input(horizontalLabel+" browser URL"), *verticalUrl = input(verticalLabel+" browser URL");
 	check(horizontalUrl && verticalUrl, "wizard provides a browser link field for each format");
@@ -1050,16 +1054,35 @@ static void setupQuestionFlowTests()
 	check(selected == 7, "defaults select one functional Look per group plus Ending rather than all alternate Looks");
 	check(!setup.problem(true).isEmpty(), "an unassigned required feed prevents completion");
 	auto *jump = setupField<QComboBox>(&sourcePage, "Source to assign");
+	auto *preview = setupField<QComboBox>(&lookPage, "Look layout to preview");
+	for (int i = 0; i < setup.tabs->count(); ++i) if (setup.tabs->tabText(i) == "Projects") setup.tabs->setCurrentIndex(i);
+	check(preview->currentData() == "setup-projects/activity", "switching stage tabs updates the diagram to that stage's selected Look");
+	preview->setCurrentIndex(preview->findData("setup-chat/talk"));
+	check(setup.tabs->tabText(setup.tabs->currentIndex()) == "Chat", "choosing a Look to preview selects its matching options tab");
+	QCheckBox *gameplay = nullptr; for (auto *box : lookPage.findChildren<QCheckBox *>()) if (box->text() == "Gameplay") gameplay = box;
+	check(gameplay, "gameplay selection is available");
+	for (int i = 0; i < setup.tabs->count(); ++i) if (setup.tabs->tabText(i) == "Game") setup.tabs->setCurrentIndex(i);
+	gameplay->setChecked(false);
+	check(preview->currentIndex() == -1 && setup.tabs->tabText(setup.tabs->currentIndex()) == "Game" && setup.problem(false).contains("Game"),
+		"an empty stage stays selected so the user can correct it without an unrelated diagram");
+	gameplay->setChecked(true);
 	const int gameQuestion = jump->findText("Game · Feed B"); check(gameQuestion >= 0, "source navigator names each stage assignment");
-	jump->setCurrentIndex(gameQuestion); setup.update({"Chat", "Game"});
+	jump->setCurrentIndex(gameQuestion);
+	check(preview->currentData() == "setup-game/play", "source navigation reviews the Look that uses the requested feed");
+	setup.update({"Chat", "Game"});
 	check(jump->currentText() == "Game · Feed B", "changing groups preserves the current question by identity");
+	auto *attention = setupField<QPushButton>(&sourcePage, "Next source needing attention");
+	attention->click(); check(jump->currentText() == "Chat · Feed A", "attention navigation wraps to an unfinished required source");
+	QPushButton *nextSource = nullptr;
+	for (auto *button : sourcePage.findChildren<QPushButton *>()) if (button->text() == "Next source") nextSource = button;
+	check(nextSource && !nextSource->isEnabled(), "source clickthrough asks for a required assignment before advancing");
 	auto *create = setupField<QPushButton>(&sourcePage, "Chat · Feed A create new source");
 	QTimer::singleShot(0, [&] {
 		auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "new source dialog opens inside the wizard");
 		auto *kind = setupField<QComboBox>(dialog, "New source type");
 		check(kind->findData("image_source") >= 0 && kind->findData("dshow_input") >= 0,
 			"ordinary feeds retain media and camera creation alongside Lumia overlays");
-		kind->setCurrentIndex(kind->findData("image_source"));
+		setupField<QPushButton>(dialog, "New source type · Image file")->click();
 		setupField<QLineEdit>(dialog, "New source name")->setText("Wizard draft image");
 		setupField<QLineEdit>(dialog, "New source file")->setText(imagePath);
 		dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
@@ -1067,12 +1090,19 @@ static void setupQuestionFlowTests()
 	create->click();
 	auto *chatFeed = setupField<QComboBox>(&sourcePage, "Chat · Feed A"), *gameFeed = setupField<QComboBox>(&sourcePage, "Game · Feed B");
 	const QString sourceKey = chatFeed->currentData().toString();
+	check(nextSource->isEnabled(), "a valid created source enables the next clickthrough step");
 	check(sourceKey.startsWith("new:") && gameFeed->findData(sourceKey) >= 0, "new source is reusable across stage groups before creation");
 	check(setupField<QComboBox>(&sourcePage, "Starting · Countdown · Landscape artwork")->findData(sourceKey) < 0 &&
 		setupField<QComboBox>(&sourcePage, "Landscape overlay 1")->findData(sourceKey) < 0,
 		"drafted image feeds do not become selectable artwork or shared Lumia layers");
 	OBSSourceAutoRelease uncreated = obs_get_source_by_name("Wizard draft image"); check(!uncreated, "drafting a source does not create or activate a native input");
-	gameFeed->setCurrentIndex(gameFeed->findData(sourceKey));
+	QTimer::singleShot(0, [&] {
+		auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "source card chooser opens");
+		setupField<QPushButton>(dialog, "New: Wizard draft image")->click();
+	});
+	setupField<QPushButton>(&sourcePage, "Game · Feed B use existing source")->click();
+	check(!attention->isEnabled() && setupField<QLabel>(&sourcePage, "Source assignment progress")->text().contains("2 of 2"),
+		"optional empty feeds and overlays do not prevent required-source completion");
 	auto draft = setup.draft("New Source Trial");
 	check(draft.value("newSources").toObject().size() == 1 &&
 		draft.value("stages").toArray()[0].toObject().value("roles").toObject().value("feedA") == sourceKey &&
@@ -1088,6 +1118,9 @@ static void setupQuestionFlowTests()
 	draft = setup.draft("New Source Trial");
 	check(draft.value("newSources").toObject().value(sourceKey.mid(4)).toObject().value("target") == editedPath &&
 		gameFeed->currentText().contains("Edited wizard draft image"), "editing a shared staged source updates all selectors without duplicating it");
+	check(QFile::rename(editedPath, editedPath + ".moved"), "temporarily move the staged file fixture");
+	check(setup.problem(true).contains("readable file"), "a staged file disappearing before Finish is reported before creating the show");
+	check(QFile::rename(editedPath + ".moved", editedPath), "restore the staged file fixture");
 	QTimer::singleShot(0, [&] { auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "cancel source dialog opens"); dialog->reject(); });
 	create->click(); check(setup.draft("New Source Trial").value("newSources").toObject().size() == 1, "cancelled source addition leaves the plan unchanged");
 	check(setup.problem(true).isEmpty(), "new image sources satisfy required stage feeds");
@@ -1096,6 +1129,8 @@ static void setupQuestionFlowTests()
 	QTimer::singleShot(0, [&] {
 		auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "add stinger dialog opens inside the wizard");
 		setupField<QLineEdit>(dialog, "New stinger name")->setText("Wizard staged stinger");
+		setupField<QLineEdit>(dialog, "New stinger video file")->setText(imagePath);
+		check(!dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save)->isEnabled(), "the stinger dialog rejects an image before saving a draft");
 		setupField<QLineEdit>(dialog, "New stinger video file")->setText(stingerPath);
 		setupField<QSpinBox>(dialog, "New stinger cut point")->setValue(725);
 		auto *save = dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save); check(save->isEnabled(), "readable stinger and cut point enable acceptance"); save->click();
@@ -1241,11 +1276,14 @@ static void themedBuilderTests(const obs_video_info &video)
 	QJsonObject stingerRequest{{"schema", 2}, {"name", "Stinger Failure Trial"}, {"stages", QJsonArray{stingerStage}},
 		{"newStingers", QJsonObject{{"transition", stingerSpec}}}};
 	const auto graphicsBefore = QDir(directory.filePath("plugin_config/pulse-weaver-core/show-graphics")).entryList(QDir::Files);
-	for (const QString &failure : {QString("file"), QString("timing"), QString("frontend")}) {
+	const QString nonVideo = localFiles.filePath("not-video.txt"); writeFile(nonVideo, "not a video");
+	for (const QString &failure : {QString("file"), QString("format"), QString("timing"), QString("frontend")}) {
 		auto spec = stingerSpec; if (failure == "file") spec.insert("path", localFiles.filePath("absent.webm"));
+		if (failure == "format") spec.insert("path", nonVideo);
 		if (failure == "timing") spec.insert("transitionPointMs", -1);
 		stingerRequest.insert("newStingers", QJsonObject{{"transition", spec}});
 		const auto failed = engine.createGuidedShow(stingerRequest);
+		if (failure == "format") check(failed.value("message").toString().contains("image or document"), "a readable document is rejected as a new stinger before frontend creation");
 		check(!failed.value("ok").toBool() && readFile(stagePath) == beforeNewSourceFailure &&
 			QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson() == beforeNewSourceActions,
 			"invalid stinger or unavailable frontend leaves both catalogues unchanged");

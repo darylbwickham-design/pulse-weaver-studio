@@ -2,6 +2,7 @@
 #include "pulse-show-templates.hpp"
 #include "pulse-scene-item-ref.hpp"
 #include "pulse-source-canvas.hpp"
+#include "pulse-setup-stingers.hpp"
 #include <obs-module.h>
 #include <graphics/vec4.h>
 #include <QCheckBox>
@@ -1571,9 +1572,10 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			if (selection.startsWith("new-stinger:") && !usedStingers.contains(selection.mid(12))) {
 				const QString id = selection.mid(12); const auto spec = newStingers.value(id).toObject();
 				const QString name = spec.value("name").toString().trimmed();
-				const QFileInfo file(spec.value("path").toString()); const auto point = spec.value("transitionPointMs");
+				const auto point = spec.value("transitionPointMs");
 				if (name.isEmpty() || name.size() > 90 || stingerNames.contains(name)) return error("Give each new stinger a unique name of 1–90 characters.");
-				if (!file.isFile() || !file.isReadable()) return error("Choose an available video file for stinger “" + name + "”.");
+				const QString videoProblem = PulseSetupStingers::fileProblem(spec.value("path").toString());
+				if (!videoProblem.isEmpty()) return error("Stinger “" + name + "”: " + videoProblem);
 				if (!point.isDouble() || point.toDouble() != point.toInt() || point.toInt() < 0 || point.toInt() > 120000)
 					return error("Set the stinger cut point between 0 and 120,000 ms.");
 				stingerNames.insert(name); usedStingers.insert(id); availableTransitions.insert(selection);

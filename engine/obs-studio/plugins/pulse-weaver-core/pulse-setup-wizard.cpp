@@ -32,6 +32,23 @@
 #include "../../shared/qt/PulseOutputActivity.hpp"
 
 namespace {
+QString wizardNameProblem(const QString &prefix, const QSet<QString> &groups, const QJsonArray &stages)
+{
+	if (prefix.isEmpty() || prefix.size() > 90) return "Enter a show name of 1–90 characters.";
+	if (groups.isEmpty()) return "Choose at least one stage group.";
+	OBSCanvasAutoRelease vertical = obs_get_canvas_by_name("Pulse Weaver Vertical");
+	for (const QString &group : groups) {
+		const QString name = prefix + " · " + group;
+		for (const auto &entry : stages) if (entry.toObject().value("name").toString() == name)
+			return "A Stage named “" + name + "” already exists. Choose another show name.";
+		for (const QString &candidate : {name, name + " · Portrait"}) {
+			OBSSourceAutoRelease source = obs_get_source_by_name(candidate.toUtf8().constData());
+			if (!source && vertical) source = obs_canvas_get_source_by_name(vertical, candidate.toUtf8().constData());
+			if (source) return "A scene named “" + candidate + "” already exists. Choose another show name.";
+		}
+	}
+	return {};
+}
 class SetupPage final : public QWizardPage {
 public:
 	std::function<QString()> problem;
@@ -88,23 +105,27 @@ void PulseMotionEngine::openShowWizard()
 	if (!lumiaLogo.isNull()) lumiaBrand->setPixmap(lumiaLogo);
 	else lumiaBrand->setText("Lumia Stream");
 	lumiaBrand->setAccessibleName("Lumia Stream"); connectLayout->addWidget(lumiaBrand);
-	text(connectLayout, connectPage, "Lumia Stream provides the Lumia overlay templates for Pulse Weaver, including the countdown and widgets, and is required to use them. Install Lumia, connect its Pulse Weaver plugin, import the templates you need and copy their browser links for page 4. You can also reuse the Lumia browser sources already in your setup. Lumia is the recommended way to control animations, Stage / Look changes and show actions; Pulse Weaver arranges your cameras and content and moves them between Looks.");
+	text(connectLayout, connectPage, "Lumia Stream is required for the supplied overlays, countdown and widgets. It also lets you control animations and Stage / Look changes. Pulse Weaver arranges your feeds and moves them between Looks.");
+	auto task = [&](const QString &title) {
+		auto *box = new QGroupBox(title, connectPage); auto *body = new QVBoxLayout(box);
+		body->setAlignment(Qt::AlignTop); connectLayout->addWidget(box); return body;
+	};
+	auto *install = task("1  Install Lumia Stream");
 	auto *download = new QPushButton("Download Lumia Stream", connectPage);
 	connect(download, &QPushButton::clicked, &wizard, [] { QDesktopServices::openUrl(QUrl("https://www.lumiastream.com/downloads")); });
-	connectLayout->addWidget(download);
-	text(connectLayout, connectPage, "In Lumia, add the Pulse Weaver plugin and follow its connection instructions. In Overlays, import each template your chosen Looks use, including its landscape (H) and portrait (V) versions. Customize your logo, colours and text there.");
-	auto *marketplace = new QPushButton("Get Lumia overlays", connectPage);
-	connect(marketplace, &QPushButton::clicked, &wizard, [&wizard] { PulseInstructions::openDialog(&wizard); });
-	connectLayout->addWidget(marketplace);
-	text(connectLayout, connectPage, "A template share link imports an overlay into your Lumia library. After importing, use the overlay's chain / copy-link button to obtain your own browser link, then assign it on page 4. Match H to landscape and V to portrait. Add chat, alerts, frames and Newsroom only when you use them. Existing sources can be kept.");
-	text(connectLayout, connectPage, "The Lumia bulb beside the readiness status on Show Control keeps the setup instructions available after this wizard: overlay imports, starting the countdown, running your chosen command at zero, Chat Physics and camera clearances, Stage / Look changes, Fortnite commands and stingers. You can also read them here while setting up your show.");
-	auto *instructions = new QPushButton("Read Lumia setup instructions", connectPage);
+	install->addWidget(download); install->addWidget(new QCheckBox("Lumia Stream is installed", connectPage));
+	auto *plugin = task("2  Connect the Pulse Weaver plugin");
+	text(plugin, connectPage, "Download the companion plugin below. Import its .lumiaplugin file in Lumia, then follow its connection instructions for this Pulse Weaver installation.");
+	auto *pluginDownload = new QPushButton("Download the Pulse Weaver Lumia plugin", connectPage);
+	connect(pluginDownload, &QPushButton::clicked, &wizard, [] { QDesktopServices::openUrl(QUrl("https://github.com/darylbwickham-design/pulse-weaver-studio/releases/latest/download/PulseWeaver-Lumia-1.4.4.lumiaplugin")); });
+	plugin->addWidget(pluginDownload); plugin->addWidget(new QCheckBox("The Pulse Weaver plugin is connected", connectPage));
+	auto *artwork = task("3  Import the overlays you need");
+	text(artwork, connectPage, "Import matching landscape (H) and portrait (V) templates in Lumia. Customize their logo, colours and text, then use the chain / copy-link button to get each browser link for page 4. You can reuse existing Lumia browser sources.");
+	auto *instructions = new QPushButton("Get Lumia overlays and setup instructions", connectPage);
 	connect(instructions, &QPushButton::clicked, &wizard, [&wizard] { PulseInstructions::openDialog(&wizard); });
-	connectLayout->addWidget(instructions);
-	for (const QString &label : {QString("Lumia Stream is installed"), QString("The Pulse Weaver plugin is connected"),
-		QString("My Lumia templates are imported, or their browser sources are already available")}) connectLayout->addWidget(new QCheckBox(label, connectPage));
-	text(connectLayout, connectPage, "You can prepare your stage and source choices while completing the Lumia setup. These checkboxes are readiness reminders; they do not verify the connection or run overlay commands. Configure the countdown's completion command in Lumia using the guide so it can select your next Stage / Look when the timer reaches zero.");
-	text(connectLayout, connectPage, "Choose existing sources or add new ones while assigning your feeds on page 4. For optional stage transitions, page 3 lets you reuse a stinger or add a video and its cut point. Choose landscape and portrait versions where needed; new sources and stingers are added only when you create your show.");
+	artwork->addWidget(instructions); artwork->addWidget(new QCheckBox("My Lumia templates or browser sources are ready", connectPage));
+	text(connectLayout, connectPage, "These checkboxes are reminders. You can continue planning while finishing Lumia setup. The Lumia bulb on Show Control keeps the countdown, Chat Box Physics, Newsroom, alert and stinger instructions available after this wizard.");
+	text(connectLayout, connectPage, "Next, choose your stage groups and Looks. Page 3 offers optional stingers; page 4 lets you reuse or create sources. Nothing is added until you choose Create my show.");
 	connectLayout->addStretch();
 
 	auto [stagePage, stageLayout] = page("2  Choose stage groups", "Which parts of your stream should this show include?");
@@ -119,10 +140,12 @@ void PulseMotionEngine::openShowWizard()
 		{"Celebration", "Reactions, announcements and moments worth celebrating"},
 		{"Intermission", "BRB, continued activity and ending"}};
 	QMap<QString, QCheckBox *> groups;
+	auto *stageCards = new QGridLayout; stageLayout->addLayout(stageCards); int stageCardIndex = 0;
 	for (const auto &group : PulseShow::setupCatalogue()) {
 		auto *check = new QCheckBox(group.name, stagePage); check->setChecked(group.name != "Projects");
 		check->setAccessibleDescription(descriptions.value(group.name)); groups.insert(group.name, check);
-		stageLayout->addWidget(check); text(stageLayout, stagePage, descriptions.value(group.name));
+		stageCards->addWidget(PulseSetupChoices::checkCard(check, stagePage, descriptions.value(group.name)),
+			stageCardIndex / 2, stageCardIndex % 2); ++stageCardIndex;
 	}
 	stageLayout->addStretch();
 	stagePage->problem = [&] {
@@ -131,7 +154,7 @@ void PulseMotionEngine::openShowWizard()
 		return QString("Choose at least one stage group.");
 	};
 	auto [lookPage, lookLayout] = page("3  Choose Looks and options", "Select your operating presentations and their layout options.");
-	text(lookLayout, lookPage, "Choose an on-air focus swap only if you will use that alternate presentation. Landscape, portrait and layout options belong to each Look.");
+	text(lookLayout, lookPage, "Click the Look cards you need, then move through your stages. Recommended layouts are ready to use; open Layout options to adjust one. Stage transitions contains Fade, Cut, stingers and the Profounder link.");
 	auto [sourcePage, sourceLayout] = page("4  Assign sources and review", "Assign feeds and each Look's artwork, then review both canvas diagrams and create your show.");
 	QFile manifestFile(QDir(QFileInfo(storagePath).absolutePath()).filePath("setup-reference.json"));
 	QJsonObject manifest;
@@ -141,6 +164,15 @@ void PulseMotionEngine::openShowWizard()
 	QJsonArray savedStages;
 	if (stagesFile.open(QIODevice::ReadOnly)) savedStages = QJsonDocument::fromJson(stagesFile.readAll()).array();
 	stagesFile.close();
+	QSet<QString> allGroups; for (const auto &group : PulseShow::setupCatalogue()) allGroups.insert(group.name);
+	QString suggested = "My Show";
+	for (int suffix = 2; !wizardNameProblem(suggested, allGroups, savedStages).isEmpty(); ++suffix)
+		suggested = "My Show " + QString::number(suffix);
+	name->setText(suggested);
+	stagePage->problem = [&] {
+		QSet<QString> selected; for (auto it = groups.begin(); it != groups.end(); ++it) if (it.value()->isChecked()) selected.insert(it.key());
+		return wizardNameProblem(name->text().trimmed(), selected, savedStages);
+	};
 	FlexibleSetup setup(wizard, lookPage, lookLayout, sourcePage, sourceLayout, manifest, savedStages, actions);
 	text(sourceLayout, sourcePage, "After creating your show, select the Lumia logo on Show Control to finish its Lumia commands. Select your new Stages / Looks in the countdown and scene-switch actions, and add the accompanying alert commands once for both canvases.");
 	lookPage->problem = [&] { return setup.problem(false); };
@@ -156,7 +188,7 @@ void PulseMotionEngine::openShowWizard()
 	setup.changed = [&] { lookPage->changed(); sourcePage->changed(); };
 	for (auto *check : groups) connect(check, &QCheckBox::toggled, &wizard, [&](bool) { update(); });
 	connect(name, &QLineEdit::textChanged, &wizard, [&](const QString &) { stagePage->changed(); sourcePage->changed(); });
-	connect(&wizard, &QWizard::currentIdChanged, &wizard, [&](int) { update(); });
+	connect(&wizard, &QWizard::currentIdChanged, &wizard, [&](int) { update(); if (wizard.currentPage() == sourcePage) setup.showSourcePreview(); });
 	update();
 	while (wizard.exec() == QDialog::Accepted) {
 		const QJsonObject result = createGuidedShow(setup.draft(name->text().trimmed()));

@@ -15,9 +15,18 @@
 #include <QScreen>
 #include <QScrollArea>
 #include <QSpinBox>
+#include <QStringList>
 #include <QVBoxLayout>
 
 namespace PulseSetupStingers {
+inline QString fileProblem(const QString &path)
+{
+	const QFileInfo file(path.trimmed());
+	if (!file.isAbsolute() || !file.isFile() || !file.isReadable()) return "Choose a readable video file on this computer.";
+	const QStringList formats{"webm", "mov", "mp4", "mkv", "avi", "m4v", "flv", "mpg", "mpeg", "ts", "m2ts", "mxf", "ogv"};
+	if (!formats.contains(file.suffix().toLower())) return "Choose a video file, such as MP4, WebM or MOV. An image or document cannot be used as a stinger.";
+	return {};
+}
 // Collect a draft only. No native transition or source is created until Finish.
 inline QJsonObject ask(QWidget *parent, bool portrait, const QSet<QString> &usedNames, const QJsonObject &prior = {})
 {
@@ -56,17 +65,16 @@ inline QJsonObject ask(QWidget *parent, bool portrait, const QSet<QString> &used
 	auto validate = [&] {
 		QString problem;
 		const QString value = name->text().trimmed();
-		const QFileInfo file(path->text().trimmed());
 		if (value.isEmpty()) problem = "Enter a name for this stinger.";
 		else if (usedNames.contains(value)) problem = "That transition name is already used. Choose another name.";
-		else if (!file.isAbsolute() || !file.isFile() || !file.isReadable()) problem = "Choose a readable video file on this computer.";
+		else problem = fileProblem(path->text());
 		error->setText(problem); buttons->button(QDialogButtonBox::Save)->setEnabled(problem.isEmpty());
 	};
 	QObject::connect(name, &QLineEdit::textChanged, &dialog, [&](const QString &) { validate(); });
 	QObject::connect(path, &QLineEdit::textChanged, &dialog, [&](const QString &) { validate(); });
 	QObject::connect(browse, &QPushButton::clicked, &dialog, [&] {
 		const QString file = QFileDialog::getOpenFileName(&dialog, "Choose a stinger video", path->text(),
-			"Video files (*.webm *.mov *.mp4 *.mkv *.avi *.m4v *.flv *.mpg *.mpeg);;All files (*)");
+			"Video files (*.webm *.mov *.mp4 *.mkv *.avi *.m4v *.flv *.mpg *.mpeg *.ts *.m2ts *.mxf *.ogv);;All files (*)");
 		if (!file.isEmpty()) path->setText(file);
 	});
 	QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);

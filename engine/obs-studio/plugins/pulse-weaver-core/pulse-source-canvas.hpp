@@ -42,7 +42,9 @@ inline bool pulseWizardOverlayUrlAllowed(const QString &text)
 {
 	const QUrl url(text.trimmed());
 	return url.isValid() && !url.host().isEmpty() &&
-		(url.scheme() == "http" || url.scheme() == "https") && !pulseIsNativeOverlayUrl(text);
+		(url.scheme() == "http" || url.scheme() == "https") && !pulseIsNativeOverlayUrl(text) &&
+		!(url.host().compare("api.lumiastream.com", Qt::CaseInsensitive) == 0 &&
+			url.path().startsWith("/shared/download/", Qt::CaseInsensitive));
 }
 
 inline bool pulseWizardOverlaySourceAllowed(obs_source_t *source)
