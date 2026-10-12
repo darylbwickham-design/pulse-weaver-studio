@@ -1,8 +1,8 @@
-# Pulse Weaver Studio — 1.14.1
+# Pulse Weaver Studio — 1.14.2
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
-**1.14.1** refines Windows setup with a required Terms agreement, clickable policy links and a responsive layout. It includes the streaming and chat improvements from **1.14.0**, which promotes the tested Studio showcase, automatic YouTube chat scanner, API sending/moderation and smooth chat delivery to the regular release. Download the Windows installer from this repository's **Releases** page. The earlier 1.14 alpha/unstable builds are superseded by this release and remain in the history for reference. Regular, alpha and unstable installations can update to 1.14.1 with backup and recovery support; the older **Pulse Weaver Public Preview** is a separate legacy installation. See [UPDATES.md](UPDATES.md) for channel behavior.
+**1.14.2** brings the four-page layout wizard, separate landscape/portrait artwork for each Look, shared Lumia templates and named web chat panels to the regular release. Chat panels retain their state when switching views, and setup guidance explains overlay imports, countdown actions and optional stingers. It also includes the stinger memory and preview improvements from the 1.14.2 previews. Download the Windows installer from this repository's **Releases** page. Regular, alpha and unstable installations can update to 1.14.2 with backup and recovery support; the older **Pulse Weaver Public Preview** is a separate legacy installation. See [UPDATES.md](UPDATES.md) for channel behavior and [the release notes](docs/RELEASE-v1.14.2.md).
 
 Incoming YouTube chat automatically uses the web scanner in the combined chat box. Sending and moderation use the official API. No reader dropdown or API-receive fallback is exposed, and old reader preferences cannot re-enable API reception.
 
@@ -47,4 +47,4 @@ Pulse Weaver is derived from OBS Studio and distributed under GPL version 2 or l
 
 ## Wizard implementation requirements
 
-The experimental alpha uses one four-page setup wizard with broader layout options available by default. Alpha 9 gives each Look its own landscape/portrait artwork, allows overlays to target one Look, and clarifies setup instructions. It includes alpha 8's retained chat panels. See [the setup wizard guide](docs/SETUP-WIZARD-GUIDE.md) and [alpha 9 release notes](docs/RELEASE-v1.14.2-alpha.9.md). The older theme builder guide is historical.
+The setup wizard uses one four-page flow with broader layout options available by default. Each Look has its own landscape/portrait artwork, and extra overlays can target one Look or several. See [the setup wizard guide](docs/SETUP-WIZARD-GUIDE.md) and [1.14.2 release notes](docs/RELEASE-v1.14.2.md). The older theme builder guide is historical.
