@@ -1,5 +1,7 @@
 # Local 1.14.2 builder candidate
 
+Historical test notes for the earlier builder. For the current four-page flow, source creation and transitions, see [Create your show](SETUP-WIZARD-GUIDE.md).
+
 The isolated portable installation is `Pulse Weaver 1.14 Clean Test` under the
 user's local Programs directory. Open it with the desktop shortcut
 **Pulse Weaver 1.14.2 Builder Test**. Its API port is 18775.

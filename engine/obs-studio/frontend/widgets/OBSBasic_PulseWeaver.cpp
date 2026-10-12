@@ -1151,6 +1151,7 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *home = new QPushButton("Show Control", header);
 	home->setObjectName("PulseWeaverHome");
 	home->setProperty("pulseWorkspaceIndex", 0);
+	home->setToolTip("Run your show and outputs, or open Control to design and rehearse Looks");
 	pulseIcon(home, "show", 28);
 	headerLayout->addWidget(home);
 
@@ -1159,6 +1160,9 @@ void OBSBasic::InitPulseWeaverShell()
 		button->setObjectName("PulseWeaverNav");
 		button->setProperty("workspace", name);
 		button->setProperty("pulseWorkspaceIndex", index);
+		button->setToolTip(index == 1 ? "Lighting controls are not available in this release" :
+			index == 2 ? "Add and configure sources; edit landscape and portrait scenes" :
+			"Connect streaming accounts and set stream titles, categories and destinations");
 		pulseIcon(button, name, 28);
 		button->setCursor(Qt::PointingHandCursor);
 		connect(button, &QPushButton::clicked, this, [this, index] { SetPulseWeaverWorkspace(index); });
@@ -1244,12 +1248,14 @@ void OBSBasic::InitPulseWeaverShell()
 	headerLayout->addWidget(studioMenuButton);
 	auto *plugins = new QPushButton("Plugins", header);
 	plugins->setObjectName("PulseWeaverUtility");
+	plugins->setToolTip("Manage installed Pulse Weaver plugins");
 	pulseIcon(plugins, "plugins");
 	connect(plugins, &QPushButton::clicked, this, [this] { ui->actionOpenPluginManager->trigger(); });
 	headerLayout->addWidget(plugins);
 	auto *settings = new QPushButton("Settings", header);
 	settings->setObjectName("PulseWeaverUtility");
 	settings->setProperty("pulseWorkspaceIndex", 4);
+	settings->setToolTip("Start the setup guide or change audio, video, recording and app settings");
 	pulseIcon(settings, "settings");
 	connect(settings, &QPushButton::clicked, this, [this] { SetPulseWeaverWorkspace(4); });
 	headerLayout->addWidget(settings);
@@ -1297,6 +1303,8 @@ void OBSBasic::InitPulseWeaverShell()
 	}
 	showMode->setObjectName("PulseWeaverShowMode");
 	controlMode->setObjectName("PulseWeaverControlMode");
+	showMode->setToolTip("Run the show: live previews, Stage switching, chat, audio and output controls");
+	controlMode->setToolTip("Design and rehearse Looks, then save them before choosing Run saved look live");
 	showMode->setChecked(true);
 	showHead->addStretch();
 	auto *contributorGuides = new QWidget(showBanner);
@@ -1922,12 +1930,13 @@ void OBSBasic::InitPulseWeaverShell()
 	stageBar->addWidget(captureStage);
 	auto *manageStages = new QPushButton("Manage stages");
 	manageStages->setObjectName("PulseWeaverControl");
+	manageStages->setToolTip("Choose each Stage's scenes, output destinations, transitions and source exclusions");
 	pulseIcon(manageStages, "stages");
 	connect(manageStages, &QPushButton::clicked, this, &OBSBasic::ManagePulseWeaverStages);
 	stageBar->addWidget(manageStages);
 	auto *firstShow = new QPushButton("Build my show…", showMain);
 	firstShow->setObjectName("PulseWeaverControl");
-	firstShow->setToolTip("Set up your sources and create Starting, Hangout, Gameplay, BRB/Ending and Celebration stages.");
+	firstShow->setToolTip("Choose Starting, Chat, Game, Projects, Celebration and Intermission Looks; reuse or create their sources.");
 	auto needsShowBuilder = [] {
 		const QJsonArray stages = loadPulseWeaverStages();
 		return stages.isEmpty() || (stages.size() == 1 && stages.first().toObject().value("name").toString() == "Current Show");
@@ -2293,7 +2302,7 @@ void OBSBasic::InitPulseWeaverShell()
     pulseIcon(openFullMixer, "mixer", 24);
 	openFullMixer->setMinimumSize(164, 42);
 	openFullMixer->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-	openFullMixer->setToolTip("Open Camera to use the complete native OBS audio mixer");
+	openFullMixer->setToolTip("Open Camera to use the full audio mixer and source controls");
 	connect(openFullMixer, &QPushButton::clicked, this, [this] {
 		SetPulseWeaverWorkspace(2);
 		SetPulseWeaverCameraOutput(false);
@@ -2386,15 +2395,15 @@ void OBSBasic::InitPulseWeaverShell()
 	controls->addStretch();
 	pulseRecordingDestination = new QComboBox;
 	pulseRecordingDestination->setObjectName("PulseWeaverRecordingDestination");
-	pulseRecordingDestination->setAccessibleName("Recording output mode, unstable preview");
+	pulseRecordingDestination->setAccessibleName("Recording output mode");
 	pulseRecordingDestination->addItem("Recording · Standard", "standard");
 	pulseRecordingDestination->addItem("Recording · Off", "off");
 	pulseRecordingDestination->addItem("16:9 · Experimental", "horizontal");
 	pulseRecordingDestination->addItem("9:16 · Experimental", "vertical");
 	pulseRecordingDestination->addItem("Dual · Experimental", "dual");
 	pulseRecordingDestination->setToolTip(
-		"UNSTABLE preview: record the Stage-routed 16:9 canvas, 9:16 canvas, or both as separate MKV files. "
-		"Standard keeps the proven OBS recording path and settings.");
+		"Standard uses your recording settings. Experimental modes record the Stage-routed landscape canvas, "
+		"portrait canvas, or both as separate MKV files. Choose Off to disable recording.");
 	/* The environment override is intentionally test-only: it lets the smoke
 	 * harness exercise a routed recorder without scripting a native combo box.
 	 * Normal launches always use the operator's saved selection. */
@@ -2628,6 +2637,8 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *verticalOutput = new QPushButton("Portrait · 9:16");
 	horizontalOutput->setProperty("pulseCanvasPortrait", false);
 	verticalOutput->setProperty("pulseCanvasPortrait", true);
+	horizontalOutput->setToolTip("Edit the landscape scene and its sources");
+	verticalOutput->setToolTip("Edit the portrait scene and its sources");
     pulseIcon(horizontalOutput, "horizontal");
 	auto *outputGroup = new QButtonGroup(pulseCameraPage);
     pulseIcon(verticalOutput, "vertical");
@@ -2649,7 +2660,7 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *unlockDocks = new QPushButton("Unlock layout");
 	unlockDocks->setObjectName("PulseWeaverDockLockToggle");
     pulseIcon(unlockDocks, "lock");
-	unlockDocks->setToolTip("Toggle whether the native OBS docks can be moved, floated and redocked");
+	unlockDocks->setToolTip("Allow the Sources, Scenes and mixer panels to move, or lock them in place");
 	auto updateDockButton = [unlockDocks](bool locked) {
 		unlockDocks->setText(locked ? "Unlock layout" : "Lock layout");
 		unlockDocks->setProperty("docksLocked", locked);
@@ -2864,7 +2875,7 @@ void OBSBasic::InitPulseWeaverShell()
 	setupSummary->setWordWrap(true);
 	setupSummary->setStyleSheet("color:#8de3fc;font-size:13px;");
 	summaryCard->addWidget(setupSummary);
-	auto *buildCard = card(overview, "1  Design a show", "Choose existing sources or create cameras, game capture, chat and graphics. Pulse Weaver builds landscape and portrait stages with saved looks.");
+	auto *buildCard = card(overview, "1  Design a show", "Choose stage groups and the Looks you need. Reuse or create sources for each group, add shared alert layers and choose transitions for both formats.");
 	action(buildCard, "Build my show", "Open the guided show creator", [this] {
 		SetPulseWeaverWorkspace(0);
 		QTimer::singleShot(0, this, [this] {
@@ -2880,7 +2891,7 @@ void OBSBasic::InitPulseWeaverShell()
 		if (auto *control = findChild<QPushButton *>("PulseWeaverControlMode")) control->click();
 	});
 
-	auto *showSection = section("Show and stages", "Build the scenes once, then run many looks through one stage. Stage transitions and within-stage motions have separate timing.");
+	auto *showSection = section("Show and stages", "A Stage holds related Looks. Each Look saves an arrangement of shared sources. Switching Stages uses a transition; changing Looks in the same Stage moves those sources.");
 	auto *showCard = card(showSection, "Stage library", "Create and edit looks in Control. Manage stages controls provider routing and transition choice, including an existing stinger.");
 	action(showCard, "Design stage looks", "Open the visual Control editor", [this] {
 		SetPulseWeaverWorkspace(0);
@@ -2891,7 +2902,10 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *outputSection = section("Destinations", "Keep account authorization and output choices together. Kick currently uses the landscape programme only.");
 	auto *accountCard = card(outputSection, "Connected services", "Authorize Twitch, YouTube and Kick, then choose the destinations from Show. Account credentials stay in this profile.");
 	action(accountCard, "Open connections", "Connect accounts and edit stream details", [this] { SetPulseWeaverWorkspace(3); });
-	action(accountCard, "Choose live destinations", "Open Show's output controls", [this] { SetPulseWeaverWorkspace(0); });
+	action(accountCard, "Choose live destinations", "Open Show's output controls", [this] {
+		SetPulseWeaverWorkspace(0);
+		if (auto *show = findChild<QPushButton *>("PulseWeaverShowMode")) show->click();
+	});
 	auto *bitrateCard = card(outputSection, "Video bandwidth", "Set the next-start bitrate for Kick landscape and YouTube's two canvases. Twitch Enhanced Broadcasting negotiates its own tracks.");
 	auto *bitrateForm = new QFormLayout;
 	bitrateCard->addLayout(bitrateForm);
@@ -3392,13 +3406,15 @@ void OBSBasic::InitPulseWeaverShell()
 	action(recoveryCard, "Open updates and recovery", "Use the Studio menu to check channels or restore a backup", [studioMenuButton] { studioMenuButton->showMenu(); });
 	action(recoveryCard, "Advanced OBS options", "Open the remaining OBS engine settings", [this] { on_action_Settings_triggered(); });
 	setupNavLayout->addStretch(1);
-	connect(settings, &QPushButton::clicked, setupSummary, [this, setupSummary] {
+	auto refreshSetupSummary = [this, setupSummary] {
 		QSettings selectedGame(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
 		const int stages = loadPulseWeaverStages().size();
 		setupSummary->setText(QString::number(stages) + " stages ready  ·  " +
 			(selectedGame.value("show/game_capture_uuid").toString().isEmpty() ?
-				"Choose a Game Capture in Show" : "Game Capture selected"));
-	});
+				"Game Capture is optional; choose one in Show if needed" : "Game Capture selected"));
+	};
+	refreshSetupSummary();
+	connect(settings, &QPushButton::clicked, setupSummary, refreshSetupSummary);
 	pulsePages->addWidget(setupPage);
 
 	connect(pulseHorizontalDisplay, &OBSQTDisplay::DisplayCreated, this, [this](OBSQTDisplay *display) {
@@ -4310,8 +4326,8 @@ void OBSBasic::UpdatePulseWeaverShell()
 	const bool virtualCamera = obs_frontend_virtualcam_active();
 	if (pulseEngineStatus)
 		pulseEngineStatus->setText(QString("Stream %1   ·   Recording %2")
-					   .arg(streaming ? "live" : "ready")
-					   .arg(recording ? "on" : "ready"));
+					   .arg(streaming ? "live" : "idle")
+					   .arg(recording ? "on" : "idle"));
 	auto reflectActive = [](QPushButton *button, bool active) {
 		if (button->property("pulseActive").toBool() != active) {
 			button->setProperty("pulseActive", active);
@@ -4323,18 +4339,24 @@ void OBSBasic::UpdatePulseWeaverShell()
 	if (pulseStreamButton) {
 		const bool live = streaming || property("pulseWeaverGoLiveSession").toBool();
 		pulseStreamButton->setText(live ? "End stream" : "Go live");
+		pulseStreamButton->setToolTip(live ? "Stop the current live outputs" : "Start streaming to the destinations selected under Outputs");
 		reflectActive(pulseStreamButton, live);
 	}
 	if (pulseRecordButton) {
 		pulseRecordButton->setText(recording ? "Stop recording" : "Record");
+		pulseRecordButton->setToolTip(recording ? "Stop the current recording" : "Start recording using the selected Recording output mode");
 		reflectActive(pulseRecordButton, recording);
 	}
 	if (pulseRecordingDestination)
 		pulseRecordingDestination->setEnabled(!recording);
-	if (pulseReplayButton)
+	if (pulseReplayButton) {
 		pulseReplayButton->setText(replay ? "Stop replay buffer" : "Replay buffer");
-	if (pulseVirtualCameraButton)
+		pulseReplayButton->setToolTip(replay ? "Stop keeping a replay of recent footage" : "Keep recent footage in memory so you can save a replay; configure its length in recording settings");
+	}
+	if (pulseVirtualCameraButton) {
 		pulseVirtualCameraButton->setText(virtualCamera ? "Stop virtual camera" : "Virtual camera");
+		pulseVirtualCameraButton->setToolTip(virtualCamera ? "Stop sending video to other apps through the virtual camera" : "Make studio video available as a camera in video calls and other apps");
+	}
 
 	obs_canvas_t *vertical = PulseWeaverGetVerticalCanvas();
 	/* Provision the product-owned canvas after profile/video initialisation.

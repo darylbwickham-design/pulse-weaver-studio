@@ -1,6 +1,8 @@
-# Build a show in Pulse Weaver
+# Historical theme-builder guide
 
-This guide describes the 1.14.2 theme builder candidate. A fresh setup opens at **Settings → Start here**; existing setups open on Show.
+This document records the earlier theme-builder candidate. Its page sequence, default Look catalogue and reference examples are historical and do not describe the current wizard. Use the [current setup guide](SETUP-WIZARD-GUIDE.md) for **Build my show…**.
+
+The older design and operating notes below are retained as project history.
 
 ## Create Stages and animated Looks
 

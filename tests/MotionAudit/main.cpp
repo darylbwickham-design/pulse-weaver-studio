@@ -8,8 +8,10 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QImage>
 #include <QSize>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <util/base.h>
 #include <algorithm>
 #include <atomic>
@@ -51,6 +53,40 @@ static void writeFile(const QString &path, const QByteArray &bytes)
 {
 	QFile file(path);
 	check(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size(), "write fixture");
+}
+
+static void registerInertBrowser()
+{
+	obs_source_info type{}; type.id = "browser_source"; type.type = OBS_SOURCE_TYPE_INPUT; type.output_flags = OBS_SOURCE_VIDEO;
+	type.get_name = [](void *) { return "Inert browser fixture"; };
+	type.create = [](obs_data_t *settings, obs_source_t *) -> void * {
+		return new QSize(int(obs_data_get_int(settings, "width")), int(obs_data_get_int(settings, "height")));
+	};
+	type.destroy = [](void *p) { delete static_cast<QSize *>(p); };
+	type.get_width = [](void *p) { return uint32_t(static_cast<QSize *>(p)->width()); };
+	type.get_height = [](void *p) { return uint32_t(static_cast<QSize *>(p)->height()); };
+	obs_register_source(&type);
+}
+
+static void wizardOverlayPolicyTests()
+{
+	for (const QString &url : {QString("https://overlays.lumiastream.com/audit/countdown"),
+		QString("http://127.0.0.1:39270/"), QString("http://127.0.0.1:39270/portrait")})
+		check(pulseWizardOverlayUrlAllowed(url), "Lumia hosted overlays and local Chat Physics links remain supported");
+	for (const QString &url : {QString("http://127.0.0.1:18754/overlay/audit-token"),
+		QString("http://localhost:18754/preview/session/audit-session")})
+		check(pulseIsNativeOverlayUrl(url) && !pulseWizardOverlayUrlAllowed(url),
+			"Pulse Weaver native overlay and preview links cannot bypass the Lumia wizard policy");
+	check(!pulseWizardOverlayUrlAllowed("file:///C:/audit/native-title.html"), "local native HTML files are not wizard overlay links");
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_bool(settings, "is_local_file", true);
+	obs_data_set_string(settings, "local_file", "C:/audit/plugin_config/pulse-weaver-core/show-graphics/title.html");
+	OBSSourceAutoRelease local = obs_source_create("browser_source", "Local browser policy fixture", settings, nullptr);
+	check(pulseIsNativeOverlaySource(local) && !pulseWizardOverlaySourceAllowed(local), "generated native title files are recognized and excluded");
+	obs_data_set_string(settings, "local_file", "C:/audit/ordinary-browser-feed.html"); obs_source_update(local, settings);
+	check(!pulseIsNativeOverlaySource(local) && !pulseWizardOverlaySourceAllowed(local),
+		"ordinary local browser feeds are not misidentified as native titles but still are not Lumia artwork");
+	obs_source_remove(local);
 }
 
 struct PulseMotionEngineTestAccess {
@@ -640,9 +676,166 @@ static void setupBuilderTests(const obs_video_info &video)
 		PulseMotionEngineTestAccess::actions(engine) == actionsBeforeInvalid, "invalid saved Look rolls back earlier flexible stage and both catalogues");
 	OBSSourceAutoRelease rejectedScene = obs_get_source_by_name("Mixed Invalid · Chat");
 	check(!rejectedScene, "failed mixed show leaves no earlier generated stage");
+	QJsonObject layeredStage = savedStage; layeredStage.insert("referenceLooks", QJsonArray{"setup-first", "setup-second"});
+	layeredStage.insert("disabledSources", QJsonArray{obs_source_get_uuid(border)});
+	OBSSourceAutoRelease sharedOne = obs_source_create("pulse_motion_audit_fixture", "Shared first alert", nullptr, nullptr);
+	OBSSourceAutoRelease sharedTwo = obs_source_create("pulse_motion_audit_fixture", "Shared second alert", nullptr, nullptr);
+	OBSSourceAutoRelease sharedThree = obs_source_create("pulse_motion_audit_fixture", "Shared third alert", nullptr, nullptr);
+	QJsonArray sharedLayers;
+	for (const QString &route : {QString("horizontal"), QString("vertical")}) for (int slot = 1; slot <= 3; ++slot)
+		sharedLayers.append(QJsonObject{{"canvas", route}, {"order", slot},
+			{"source", obs_source_get_uuid(slot == 1 ? sharedOne.Get() : slot == 2 ? sharedTwo.Get() : sharedThree.Get())},
+			{"looks", slot == 2 ? QJsonArray{"setup-starting/saved:setup-second"} :
+				QJsonArray{"setup-starting/saved:setup-first", "setup-starting/saved:setup-second"}}});
+	QJsonObject layered{{"schema", 2}, {"name", "Saved Shared Layers"}, {"stages", QJsonArray{layeredStage}}, {"overlays", sharedLayers}};
+	QJsonObject duplicate = layered; duplicate.insert("name", "Duplicate Saved Alert");
+	duplicate.insert("overlays", QJsonArray{QJsonObject{{"canvas", "horizontal"}, {"order", 1}, {"source", obs_source_get_uuid(replacement)},
+		{"looks", QJsonArray{"setup-starting/saved:setup-second"}}}});
+	const auto beforeOverlap = readFile(stagePath), beforeOverlapActions = QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson();
+	const auto duplicateResult = engine.createGuidedShow(duplicate);
+	check(!duplicateResult.value("ok").toBool() && duplicateResult.value("message").toString().contains("already exists in saved layout") &&
+		readFile(stagePath) == beforeOverlap && QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson() == beforeOverlapActions,
+		"shared overlay matching a nested replacement input is rejected before either catalogue changes");
+	OBSSourceAutoRelease noDuplicateScene = obs_get_source_by_name("Duplicate Saved Alert · Starting");
+	check(!noDuplicateScene, "duplicate saved alert validation creates no partial stage");
+	check(!pulseSceneUsesSource(obs_scene_get_source(horizontal), obs_source_get_uuid(camera), layeredStage.value("sourceBindings").toObject()) &&
+		!pulseSceneUsesSource(obs_scene_get_source(horizontal), obs_source_get_uuid(border), {}, layeredStage.value("disabledSources").toArray()),
+		"replaced inputs and explicitly skipped nested sources do not produce false overlap errors");
+	check(!pulseSceneUsesSource(obs_scene_get_source(horizontal), "new:unique-draft") &&
+		pulseSceneUsesSource(obs_scene_get_source(horizontal), "new:replacement", {{obs_source_get_uuid(camera), "new:replacement"}}),
+		"a new source conflicts only when that same definition also replaces a saved input");
+	{
+		OBSDataAutoRelease browserSettings = obs_data_create();
+		obs_data_set_string(browserSettings, "url", "https://overlays.lumiastream.com/audit/saved-layer");
+		obs_data_set_int(browserSettings, "width", 640); obs_data_set_int(browserSettings, "height", 480);
+		OBSSourceAutoRelease savedBrowser = obs_source_create("browser_source", "Saved Lumia alert fixture", browserSettings, nullptr);
+		obs_sceneitem_t *savedBrowserItem = obs_scene_add(croppedCamera, savedBrowser);
+		obs_data_set_bool(browserSettings, "is_local_file", true);
+		obs_data_set_string(browserSettings, "local_file", "C:/audit/plugin_config/pulse-weaver-core/show-graphics/saved-title.html");
+		obs_source_update(savedBrowser, browserSettings);
+		check(pulseSceneUsesNativeOverlay(obs_scene_get_source(horizontal)) &&
+			pulseSceneUsesNativeOverlay(obs_scene_get_source(horizontal), {}, {obs_source_get_uuid(savedBrowser)}) &&
+			!pulseSceneUsesNativeOverlay(obs_scene_get_source(horizontal), {{obs_source_get_uuid(savedBrowser), "new:lumia-replacement"}}),
+			"saved-stage native overlays require replacement even when hidden inside a nested unit");
+		const auto beforeNativeSaved = readFile(stagePath), beforeNativeSavedActions = QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson();
+		QJsonObject nativeSaved{{"schema", 2}, {"overlayProvider", "lumia"}, {"name", "Native Saved Wizard"}, {"stages", QJsonArray{layeredStage}}};
+		const auto nativeSavedResult = engine.createGuidedShow(nativeSaved);
+		check(!nativeSavedResult.value("ok").toBool() && nativeSavedResult.value("message").toString().contains("Lumia", Qt::CaseInsensitive) &&
+			readFile(stagePath) == beforeNativeSaved && QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson() == beforeNativeSavedActions,
+			"saved layouts cannot bring nested native overlays into a Lumia wizard show");
+		auto hiddenNativeStage = layeredStage;
+		hiddenNativeStage.insert("disabledSources", QJsonArray{obs_source_get_uuid(border), obs_source_get_uuid(savedBrowser)});
+		nativeSaved.insert("stages", QJsonArray{hiddenNativeStage});
+		const auto hiddenNativeResult = engine.createGuidedShow(nativeSaved);
+		check(!hiddenNativeResult.value("ok").toBool() && hiddenNativeResult.value("message").toString().contains("Lumia", Qt::CaseInsensitive) &&
+			readFile(stagePath) == beforeNativeSaved && QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson() == beforeNativeSavedActions,
+			"disabling a saved native overlay cannot bypass replacement because copied hidden items retain their sources");
+		OBSDataAutoRelease replacementBrowserSettings = obs_data_create();
+		obs_data_set_string(replacementBrowserSettings, "url", "https://overlays.lumiastream.com/audit/saved-replacement");
+		obs_data_set_int(replacementBrowserSettings, "width", 480); obs_data_set_int(replacementBrowserSettings, "height", 640);
+		OBSSourceAutoRelease wrongBrowser = obs_source_create("browser_source", "Portrait saved replacement fixture", replacementBrowserSettings, nullptr);
+		OBSDataAutoRelease correctBrowserSettings = obs_data_create(); obs_data_apply(correctBrowserSettings, replacementBrowserSettings);
+		obs_data_set_int(correctBrowserSettings, "width", 640); obs_data_set_int(correctBrowserSettings, "height", 480);
+		OBSSourceAutoRelease correctBrowser = obs_source_create("browser_source", "Landscape saved replacement fixture", correctBrowserSettings, nullptr);
+		check(!pulseBrowserMatchesCanvas(wrongBrowser, false) && pulseBrowserMatchesCanvas(correctBrowser, false),
+			"saved replacement fixtures retain independent portrait and landscape viewports");
+		auto replacementStage = layeredStage; auto bindings = replacementStage.value("sourceBindings").toObject();
+		bindings.insert(obs_source_get_uuid(savedBrowser), obs_source_get_uuid(wrongBrowser)); replacementStage.insert("sourceBindings", bindings);
+		nativeSaved.insert("stages", QJsonArray{replacementStage});
+		const auto wrongReplacementResult = engine.createGuidedShow(nativeSaved);
+		check(!wrongReplacementResult.value("ok").toBool() && wrongReplacementResult.value("message").toString().contains("Lumia", Qt::CaseInsensitive) &&
+			readFile(stagePath) == beforeNativeSaved && QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson() == beforeNativeSavedActions,
+			"saved native artwork cannot be replaced by a browser for the opposite canvas orientation");
+		bindings.insert(obs_source_get_uuid(savedBrowser), obs_source_get_uuid(correctBrowser)); replacementStage.insert("sourceBindings", bindings);
+		nativeSaved.insert("name", "Replaced Native Saved Wizard"); nativeSaved.insert("stages", QJsonArray{replacementStage});
+		check(!pulseSceneUsesNativeOverlay(obs_scene_get_source(horizontal), bindings) && engine.createGuidedShow(nativeSaved).value("ok").toBool(),
+			"matching Lumia browser replacement removes native artwork from a saved wizard build");
+		for (const QString &route : {QString(), QString(" · Portrait")}) {
+			const QString name = "Replaced Native Saved Wizard · Starting" + route;
+			OBSSourceAutoRelease scene = route.isEmpty() ? obs_get_source_by_name(name.toUtf8().constData()) :
+				obs_canvas_get_source_by_name(canvas, name.toUtf8().constData());
+			check(scene && !pulseSceneUsesSource(scene, obs_source_get_uuid(savedBrowser)) &&
+				pulseSceneUsesSource(scene, obs_source_get_uuid(correctBrowser)), "copied saved scenes retain only the Lumia replacement");
+			obs_scene_enum_items(obs_scene_from_source(scene), [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
+				auto &units = *static_cast<QSet<QString> *>(opaque); auto *source = obs_sceneitem_get_source(item);
+				if (auto *nested = obs_scene_from_source(source)) {
+					units.insert(obs_source_get_uuid(source));
+					obs_scene_enum_items(nested, [](obs_scene_t *, obs_sceneitem_t *child, void *context) {
+						if (obs_scene_from_source(obs_sceneitem_get_source(child))) static_cast<QSet<QString> *>(context)->insert(obs_source_get_uuid(obs_sceneitem_get_source(child)));
+						return true;
+					}, &units);
+				}
+				return true;
+			}, &clonedUnits);
+			obs_source_remove(scene);
+		}
+		obs_source_remove(wrongBrowser); obs_source_remove(correctBrowser);
+		obs_data_set_bool(browserSettings, "is_local_file", false); obs_data_set_string(browserSettings, "local_file", "");
+		obs_source_update(savedBrowser, browserSettings);
+		QWizard wizard; QWidget lookPage(&wizard), sourcePage(&wizard);
+		auto *lookLayout = new QVBoxLayout(&lookPage), *sourceLayout = new QVBoxLayout(&sourcePage);
+		FlexibleSetup setup(wizard, &lookPage, lookLayout, &sourcePage, sourceLayout,
+			{{"groups", QJsonObject{{"Starting", QJsonObject{{"reference", "Setup Reference"}}}}}},
+			QJsonDocument::fromJson(readFile(stagePath)).array(), PulseMotionEngineTestAccess::actions(engine));
+		setup.update({"Starting", "Chat"});
+		for (auto *box : lookPage.findChildren<QComboBox *>()) if (box->accessibleName() == "Starting layout preset") box->setCurrentIndex(1);
+		QComboBox *overlay = nullptr, *scope = nullptr;
+		for (auto *box : sourcePage.findChildren<QComboBox *>()) {
+			if (box->accessibleName() == "Landscape overlay 1") overlay = box;
+			if (box->accessibleName() == "Landscape overlay 1 visibility") scope = box;
+			if (box->accessibleName() == "Chat · Feed A") { box->addItem("Shared fixture", obs_source_get_uuid(sharedOne)); box->setCurrentIndex(box->count() - 1); }
+		}
+		check(overlay && scope, "saved layouts expose shared layer selectors");
+		check(overlay->findData(obs_source_get_uuid(camera)) < 0 && overlay->findData(obs_source_get_uuid(savedBrowser)) >= 0,
+			"wizard shared layers offer browser overlays rather than arbitrary camera inputs");
+		overlay->setCurrentIndex(overlay->findData(obs_source_get_uuid(savedBrowser)));
+		check(setup.problem(true).contains("already exists in saved layout"), "wizard explains nested saved-layer overlap before Finish");
+		scope->setCurrentIndex(scope->findData("setup-chat/talk"));
+		check(setup.problem(true).isEmpty(), "scoping the shared layer to another stage clears the overlap error");
+		overlay->setCurrentIndex(overlay->findData("")); scope->setCurrentIndex(scope->findData(""));
+		check(setup.problem(true).isEmpty(), "leaving the overlapping shared slot empty keeps the saved layer intact");
+		obs_sceneitem_remove(savedBrowserItem); obs_source_remove(savedBrowser);
+	}
+	check(engine.createGuidedShow(layered).value("ok").toBool(), "all three shared layers apply to selected saved Looks on both canvases");
+	QMap<QString, QString> sharedItems;
+	for (const auto &value : PulseMotionEngineTestAccess::actions(engine)) {
+		const auto action = value.toObject(); if (action.value("stage") != "Saved Shared Layers · Starting") continue;
+		const bool secondLook = action.value("referenceLookId") == "setup-second"; int layerCount = 0;
+		for (const auto &entry : action.value("items").toArray()) {
+			const auto item = entry.toObject(), transform = item.value("transform").toObject();
+			if (!item.value("graphic").toBool()) {
+				OBSSourceAutoRelease copied = obs_get_source_by_uuid(item.value("sourceUuid").toString().toUtf8().constData());
+				auto *decoration = obs_scene_find_source(obs_scene_from_source(copied), "Setup border");
+				check(decoration && !obs_sceneitem_visible(decoration), "skipping a nested optional source hides it inside the copied camera unit");
+				clonedUnits.insert(obs_source_get_uuid(copied));
+				obs_scene_enum_items(obs_scene_from_source(copied), [](obs_scene_t *, obs_sceneitem_t *child, void *opaque) {
+					if (obs_scene_from_source(obs_sceneitem_get_source(child))) static_cast<QSet<QString> *>(opaque)->insert(obs_source_get_uuid(obs_sceneitem_get_source(child))); return true;
+				}, &clonedUnits);
+				continue;
+			}
+			++layerCount;
+			const QString uuid = item.value("sourceUuid").toString();
+			const int slot = uuid == obs_source_get_uuid(sharedOne) ? 1 : uuid == obs_source_get_uuid(sharedTwo) ? 2 : 3;
+			check(transform.value("visible").toBool() == (slot != 2 || secondLook), "saved Look overlay visibility follows its selected scope");
+			check(transform.value("order").toInt() == slot && transform.value("locked").toBool(), "saved overlay layer order stays above content and locked");
+			const QString key = item.value("container").toString() + "/" + QString::number(slot);
+			check(!sharedItems.contains(key) || sharedItems.value(key) == item.value("itemId").toString(), "saved Looks reuse each shared overlay scene-item identity");
+			sharedItems.insert(key, item.value("itemId").toString());
+		}
+		check(layerCount == 6, "saved Look records all three layers on both formats including hidden targets");
+	}
+	check(obs_sceneitem_visible(frame), "skipping the copied nested widget preserves its original visibility");
+	for (const char *name : {"Saved Shared Layers · Starting", "Saved Shared Layers · Starting · Portrait"}) {
+		OBSSourceAutoRelease source = obs_get_source_by_name(name); if (!source) source = obs_canvas_get_source_by_name(canvas, name);
+		if (source) obs_source_remove(source);
+	}
 	// Explicit policy takes precedence over names, and survives source serialization.
 	OBSSourceAutoRelease graphic = obs_source_create("pulse_motion_audit_fixture", "brb scene", nullptr, nullptr);
 	obs_sceneitem_t *graphicItem = obs_scene_add(horizontal, graphic);
+	duplicate.insert("overlays", QJsonArray{QJsonObject{{"canvas", "horizontal"}, {"order", 1}, {"source", obs_source_get_uuid(graphic)},
+		{"looks", QJsonArray{"setup-starting/saved:setup-first"}}}});
+	check(engine.createGuidedShow(duplicate).value("message").toString().contains("already exists in saved layout"),
+		"a top-level existing saved alert is also rejected rather than double-rendered");
 	QJsonObject graphicAction{{"kind", "layout"}, {"policy", "current"}, {"container", "Setup Reference"},
 		{"items", QJsonArray{QJsonObject{{"container", "Setup Reference"}, {"itemId", QString::number(obs_sceneitem_get_id(graphicItem))},
 			{"source", "brb scene"}, {"sourceUuid", obs_source_get_uuid(graphic)}, {"transform", PulseMotionEngineTestAccess::frame(graphicItem)}}}}};
@@ -667,19 +860,34 @@ static void setupBuilderTests(const obs_video_info &video)
 		if (clone) obs_source_remove(clone);
 	}
 	obs_source_remove(graphic); obs_source_remove(camera); obs_source_remove(replacement); obs_source_remove(border);
+	obs_source_remove(sharedOne); obs_source_remove(sharedTwo); obs_source_remove(sharedThree);
 	obs_source_remove(obs_scene_get_source(wrapper)); obs_source_remove(obs_scene_get_source(croppedCamera));
 	obs_source_remove(obs_scene_get_source(horizontal)); obs_source_remove(obs_scene_get_source(portrait));
 	obs_canvas_remove(canvas);
 }
 
+template<typename T> static T *setupField(QWidget *root, const QString &name)
+{
+	for (auto *widget : root->findChildren<T *>()) if (widget->accessibleName() == name) return widget;
+	check(false, qPrintable("Missing setup field: " + name)); return nullptr;
+}
+
 static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *portrait,
 	obs_source_t *square, obs_source_t *unknown)
 {
+	OBSDataAutoRelease localSettings = obs_data_create();
+	obs_data_set_bool(localSettings, "is_local_file", true); obs_data_set_string(localSettings, "local_file", "native-title.html");
+	obs_data_set_int(localSettings, "width", 640); obs_data_set_int(localSettings, "height", 480);
+	OBSSourceAutoRelease nativeTitle = obs_source_create("browser_source", "Existing native title fixture", localSettings, nullptr);
+	OBSSourceAutoRelease arbitraryVideo = obs_get_source_by_name("Builder graphic fixture");
 	QWizard wizard;
 	QWidget lookPage(&wizard), sourcePage(&wizard);
 	auto *lookLayout = new QVBoxLayout(&lookPage), *sourceLayout = new QVBoxLayout(&sourcePage);
 	FlexibleSetup setup(wizard, &lookPage, lookLayout, &sourcePage, sourceLayout, {}, {}, {});
-	for (auto *box : lookPage.findChildren<QCheckBox *>()) if (box->text() == "Getting ready") box->setChecked(false);
+	for (auto *box : lookPage.findChildren<QCheckBox *>()) {
+		if (box->text() == "Getting ready") box->setChecked(false);
+		if (box->text() == "Welcome") box->setChecked(true);
+	}
 	setup.update({"Starting"});
 	auto combo = [&](const QString &name) -> QComboBox * {
 		for (auto *widget : sourcePage.findChildren<QComboBox *>()) if (widget->accessibleName() == name) return widget;
@@ -689,82 +897,225 @@ static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *por
 		for (auto *widget : sourcePage.findChildren<QLineEdit *>()) if (widget->accessibleName() == name) return widget;
 		return nullptr;
 	};
-	auto time = [&](const QString &name) -> QSpinBox * {
-		for (auto *widget : sourcePage.findChildren<QSpinBox *>()) if (widget->accessibleName() == name) return widget;
-		return nullptr;
-	};
 	const QString horizontalLabel = "Starting · Countdown · Landscape artwork", verticalLabel = "Starting · Countdown · Portrait artwork";
 	QComboBox *horizontal = combo(horizontalLabel), *vertical = combo(verticalLabel);
 	check(horizontal && vertical && horizontal != vertical,
 		"wizard presents independent landscape and portrait graphic questions");
+	check(horizontal->currentData().toString().isEmpty() && vertical->currentData().toString().isEmpty() &&
+		setup.problem(true).contains("landscape artwork"), "new wizard artwork starts unassigned and requires an explicit overlay choice");
+	check(horizontal->findData("builtin") < 0 && vertical->findData("builtin") < 0 &&
+		setup.draft("Unassigned Artwork Trial").value("newSources").toObject().isEmpty(),
+		"wizard offers no native title or countdown and does not silently generate artwork");
+	check(horizontal->findData(obs_source_get_uuid(nativeTitle)) < 0 && horizontal->findData(obs_source_get_uuid(arbitraryVideo)) < 0,
+		"artwork selectors exclude local native titles and non-browser inputs");
 	check(horizontal->findData(obs_source_get_uuid(landscape)) >= 0 && horizontal->findData(obs_source_get_uuid(portrait)) < 0 &&
 		vertical->findData(obs_source_get_uuid(portrait)) >= 0 && vertical->findData(obs_source_get_uuid(landscape)) < 0,
 		"graphic dropdowns filter existing browser artwork by matching orientation");
 	for (QComboBox *field : {horizontal,vertical})
 		check(field->findData(obs_source_get_uuid(square)) >= 0 && field->findData(obs_source_get_uuid(unknown)) >= 0,
 			"both format questions retain square and unknown-size compatible graphics");
+	auto *welcomeHorizontal = combo("Starting · Welcome · Landscape artwork"), *welcomeVertical = combo("Starting · Welcome · Portrait artwork");
+	check(welcomeHorizontal && welcomeVertical, "Welcome asks for its own independent overlay assignments");
+	welcomeHorizontal->setCurrentIndex(welcomeHorizontal->findData(obs_source_get_uuid(square)));
+	welcomeVertical->setCurrentIndex(welcomeVertical->findData(obs_source_get_uuid(unknown)));
 	horizontal->setCurrentIndex(horizontal->findData(obs_source_get_uuid(landscape)));
 	vertical->setCurrentIndex(vertical->findData(obs_source_get_uuid(portrait)));
 	check(setup.problem(true).isEmpty(), "independent valid H/V artwork completes the selected Starting questions");
 	QJsonObject draft = setup.draft("UI Questions Trial");
+	check(draft.value("overlayProvider") == "lumia", "wizard request explicitly selects the Lumia overlay policy");
 	QJsonObject roles = PulseShow::rolesForLook(draft.value("stages").toArray().first().toObject(), "countdown");
 	check(roles.value("graphic").toString() == obs_source_get_uuid(landscape) &&
 		roles.value("graphicPortrait").toString() == obs_source_get_uuid(portrait),
 		"wizard draft stores each graphic assignment under its correct canvas role");
+	check(roles.value("graphicFullCanvas").toBool() && roles.value("graphicPortraitFullCanvas").toBool(),
+		"imported artwork defaults to full canvas independently for both formats");
+	auto *horizontalPlacement = combo(horizontalLabel + " placement"), *verticalPlacement = combo(verticalLabel + " placement");
+	check(horizontalPlacement && verticalPlacement, "each artwork question offers an explicit placement choice");
+	horizontalPlacement->setCurrentIndex(horizontalPlacement->findData(false));
+	draft = setup.draft("UI Questions Trial"); roles = PulseShow::rolesForLook(draft.value("stages").toArray().first().toObject(), "countdown");
+	check(!roles.value("graphicFullCanvas").toBool() && roles.value("graphicPortraitFullCanvas").toBool(),
+		"landscape panel placement leaves the portrait full-canvas choice unchanged");
 	vertical->setCurrentIndex(vertical->findData(""));
 	check(setup.problem(true).contains("portrait artwork"), "wizard asks for required portrait artwork when that answer is empty");
 	vertical->setCurrentIndex(vertical->findData(obs_source_get_uuid(portrait)));
 	horizontal->setCurrentIndex(horizontal->findData(""));
 	check(setup.problem(true).contains("landscape artwork"), "wizard asks for required landscape artwork when that answer is empty");
-	horizontal->setCurrentIndex(horizontal->findData("builtin")); vertical->setCurrentIndex(vertical->findData("builtin"));
-	QSpinBox *horizontalTime = time(horizontalLabel+" countdown duration"), *verticalTime = time(verticalLabel+" countdown duration");
-	check(horizontalTime && verticalTime, "both built-in graphic questions expose countdown duration");
-	horizontalTime->setValue(3);
-	check(verticalTime->value() == 3, "landscape countdown edit updates the paired portrait duration");
-	verticalTime->setValue(7);
-	check(horizontalTime->value() == 7, "portrait countdown edit updates the paired landscape duration");
+	QTimer::singleShot(0, [&] {
+		auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "new artwork source dialog opens");
+		auto *kind = setupField<QComboBox>(dialog, "New source type");
+		check(kind->count() == 1 && kind->currentData() == "browser_source", "new artwork permits only browser sources");
+		setupField<QLineEdit>(dialog, "New source name")->setText("Draft Lumia countdown");
+		setupField<QLineEdit>(dialog, "New source browser URL")->setText("https://overlays.lumiastream.com/audit/countdown");
+		dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+	});
+	setupField<QPushButton>(&sourcePage, horizontalLabel + " create new source")->click();
 	draft = setup.draft("UI Questions Trial");
-	const auto builtins = draft.value("newSources").toObject();
-	check(builtins.value("Starting/graphic/countdown/horizontal").toObject().value("minutes").toInt() == 7 &&
-		builtins.value("Starting/graphic/countdown/vertical").toObject().value("minutes").toInt() == 7,
-		"both generated graphic definitions carry the shared countdown duration");
+	check(horizontal->currentData().toString().startsWith("new:") && setup.problem(true).isEmpty() &&
+		draft.value("newSources").toObject().value(horizontal->currentData().toString().mid(4)).toObject().value("kind") == "browser_source",
+		"creating artwork inside the wizard produces a browser overlay draft");
 	horizontal->setCurrentIndex(horizontal->findData("url")); vertical->setCurrentIndex(vertical->findData("url"));
 	QLineEdit *horizontalUrl = input(horizontalLabel+" browser URL"), *verticalUrl = input(verticalLabel+" browser URL");
 	check(horizontalUrl && verticalUrl, "wizard provides a browser link field for each format");
-	horizontalUrl->setText("https://example.invalid/landscape"); verticalUrl->setText("https://example.invalid/portrait");
+	horizontalUrl->setText("https://overlays.lumiastream.com/audit/landscape"); verticalUrl->setText("https://overlays.lumiastream.com/audit/portrait");
 	check(setup.problem(true).isEmpty(), "separate valid browser URLs complete the artwork questions");
-	check(horizontalTime->isHidden(), "Lumia artwork does not offer an ineffective built-in timer setting");
+	bool nativeDurationVisible = false;
+	for (auto *widget : sourcePage.findChildren<QSpinBox *>())
+		if (widget->accessibleName().endsWith("countdown duration") && !widget->isHidden()) nativeDurationVisible = true;
+	check(!nativeDurationVisible, "Lumia artwork does not offer an ineffective native countdown duration setting");
 	horizontalUrl->setText("https://api.lumiastream.com/shared/download/example");
 	check(setup.problem(true).contains("template import link"), "wizard rejects a template share link with import instructions");
-	horizontalUrl->setText("https://example.invalid/landscape");
+	horizontalUrl->setText("https://overlays.lumiastream.com/audit/landscape");
 	setup.update({"Chat"}); setup.update({"Starting"});
 	for (auto *button : sourcePage.findChildren<QPushButton *>()) if (button->text() == "Next source") button->click();
 	for (auto *button : sourcePage.findChildren<QPushButton *>()) if (button->text() == "Previous source") button->click();
 	check(horizontal->currentData() == "url" && vertical->currentData() == "url" &&
-		horizontalUrl->text() == "https://example.invalid/landscape" && verticalUrl->text() == "https://example.invalid/portrait",
+		horizontalUrl->text() == "https://overlays.lumiastream.com/audit/landscape" && verticalUrl->text() == "https://overlays.lumiastream.com/audit/portrait",
 		"group and source back-navigation retains independent format answers");
 	draft = setup.draft("UI Questions Trial");
 	roles = PulseShow::rolesForLook(draft.value("stages").toArray().first().toObject(), "countdown");
 	const auto links = draft.value("newSources").toObject();
+	for (const auto &definition : links)
+		check(definition.toObject().value("kind") == "browser_source", "wizard artwork definitions always use browser overlays");
 	check(roles.value("graphic") == "new:Starting/graphic/countdown/horizontal" &&
 		roles.value("graphicPortrait") == "new:Starting/graphic/countdown/vertical" &&
-		links.value("Starting/graphic/countdown/horizontal").toObject().value("url") == "https://example.invalid/landscape" &&
-		links.value("Starting/graphic/countdown/vertical").toObject().value("url") == "https://example.invalid/portrait",
+		links.value("Starting/graphic/countdown/horizontal").toObject().value("url") == "https://overlays.lumiastream.com/audit/landscape" &&
+		links.value("Starting/graphic/countdown/vertical").toObject().value("url") == "https://overlays.lumiastream.com/audit/portrait",
 		"wizard emits independent new browser definitions and format roles after navigating back");
 	const auto welcome = PulseShow::rolesForLook(draft.value("stages").toArray().first().toObject(), "welcome");
-	check(welcome.value("graphic") != roles.value("graphic") && welcome.value("graphicPortrait") != roles.value("graphicPortrait"),
+	check(welcome.value("graphic").toString() == obs_source_get_uuid(square) && welcome.value("graphicPortrait").toString() == obs_source_get_uuid(unknown),
 		"changing Countdown artwork leaves Welcome's separate artwork intact");
 	auto *overlay = combo("Landscape overlay 1"), *scope = combo("Landscape overlay 1 visibility");
 	check(overlay && scope && scope->findData("setup-starting/countdown") >= 0, "overlay can target a single selected Look");
+	check(overlay->findData(obs_source_get_uuid(nativeTitle)) < 0 && overlay->findData(obs_source_get_uuid(arbitraryVideo)) < 0,
+		"shared overlay selectors exclude local native titles and non-browser inputs");
+	QTimer::singleShot(0, [&] {
+		auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "new shared overlay dialog opens");
+		auto *kind = setupField<QComboBox>(dialog, "New source type");
+		check(kind->count() == 1 && kind->currentData() == "browser_source", "new shared overlays permit only browser sources");
+		dialog->reject();
+	});
+	setupField<QPushButton>(&sourcePage, "Landscape overlay 1 create new source")->click();
 	overlay->setCurrentIndex(overlay->findData(obs_source_get_uuid(landscape)));
 	scope->setCurrentIndex(scope->findData("setup-starting/countdown"));
 	draft = setup.draft("Scoped Overlay Trial");
 	check(draft.value("overlays").toArray().first().toObject().value("looks").toArray() == QJsonArray{"setup-starting/countdown"},
 		"single-Look overlay excludes other Looks in the same stage");
+	auto *secondOverlay = combo("Landscape overlay 2"), *secondScope = combo("Landscape overlay 2 visibility");
+	secondOverlay->setCurrentIndex(secondOverlay->findData(obs_source_get_uuid(landscape)));
+	secondScope->setCurrentIndex(secondScope->findData("setup-starting/countdown"));
+	check(setup.problem(true).contains("already used in another shared layer"), "wizard rejects duplicate shared sources when their Look scopes overlap");
+	secondScope->setCurrentIndex(secondScope->findData("setup-starting/welcome"));
+	check(setup.problem(true).isEmpty(), "same shared source remains allowed in different slots for disjoint Looks");
+	secondOverlay->setCurrentIndex(secondOverlay->findData(""));
 	for (auto *box : lookPage.findChildren<QCheckBox *>()) if (box->text() == "Countdown") box->setChecked(false);
 	check(setup.problem(true).contains("Choose a selected Look"), "deselecting an overlay target prompts retargeting instead of silently dropping it");
 	overlay->setCurrentIndex(overlay->findData(""));
 	check(setup.problem(true).isEmpty(), "skipping an orphaned overlay clears the validation error");
+	obs_source_remove(nativeTitle);
+}
+
+static void setupQuestionFlowTests()
+{
+	QTemporaryDir files;
+	const QString imagePath = files.filePath("source.png"), editedPath = files.filePath("edited.png");
+	QImage image(8, 8, QImage::Format_ARGB32); image.fill(Qt::cyan);
+	check(image.save(imagePath) && image.save(editedPath), "local source dialog fixtures");
+	const QString stingerPath = files.filePath("transition.webm"); writeFile(stingerPath, "inert dialog fixture");
+	QWizard wizard; QWidget lookPage(&wizard), sourcePage(&wizard);
+	auto *lookLayout = new QVBoxLayout(&lookPage), *sourceLayout = new QVBoxLayout(&sourcePage);
+	FlexibleSetup setup(wizard, &lookPage, lookLayout, &sourcePage, sourceLayout, {}, {}, {});
+	setup.update({"Starting", "Chat", "Game", "Projects", "Celebration", "Intermission"});
+	const auto initial = setup.draft("Default Selection"); int selected = 0;
+	check(initial.value("newSources").toObject().isEmpty(), "default Looks do not generate Pulse Weaver native overlays");
+	for (auto *field : sourcePage.findChildren<QComboBox *>()) {
+		const QString label = field->accessibleName();
+		if (!label.endsWith("Landscape artwork") && !label.endsWith("Portrait artwork")) continue;
+		check(field->currentData().toString().isEmpty() && field->findData("builtin") < 0,
+			"every stage artwork question requires a choice and omits native overlay options");
+		field->setCurrentIndex(field->findData("url"));
+		setupField<QLineEdit>(&sourcePage, label + " browser URL")->setText("https://overlays.lumiastream.com/audit/wizard-artwork");
+	}
+	const auto longNames = setup.draft(QString(90, 'X')).value("newSources").toObject();
+	check(longNames.size() >= 2, "explicit browser artwork exercises generated source names for both formats");
+	QSet<QString> names;
+	for (const auto &value : longNames) {
+		const QString name = value.toObject().value("name").toString();
+		check(name.size() <= 120 && !names.contains(name), "long valid show names produce distinct valid source names"); names.insert(name);
+		check(value.toObject().value("kind") == "browser_source", "new wizard artwork remains browser based for every selected Look");
+	}
+	for (const auto &value : initial.value("stages").toArray()) {
+		const auto stage = value.toObject(); selected += stage.value("looks").toArray().size();
+		check(!stage.value("roles").toObject().contains("feedC"), "initial selections do not require an unrequested third feed");
+	}
+	check(selected == 7, "defaults select one functional Look per group plus Ending rather than all alternate Looks");
+	check(!setup.problem(true).isEmpty(), "an unassigned required feed prevents completion");
+	auto *jump = setupField<QComboBox>(&sourcePage, "Source to assign");
+	const int gameQuestion = jump->findText("Game · Feed B"); check(gameQuestion >= 0, "source navigator names each stage assignment");
+	jump->setCurrentIndex(gameQuestion); setup.update({"Chat", "Game"});
+	check(jump->currentText() == "Game · Feed B", "changing groups preserves the current question by identity");
+	auto *create = setupField<QPushButton>(&sourcePage, "Chat · Feed A create new source");
+	QTimer::singleShot(0, [&] {
+		auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "new source dialog opens inside the wizard");
+		auto *kind = setupField<QComboBox>(dialog, "New source type");
+		check(kind->findData("image_source") >= 0 && kind->findData("dshow_input") >= 0,
+			"ordinary feeds retain media and camera creation alongside Lumia overlays");
+		kind->setCurrentIndex(kind->findData("image_source"));
+		setupField<QLineEdit>(dialog, "New source name")->setText("Wizard draft image");
+		setupField<QLineEdit>(dialog, "New source file")->setText(imagePath);
+		dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+	});
+	create->click();
+	auto *chatFeed = setupField<QComboBox>(&sourcePage, "Chat · Feed A"), *gameFeed = setupField<QComboBox>(&sourcePage, "Game · Feed B");
+	const QString sourceKey = chatFeed->currentData().toString();
+	check(sourceKey.startsWith("new:") && gameFeed->findData(sourceKey) >= 0, "new source is reusable across stage groups before creation");
+	check(setupField<QComboBox>(&sourcePage, "Starting · Countdown · Landscape artwork")->findData(sourceKey) < 0 &&
+		setupField<QComboBox>(&sourcePage, "Landscape overlay 1")->findData(sourceKey) < 0,
+		"drafted image feeds do not become selectable artwork or shared Lumia layers");
+	OBSSourceAutoRelease uncreated = obs_get_source_by_name("Wizard draft image"); check(!uncreated, "drafting a source does not create or activate a native input");
+	gameFeed->setCurrentIndex(gameFeed->findData(sourceKey));
+	auto draft = setup.draft("New Source Trial");
+	check(draft.value("newSources").toObject().size() == 1 &&
+		draft.value("stages").toArray()[0].toObject().value("roles").toObject().value("feedA") == sourceKey &&
+		draft.value("stages").toArray()[1].toObject().value("roles").toObject().value("feedB") == sourceKey,
+		"two stages reuse one staged source definition while keeping independent roles");
+	QTimer::singleShot(0, [&] {
+		auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "source edit dialog opens");
+		setupField<QLineEdit>(dialog, "New source name")->setText("Edited wizard draft image");
+		setupField<QLineEdit>(dialog, "New source file")->setText(editedPath);
+		dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+	});
+	setupField<QPushButton>(&sourcePage, "Chat · Feed A edit new source")->click();
+	draft = setup.draft("New Source Trial");
+	check(draft.value("newSources").toObject().value(sourceKey.mid(4)).toObject().value("target") == editedPath &&
+		gameFeed->currentText().contains("Edited wizard draft image"), "editing a shared staged source updates all selectors without duplicating it");
+	QTimer::singleShot(0, [&] { auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "cancel source dialog opens"); dialog->reject(); });
+	create->click(); check(setup.draft("New Source Trial").value("newSources").toObject().size() == 1, "cancelled source addition leaves the plan unchanged");
+	check(setup.problem(true).isEmpty(), "new image sources satisfy required stage feeds");
+
+	auto *addStinger = setupField<QPushButton>(&lookPage, "Chat horizontal add stinger");
+	QTimer::singleShot(0, [&] {
+		auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "add stinger dialog opens inside the wizard");
+		setupField<QLineEdit>(dialog, "New stinger name")->setText("Wizard staged stinger");
+		setupField<QLineEdit>(dialog, "New stinger video file")->setText(stingerPath);
+		setupField<QSpinBox>(dialog, "New stinger cut point")->setValue(725);
+		auto *save = dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Save); check(save->isEnabled(), "readable stinger and cut point enable acceptance"); save->click();
+	});
+	addStinger->click(); draft = setup.draft("Stinger Trial");
+	auto *chatTransition = setupField<QComboBox>(&lookPage, "Chat horizontal stage transition");
+	auto *portraitTransition = setupField<QComboBox>(&lookPage, "Chat vertical stage transition");
+	auto *gameTransition = setupField<QComboBox>(&lookPage, "Game horizontal stage transition");
+	const QString transitionKey = chatTransition->currentData().toString();
+	check(transitionKey.startsWith("new-stinger:") && portraitTransition->currentData().toString().isEmpty() &&
+		draft.value("newStingers").toObject().size() == 1, "new stinger is assigned only to the chosen stage and format");
+	check(draft.value("newStingers").toObject().value(transitionKey.mid(12)).toObject().value("transitionPointMs") == 725,
+		"stinger cut point is retained in the build draft");
+	OBSSourceAutoRelease transition = obs_get_source_by_name("Wizard staged stinger"); check(!transition, "stinger draft creates no live transition");
+	gameTransition->setCurrentIndex(gameTransition->findData(transitionKey)); chatTransition->setCurrentIndex(0);
+	check(setup.draft("Stinger Trial").value("newStingers").toObject().size() == 1, "other stages can reuse a staged stinger");
+	gameTransition->setCurrentIndex(0);
+	check(setup.draft("Stinger Trial").value("newStingers").toObject().isEmpty(), "unused staged stinger is excluded from build request");
+	QTimer::singleShot(0, [&] { auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "cancel stinger dialog opens"); dialog->reject(); });
+	addStinger->click(); check(setup.draft("Stinger Trial").value("newStingers").toObject().isEmpty(), "cancelling stinger addition leaves transitions unchanged");
 }
 
 static void themedBuilderTests(const obs_video_info &video)
@@ -843,18 +1194,10 @@ static void themedBuilderTests(const obs_video_info &video)
 	check(readFile(stagePath)==before, "validation failures preserve existing stages");
 	// All source types are inert test fixtures, including browser sources. No URL
 	// is fetched and no device is opened by these catalogue/transaction checks.
-	for (const char *kind : {"dshow_input", "game_capture", "monitor_capture", "browser_source"}) {
+	for (const char *kind : {"dshow_input", "game_capture", "monitor_capture", "image_source", "ffmpeg_source"}) {
 		obs_source_info type{}; type.id=kind; type.type=OBS_SOURCE_TYPE_INPUT; type.output_flags=OBS_SOURCE_VIDEO;
 		type.get_name=[](void *){return "Inert builder fixture";}; type.get_width=[](void *){return 640u;}; type.get_height=[](void *){return 480u;};
 		type.create=[](obs_data_t *,obs_source_t *)->void *{return new int(1);}; type.destroy=[](void *p){delete static_cast<int *>(p);};
-		if (std::strcmp(kind, "browser_source") == 0) {
-			type.create=[](obs_data_t *settings,obs_source_t *)->void *{
-				return new QSize(int(obs_data_get_int(settings,"width")),int(obs_data_get_int(settings,"height")));
-			};
-			type.destroy=[](void *p){delete static_cast<QSize *>(p);};
-			type.get_width=[](void *p){return uint32_t(static_cast<QSize *>(p)->width());};
-			type.get_height=[](void *p){return uint32_t(static_cast<QSize *>(p)->height());};
-		}
 		obs_register_source(&type);
 	}
 	for (const char *kind : {"color_filter", "mask_filter"}) {
@@ -864,6 +1207,57 @@ static void themedBuilderTests(const obs_video_info &video)
 	OBSSourceAutoRelease camera=obs_source_create("dshow_input","Builder camera fixture",nullptr,nullptr);
 	OBSSourceAutoRelease screen=obs_source_create("monitor_capture","Builder screen fixture",nullptr,nullptr);
 	OBSSourceAutoRelease gameSource=obs_source_create("game_capture","Builder game fixture",nullptr,nullptr);
+	QTemporaryDir localFiles;
+	const QString imagePath = localFiles.filePath("image.png"), mediaPath = localFiles.filePath("media.webm");
+	QImage picture(8, 8, QImage::Format_ARGB32); picture.fill(Qt::cyan); check(picture.save(imagePath), "builder image fixture");
+	writeFile(mediaPath, "inert media source fixture");
+	QJsonObject mediaRequest{{"schema", 2}, {"overlayProvider", "lumia"}, {"name", "New Media Trial"}, {"stages", QJsonArray{
+		QJsonObject{{"theme", "setup-chat"}, {"looks", QJsonArray{"talk"}}, {"roles", QJsonObject{{"feedA", "new:still"}}}},
+		QJsonObject{{"theme", "setup-game"}, {"looks", QJsonArray{"play"}}, {"roles", QJsonObject{{"feedA", "new:still"}, {"feedB", "new:video"}}}}}},
+		{"newSources", QJsonObject{{"still", QJsonObject{{"name", "Created still fixture"}, {"kind", "image_source"}, {"target", imagePath}}},
+			{"video", QJsonObject{{"name", "Created media fixture"}, {"kind", "ffmpeg_source"}, {"target", mediaPath}, {"loop", true}}}}}};
+	check(engine.createGuidedShow(mediaRequest).value("ok").toBool(), "new image and video sources can be created inside the show transaction");
+	OBSSourceAutoRelease newImage = obs_get_source_by_name("Created still fixture"), newMedia = obs_get_source_by_name("Created media fixture");
+	check(newImage && newMedia, "both staged media inputs are created once");
+	OBSDataAutoRelease imageSettings = obs_source_get_settings(newImage), mediaSettings = obs_source_get_settings(newMedia);
+	check(QString::fromUtf8(obs_data_get_string(imageSettings, "file")) == imagePath &&
+		QString::fromUtf8(obs_data_get_string(mediaSettings, "local_file")) == mediaPath && obs_data_get_bool(mediaSettings, "looping"),
+		"new media inputs preserve selected local files and loop choice");
+	int imageUses = 0;
+	for (const auto &value : PulseMotionEngineTestAccess::actions(engine)) {
+		const auto action = value.toObject(); if (!action.value("stage").toString().startsWith("New Media Trial · ")) continue;
+		for (const auto &entry : action.value("items").toArray()) if (entry.toObject().value("sourceUuid").toString() == obs_source_get_uuid(newImage)) ++imageUses;
+	}
+	check(imageUses == 4, "a new image definition is reused by two stages and both canvases without duplicate inputs");
+	const auto beforeNewSourceFailure = readFile(stagePath), beforeNewSourceActions = QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson();
+	QJsonObject badMedia = mediaRequest; badMedia.insert("name", "Missing Media Trial");
+	badMedia.insert("newSources", QJsonObject{{"still", QJsonObject{{"name", "Missing local still"}, {"kind", "image_source"}, {"target", localFiles.filePath("absent.png")}}}});
+	check(!engine.createGuidedShow(badMedia).value("ok").toBool() && readFile(stagePath) == beforeNewSourceFailure &&
+		QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson() == beforeNewSourceActions,
+		"missing staged image rejects the show without altering either catalogue");
+	QJsonObject stingerStage{{"theme", "setup-chat"}, {"looks", QJsonArray{"talk"}}, {"roles", QJsonObject{{"feedA", obs_source_get_uuid(camera)}}},
+		{"transitions", QJsonObject{{"horizontalTransition", "new-stinger:transition"}}}};
+	QJsonObject stingerSpec{{"name", "New stinger fixture"}, {"path", mediaPath}, {"transitionPointMs", 725}};
+	QJsonObject stingerRequest{{"schema", 2}, {"name", "Stinger Failure Trial"}, {"stages", QJsonArray{stingerStage}},
+		{"newStingers", QJsonObject{{"transition", stingerSpec}}}};
+	const auto graphicsBefore = QDir(directory.filePath("plugin_config/pulse-weaver-core/show-graphics")).entryList(QDir::Files);
+	for (const QString &failure : {QString("file"), QString("timing"), QString("frontend")}) {
+		auto spec = stingerSpec; if (failure == "file") spec.insert("path", localFiles.filePath("absent.webm"));
+		if (failure == "timing") spec.insert("transitionPointMs", -1);
+		stingerRequest.insert("newStingers", QJsonObject{{"transition", spec}});
+		const auto failed = engine.createGuidedShow(stingerRequest);
+		check(!failed.value("ok").toBool() && readFile(stagePath) == beforeNewSourceFailure &&
+			QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson() == beforeNewSourceActions,
+			"invalid stinger or unavailable frontend leaves both catalogues unchanged");
+		check(QDir(directory.filePath("plugin_config/pulse-weaver-core/show-graphics")).entryList(QDir::Files) == graphicsBefore,
+			"failed stinger creation rolls back generated graphic files");
+	}
+	OBSSourceAutoRelease failedStingerScene = obs_get_source_by_name("Stinger Failure Trial · Chat");
+	check(!failedStingerScene, "failed stinger creation leaves no partial scene");
+	for (const char *name : {"New Media Trial · Chat", "New Media Trial · Chat · Portrait", "New Media Trial · Game", "New Media Trial · Game · Portrait"}) {
+		OBSSourceAutoRelease source = obs_get_source_by_name(name); if (!source) source = obs_canvas_get_source_by_name(canvas, name); if (source) obs_source_remove(source);
+	}
+	obs_source_remove(newImage); obs_source_remove(newMedia);
 	QJsonArray allStages;int totalLooks=0;
 	for(const auto &theme:PulseShow::catalogue()) {QJsonArray ids;for(const auto &look:theme.looks){ids.append(look.id);++totalLooks;}
 		QJsonObject roles{{"presenter",obs_source_get_uuid(camera)},{"activity",obs_source_get_uuid(camera)},
@@ -929,7 +1323,25 @@ static void themedBuilderTests(const obs_video_info &video)
 		{"roles",QJsonObject{{"presenter",obs_source_get_uuid(camera)},{"graphic","new:timer"}}}};
 	QJsonObject countdownChoices{{"schema",2},{"name","Shared Countdown"},{"stages",QJsonArray{countdownStage}},
 		{"newSources",QJsonObject{{"timer",QJsonObject{{"name","Shared countdown fixture"},{"kind","builtin_graphic"},{"text","Starting soon"},{"minutes",5}}}}}};
-	check(engine.createGuidedShow(countdownChoices).value("ok").toBool(),"shared countdown show creates");
+	QJsonObject forbiddenWizard = countdownChoices;
+	forbiddenWizard.insert("overlayProvider", "lumia"); forbiddenWizard.insert("name", "Forbidden Native Wizard");
+	const auto beforeNativeWizard = readFile(stagePath);
+	const auto beforeNativeWizardActions = PulseMotionEngineTestAccess::actions(engine);
+	const auto filesBeforeNativeWizard = QDir(directory.filePath("plugin_config/pulse-weaver-core/show-graphics")).entryList(QDir::Files);
+	const auto nativeWizardResult = engine.createGuidedShow(forbiddenWizard);
+	check(!nativeWizardResult.value("ok").toBool() && nativeWizardResult.value("message").toString().contains("Lumia", Qt::CaseInsensitive) &&
+		readFile(stagePath) == beforeNativeWizard && PulseMotionEngineTestAccess::actions(engine) == beforeNativeWizardActions &&
+		QDir(directory.filePath("plugin_config/pulse-weaver-core/show-graphics")).entryList(QDir::Files) == filesBeforeNativeWizard,
+		"Lumia wizard rejects native graphic definitions before generating files or altering either catalogue");
+	OBSSourceAutoRelease forbiddenScene = obs_get_source_by_name("Forbidden Native Wizard · Starting");
+	check(!forbiddenScene, "native artwork rejection leaves no partial wizard scene");
+	forbiddenWizard.insert("name", "Unused Native Wizard");
+	forbiddenWizard.insert("stages", QJsonArray{QJsonObject{{"theme", "setup-chat"}, {"looks", QJsonArray{"talk"}},
+		{"roles", QJsonObject{{"feedA", obs_source_get_uuid(camera)}}}}});
+	check(!engine.createGuidedShow(forbiddenWizard).value("ok").toBool() && readFile(stagePath) == beforeNativeWizard &&
+		PulseMotionEngineTestAccess::actions(engine) == beforeNativeWizardActions,
+		"even an unused native graphic definition is rejected from a Lumia wizard request");
+	check(engine.createGuidedShow(countdownChoices).value("ok").toBool(),"unmarked legacy API retains shared countdown compatibility");
 	QSet<QString> graphicSources,treatedCameras;
 	for(const auto &value:PulseMotionEngineTestAccess::actions(engine)){
 		const auto action=value.toObject();if(action.value("stage").toString()!="Shared Countdown · Starting")continue;
@@ -957,9 +1369,9 @@ static void themedBuilderTests(const obs_video_info &video)
 	}
 	QJsonObject browserStage{{"theme","starting"},{"looks",QJsonArray{"countdown","introduction"}},
 		{"roles",QJsonObject{{"graphic","new:browser"}}}};
-	QJsonObject browserChoices{{"schema",2},{"name","Canvas Browser Trial"},{"stages",QJsonArray{browserStage}},
+	QJsonObject browserChoices{{"schema",2},{"overlayProvider","lumia"},{"name","Canvas Browser Trial"},{"stages",QJsonArray{browserStage}},
 		{"newSources",QJsonObject{{"browser",QJsonObject{{"name","Canvas browser fixture"},{"kind","browser_source"},
-			{"url","https://example.invalid/offline-audit"}}}}}};
+			{"url","https://overlays.lumiastream.com/audit/new-browser"}}}}}};
 	check(engine.createGuidedShow(browserChoices).value("ok").toBool(),
 		"one browser definition creates both canvas variants without network activity");
 	QHash<QString,QString> browserSources, browserItems;
@@ -994,9 +1406,11 @@ static void themedBuilderTests(const obs_video_info &video)
 	OBSDataAutoRelease landscapeBrowserSettings = obs_data_create(), portraitBrowserSettings = obs_data_create();
 	obs_data_set_int(landscapeBrowserSettings,"width",640); obs_data_set_int(landscapeBrowserSettings,"height",480);
 	obs_data_set_int(portraitBrowserSettings,"width",480); obs_data_set_int(portraitBrowserSettings,"height",640);
+	obs_data_set_string(landscapeBrowserSettings,"url","https://overlays.lumiastream.com/audit/existing-landscape");
+	obs_data_set_string(portraitBrowserSettings,"url","https://overlays.lumiastream.com/audit/existing-portrait");
 	OBSSourceAutoRelease landscapeGraphic = obs_source_create("browser_source","Existing landscape graphic",landscapeBrowserSettings,nullptr);
 	OBSSourceAutoRelease portraitGraphic = obs_source_create("browser_source","Existing portrait graphic",portraitBrowserSettings,nullptr);
-	QJsonObject separateGraphics{{"schema",2},{"name","Separate Graphics Trial"},{"stages",QJsonArray{QJsonObject{
+	QJsonObject separateGraphics{{"schema",2},{"overlayProvider","lumia"},{"name","Separate Graphics Trial"},{"stages",QJsonArray{QJsonObject{
 		{"theme","starting"},{"looks",QJsonArray{"countdown"}},
 		{"roles",QJsonObject{{"graphic",obs_source_get_uuid(landscapeGraphic)},{"graphicPortrait",obs_source_get_uuid(portraitGraphic)}}}}}}};
 	check(engine.createGuidedShow(separateGraphics).value("ok").toBool(),
@@ -1008,10 +1422,35 @@ static void themedBuilderTests(const obs_video_info &video)
 		"explicit portrait graphic is selected only on the portrait canvas");
 	const QByteArray beforeGraphicFailure = readFile(stagePath);
 	const QJsonArray beforeGraphicActions = PulseMotionEngineTestAccess::actions(engine);
-	auto rejectedGraphic = [&](const QJsonObject &request, const char *message) {
-		check(!engine.createGuidedShow(request).value("ok").toBool() && readFile(stagePath) == beforeGraphicFailure &&
+	auto rejectedGraphic = [&](const QJsonObject &request, const char *message, bool lumiaPolicy = false) {
+		const auto result = engine.createGuidedShow(request);
+		check(!result.value("ok").toBool() && (!lumiaPolicy || result.value("message").toString().contains("Lumia", Qt::CaseInsensitive)) &&
+			readFile(stagePath) == beforeGraphicFailure &&
 			PulseMotionEngineTestAccess::actions(engine) == beforeGraphicActions,message);
 	};
+	QString nativeLandscape;
+	for (const auto &id : graphicSources) {
+		OBSSourceAutoRelease source = obs_get_source_by_uuid(id.toUtf8().constData());
+		if (obs_source_get_width(source) > obs_source_get_height(source)) nativeLandscape = id;
+	}
+	check(!nativeLandscape.isEmpty(), "legacy native-title fixture matches landscape so rejection exercises overlay policy");
+	for (const QString &kind : {QString("image_source"), QString("existing-camera"), QString("existing-native")}) {
+		QJsonObject forbidden = separateGraphics; forbidden.insert("name", "Forbidden Wizard " + kind);
+		auto forbiddenStage = forbidden.value("stages").toArray().first().toObject();
+		auto forbiddenRoles = forbiddenStage.value("roles").toObject();
+		QString forbiddenId = kind == "existing-camera" ? QString::fromUtf8(obs_source_get_uuid(camera)) :
+			kind == "existing-native" ? nativeLandscape : "new:image";
+		if (kind == "image_source") forbidden.insert("newSources", QJsonObject{{"image", QJsonObject{
+			{"name", "Forbidden still artwork"}, {"kind", "image_source"}, {"target", imagePath}}}});
+		forbiddenRoles.insert("graphic", forbiddenId); forbiddenStage.insert("roles", forbiddenRoles);
+		forbidden.insert("stages", QJsonArray{forbiddenStage});
+		rejectedGraphic(forbidden, "Lumia wizard artwork rejects new images, existing cameras and local native titles without mutations", true);
+		forbiddenStage.insert("roles", separateGraphics.value("stages").toArray().first().toObject().value("roles"));
+		forbidden.insert("stages", QJsonArray{forbiddenStage});
+		forbidden.insert("overlays", QJsonArray{QJsonObject{{"canvas", "horizontal"}, {"order", 1}, {"source", forbiddenId},
+			{"looks", QJsonArray{"starting/countdown"}}}});
+		rejectedGraphic(forbidden, "Lumia shared layers enforce the same browser-only policy before mutations", true);
+	}
 	QJsonObject invalidGraphic = separateGraphics;
 	invalidGraphic.insert("name","Missing Portrait Graphic Trial");
 	QJsonObject invalidStage = invalidGraphic.value("stages").toArray().first().toObject();
@@ -1039,9 +1478,13 @@ static void themedBuilderTests(const obs_video_info &video)
 	}
 	OBSDataAutoRelease squareBrowserSettings = obs_data_create();
 	obs_data_set_int(squareBrowserSettings,"width",480); obs_data_set_int(squareBrowserSettings,"height",480);
+	obs_data_set_string(squareBrowserSettings,"url","https://overlays.lumiastream.com/audit/existing-square");
 	OBSSourceAutoRelease squareGraphic = obs_source_create("browser_source","Square graphic fixture",squareBrowserSettings,nullptr);
-	OBSSourceAutoRelease unknownGraphic = obs_source_create("browser_source","Unknown-size graphic fixture",nullptr,nullptr);
+	OBSDataAutoRelease unknownBrowserSettings = obs_data_create();
+	obs_data_set_string(unknownBrowserSettings,"url","https://overlays.lumiastream.com/audit/existing-unknown");
+	OBSSourceAutoRelease unknownGraphic = obs_source_create("browser_source","Unknown-size graphic fixture",unknownBrowserSettings,nullptr);
 	setupGraphicQuestionTests(landscapeGraphic,portraitGraphic,squareGraphic,unknownGraphic);
+	setupQuestionFlowTests();
 	QJsonObject perLookStage{{"theme", "setup-intermission"}, {"looks", QJsonArray{"brb", "ending"}},
 		{"lookArtwork", QJsonObject{
 			{"brb", QJsonObject{{"graphic", obs_source_get_uuid(landscapeGraphic)}, {"graphicPortrait", obs_source_get_uuid(portraitGraphic)}}},
@@ -1061,6 +1504,48 @@ static void themedBuilderTests(const obs_video_info &video)
 			check(item.value("sourceUuid").toString() == obs_source_get_uuid(expected), "each Look displays its own artwork on the correct canvas");
 		}
 		check(visible == 2 && hidden == 2, "each Look hides the other Look's artwork in both directions");
+	}
+	QJsonObject duplicateSlots = perLookRequest; duplicateSlots.insert("name", "Overlapping Shared Slots");
+	QJsonArray splitLayers{
+		QJsonObject{{"canvas", "horizontal"}, {"order", 1}, {"source", obs_source_get_uuid(alerts)}, {"looks", QJsonArray{"setup-intermission/brb"}}},
+		QJsonObject{{"canvas", "horizontal"}, {"order", 2}, {"source", obs_source_get_uuid(alerts)}, {"looks", QJsonArray{"setup-intermission/brb"}}}};
+	duplicateSlots.insert("overlays", splitLayers);
+	const auto beforeSlots = readFile(stagePath), beforeSlotActions = QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson();
+	const auto duplicateSlotResult = engine.createGuidedShow(duplicateSlots);
+	check(!duplicateSlotResult.value("ok").toBool() && duplicateSlotResult.value("message").toString().contains("more than one shared layer") &&
+		readFile(stagePath) == beforeSlots && QJsonDocument(PulseMotionEngineTestAccess::actions(engine)).toJson() == beforeSlotActions,
+		"duplicate shared source with overlapping scope is rejected before show creation");
+	auto endingLayer = splitLayers[1].toObject(); endingLayer.insert("looks", QJsonArray{"setup-intermission/ending"}); splitLayers[1] = endingLayer;
+	splitLayers.append(QJsonObject{{"canvas", "vertical"}, {"order", 1}, {"source", obs_source_get_uuid(alerts)},
+		{"looks", QJsonArray{"setup-intermission/brb", "setup-intermission/ending"}}});
+	duplicateSlots.insert("name", "Disjoint Shared Slots"); duplicateSlots.insert("overlays", splitLayers);
+	check(engine.createGuidedShow(duplicateSlots).value("ok").toBool(), "same shared source is allowed for disjoint Looks and the other canvas");
+	for (const auto &value : PulseMotionEngineTestAccess::actions(engine)) {
+		const auto action = value.toObject(); if (action.value("stage") != "Disjoint Shared Slots · Intermission") continue;
+		int shown = 0;
+		for (const auto &entry : action.value("items").toArray()) if (entry.toObject().value("sourceUuid").toString() == obs_source_get_uuid(alerts) &&
+			entry.toObject().value("transform").toObject().value("visible").toBool()) ++shown;
+		check(shown == 2, "disjoint shared slots render the source once per canvas in each Look");
+	}
+	for (const char *name : {"Disjoint Shared Slots · Intermission", "Disjoint Shared Slots · Intermission · Portrait"}) {
+		OBSSourceAutoRelease source = obs_get_source_by_name(name); if (!source) source = obs_canvas_get_source_by_name(canvas, name); if (source) obs_source_remove(source);
+	}
+	QJsonObject fullCanvasStage{{"theme", "setup-starting"}, {"looks", QJsonArray{"ready"}},
+		{"roles", QJsonObject{{"feedA", obs_source_get_uuid(camera)}}}, {"lookArtwork", QJsonObject{{"ready", QJsonObject{
+			{"graphic", obs_source_get_uuid(landscapeGraphic)}, {"graphicPortrait", obs_source_get_uuid(portraitGraphic)},
+			{"graphicFullCanvas", true}, {"graphicPortraitFullCanvas", false}}}}}};
+	check(engine.createGuidedShow({{"schema", 2}, {"name", "Artwork Placement Trial"}, {"stages", QJsonArray{fullCanvasStage}}}).value("ok").toBool(),
+		"a Look can independently use full-canvas artwork or a layout panel in each format");
+	for (const auto &entry : PulseMotionEngineTestAccess::actions(engine).last().toObject().value("items").toArray()) {
+		const auto item = entry.toObject(), transform = item.value("transform").toObject(); if (!item.value("graphic").toBool()) continue;
+		const bool vertical = item.value("container").toString().endsWith("Portrait");
+		check(std::abs(transform.value("boundsWidth").toDouble() - (vertical ? 480 : 640)) < .01 &&
+			std::abs(transform.value("boundsHeight").toDouble() - (vertical ? 640 * .17 : 480)) <= .25 &&
+			std::abs(transform.value("positionY").toDouble() - (vertical ? 640 * .8 : 0)) <= .25,
+			"full-canvas imported READY artwork is not squeezed into the footer while explicit panel artwork retains its layout");
+	}
+	for (const char *name : {"Artwork Placement Trial · Starting", "Artwork Placement Trial · Starting · Portrait"}) {
+		OBSSourceAutoRelease source = obs_get_source_by_name(name); if (!source) source = obs_canvas_get_source_by_name(canvas, name); if (source) obs_source_remove(source);
 	}
 	const auto beforeArtworkFailure = PulseMotionEngineTestAccess::actions(engine);
 	const auto beforeArtworkStages = readFile(stagePath);
@@ -1215,6 +1700,8 @@ int main(int argc, char **argv)
 	video.base_height = video.output_height = 480;
 	video.output_format = VIDEO_FORMAT_RGBA;
 	check(obs_reset_video(&video) == OBS_VIDEO_SUCCESS, "isolated graphics startup");
+	registerInertBrowser();
+	wizardOverlayPolicyTests();
 	std::fprintf(stderr, "Motion audit: storage preservation\n"); storageTests();
 	std::fprintf(stderr, "Motion audit: scene isolation\n"); sceneTests(); obs_wait_for_destroy_queue();
 	std::fprintf(stderr, "Motion audit: reference builder\n"); referenceBuilderTests(video); obs_wait_for_destroy_queue();

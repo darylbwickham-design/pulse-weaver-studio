@@ -1536,6 +1536,18 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 	}
 	const QJsonArray requested = choices.value("stages").toArray(), overlays = choices.value("overlays").toArray();
 	const QJsonObject definitions = choices.value("newSources").toObject();
+	const bool lumiaOverlays = choices.value("overlayProvider").toString() == "lumia";
+	if (lumiaOverlays) {
+		for (const auto &entry : definitions) {
+			const QJsonObject definition = entry.toObject();
+			const QString kind = definition.value("kind").toString();
+			if (kind == "builtin_graphic" ||
+			    (kind == "browser_source" && pulseIsNativeOverlayUrl(definition.value("url").toString())))
+				return error("Build my show uses Lumia overlays and countdowns. Choose a Lumia browser source instead of a native Pulse Weaver overlay.");
+		}
+	}
+	const QJsonObject newStingers = choices.value("newStingers").toObject();
+	QSet<QString> usedStingers, stingerNames;
 	const QString transition = choices.value("transition").toString("fade");
 	if (transition != "fade" && transition != "cut") {
 		return error("Choose Fade or Cut between Stages.");
@@ -1545,15 +1557,29 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 	obs_frontend_get_transitions(&transitionSources);
 	for (size_t index = 0; index < transitionSources.sources.num; ++index) {
 		auto *source = transitionSources.sources.array[index];
-		if (source && QString::fromUtf8(obs_source_get_id(source)) == "obs_stinger_transition")
-			availableTransitions.insert("stinger:" + QString::fromUtf8(obs_source_get_name(source)));
+		if (source) {
+			stingerNames.insert(QString::fromUtf8(obs_source_get_name(source)));
+			if (QString::fromUtf8(obs_source_get_id(source)) == "obs_stinger_transition")
+				availableTransitions.insert("stinger:" + QString::fromUtf8(obs_source_get_name(source)));
+		}
 	}
 	obs_frontend_source_list_free(&transitionSources);
 	for (const auto &entry : requested) {
 		const auto policy = entry.toObject().value("transitions").toObject();
 		for (const QString &route : {QString("horizontal"), QString("vertical")}) {
+			const QString selection = policy.value(route + "Transition").toString();
+			if (selection.startsWith("new-stinger:") && !usedStingers.contains(selection.mid(12))) {
+				const QString id = selection.mid(12); const auto spec = newStingers.value(id).toObject();
+				const QString name = spec.value("name").toString().trimmed();
+				const QFileInfo file(spec.value("path").toString()); const auto point = spec.value("transitionPointMs");
+				if (name.isEmpty() || name.size() > 90 || stingerNames.contains(name)) return error("Give each new stinger a unique name of 1–90 characters.");
+				if (!file.isFile() || !file.isReadable()) return error("Choose an available video file for stinger “" + name + "”.");
+				if (!point.isDouble() || point.toDouble() != point.toInt() || point.toInt() < 0 || point.toInt() > 120000)
+					return error("Set the stinger cut point between 0 and 120,000 ms.");
+				stingerNames.insert(name); usedStingers.insert(id); availableTransitions.insert(selection);
+			}
 			if (policy.contains(route + "Transition") && !availableTransitions.contains(policy.value(route + "Transition").toString()))
-				return error("Choose an available stage transition. Add the stinger in Studio before selecting it.");
+				return error("Choose an available stage transition, or use Add stinger on page 3 to add a video.");
 			if (policy.contains(route + "DurationMs")) {
 				const auto time = policy.value(route + "DurationMs");
 				if (!time.isDouble() || time.toDouble() < 0 || time.toDouble() > 3000 || time.toDouble() != time.toInt())
@@ -1561,12 +1587,13 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			}
 		}
 	}
-	auto withTransitions = [](QJsonObject stage, const QJsonObject &choices) {
+	QMap<QString, QString> resolvedStingers;
+	auto withTransitions = [&](QJsonObject stage, const QJsonObject &choices) {
 		const auto policy = choices.value("transitions").toObject();
 		for (const QString &route : {QString("horizontal"), QString("vertical")}) {
 			const QString key = route + "Transition";
 			if (!policy.contains(key)) continue;
-			const QString choice = policy.value(key).toString(); stage.insert(key, choice);
+			const QString choice = resolvedStingers.value(policy.value(key).toString(), policy.value(key).toString()); stage.insert(key, choice);
 			stage.insert(route + "DurationMs", choice == "fade" ? policy.value(route + "DurationMs").toInt(500) : 0);
 		}
 		return stage;
@@ -1611,6 +1638,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 	};
 	QString validationError;
 	auto validateSource = [&](const QString &id, const QString &role, bool required, const QString &route = QString()) {
+		const bool lumiaRole = lumiaOverlays && (role == "graphic" || role == "chat" || role == "overlay");
 		if (id.isEmpty()) {
 			if (required) {
 				validationError = "Choose " + (role == "graphic" && !route.isEmpty() ?
@@ -1624,12 +1652,17 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			const QJsonObject definition = definitions.value(key).toObject();
 			const QString name = definition.value("name").toString().trimmed();
 			const QString kind = definition.value("kind").toString();
+			if (lumiaRole && (kind != "browser_source" ||
+			    !pulseWizardOverlayUrlAllowed(definition.value("url").toString()))) {
+				validationError = "Choose a Lumia browser-source link for " + PulseShow::roleName(role) + ".";
+				return false;
+			}
 			if (name.isEmpty() || name.size() > 120) {
 				validationError = "Complete the new source name for " + role + ".";
 				return false;
 			}
 			const QSet<QString> allowed{"dshow_input",  "monitor_capture", "window_capture",
-						    "game_capture", "browser_source",  "builtin_graphic"};
+						    "game_capture", "browser_source", "builtin_graphic", "ffmpeg_source", "image_source"};
 			if (!allowed.contains(kind) ||
 			    ((role == "presenter" || role == "activity" || role == "detail") && kind != "dshow_input" &&
 			     kind != "window_capture") ||
@@ -1642,6 +1675,13 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				const QString linkProblem = PulseShow::browserLinkProblem(definition.value("url").toString());
 				if (!linkProblem.isEmpty()) {
 					validationError = name + ": " + linkProblem;
+					return false;
+				}
+			}
+			if (kind == "ffmpeg_source" || kind == "image_source") {
+				const QFileInfo file(definition.value("target").toString());
+				if (!file.isFile() || !file.isReadable()) {
+					validationError = "Choose an available local file for " + name + ".";
 					return false;
 				}
 			}
@@ -1666,6 +1706,12 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			return true;
 		}
 		OBSSourceAutoRelease source = obs_get_source_by_uuid(id.toUtf8().constData());
+		if ((lumiaOverlays && pulseIsNativeOverlaySource(source)) ||
+		    (lumiaRole && !pulseWizardOverlaySourceAllowed(source))) {
+			validationError = "Choose a Lumia browser source for " + PulseShow::roleName(role) +
+				". Artwork and alert layers use Lumia overlays; native Pulse Weaver overlays are excluded.";
+			return false;
+		}
 		if (!compatible(source, role)) {
 			validationError = "The selected " + PulseShow::roleName(role) +
 					  " is missing or incompatible. Choose it again.";
@@ -1697,11 +1743,49 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			return error("A scene named “" + name + "” already exists. Choose another show name.");
 		}
 		if (stage.contains("referenceStage")) {
-            bool found = false;
-            for (const auto &entry : oldStages) if (entry.toObject().value("name") == stage.value("referenceStage")) found = true;
-            if (!found || stage.value("referenceLooks").toArray().isEmpty()) return error("Choose a saved layout and its Looks for " + theme->name + ".");
-            continue;
-        }
+			QJsonObject reference;
+			for (const auto &entry : oldStages) if (entry.toObject().value("name") == stage.value("referenceStage")) reference = entry.toObject();
+			if (reference.isEmpty() || stage.value("referenceLooks").toArray().isEmpty()) return error("Choose a saved layout and its Looks for " + theme->name + ".");
+			for (const auto &lookId : stage.value("referenceLooks").toArray()) {
+				bool found = false;
+				for (const auto &entry : actions) {
+					const auto action = entry.toObject();
+					if (action.value("id") == lookId && action.value("kind").toString() == "layout" &&
+					    !action.value("draft").toBool() && action.value("container") == reference.value("horizontal")) found = true;
+				}
+				const QString key = id + "/saved:" + lookId.toString();
+				if (!found || selectedLooks.contains(key)) return error("Choose valid, distinct saved Looks for " + theme->name + ".");
+				selectedLooks.insert(key);
+			}
+			const auto bindings = stage.value("sourceBindings").toObject();
+			for (auto binding = bindings.begin(); binding != bindings.end(); ++binding) {
+				OBSSourceAutoRelease original = obs_get_source_by_uuid(binding.key().toUtf8().constData());
+				if (!original || obs_scene_from_source(original) || obs_group_from_source(original)) return error("A saved-layout input is no longer available.");
+				const QString assigned = binding.value().toString();
+				if (!validateSource(assigned, "feedA", true)) return error(validationError);
+				OBSSourceAutoRelease replacement = assigned.startsWith("new:") ? nullptr : obs_get_source_by_uuid(assigned.toUtf8().constData());
+				const QString type = assigned.startsWith("new:") ? definitions.value(assigned.mid(4)).toObject().value("kind").toString() : QString::fromUtf8(obs_source_get_unversioned_id(replacement));
+				if (type != QString::fromUtf8(obs_source_get_unversioned_id(original))) return error("Choose the same source type to preserve the saved layout's framing.");
+				if (lumiaOverlays && pulseIsNativeOverlaySource(original) && replacement) {
+					if (!pulseWizardOverlaySourceAllowed(replacement)) return error("Replace the saved artwork with a Lumia browser source.");
+					OBSDataAutoRelease settings = obs_source_get_settings(original);
+					const auto width = obs_data_get_int(settings, "width"), height = obs_data_get_int(settings, "height");
+					if (width > 0 && height > 0 && width != height && !pulseBrowserMatchesCanvas(replacement, height > width))
+						return error("Choose matching " + QString(height > width ? "portrait" : "landscape") + " Lumia artwork for this saved layout.");
+				}
+			}
+			if (lumiaOverlays) {
+				for (const QString &route : {QString("horizontal"), QString("vertical")}) {
+					const QString sceneName = reference.value(route).toString();
+					OBSSourceAutoRelease scene = obs_get_source_by_name(sceneName.toUtf8().constData());
+					if (!scene && route == "vertical") scene = obs_canvas_get_source_by_name(verticalCanvas, sceneName.toUtf8().constData());
+					if (pulseSceneUsesNativeOverlay(scene, bindings, stage.value("disabledSources").toArray()))
+						return error("Replace the native Pulse Weaver overlay in saved layout “" + stage.value("referenceStage").toString() +
+							"” with a Lumia browser source. Skipping it only hides the old artwork.");
+				}
+			}
+			continue;
+		}
 		const QJsonArray chosen = stage.value("looks").toArray();
 		if (chosen.isEmpty()) {
 			return error("Choose at least one Look for " + theme->name + ".");
@@ -1735,6 +1819,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		}
 	}
 	QSet<QString> overlaySlots;
+	QMap<QString, QSet<QString>> overlaySourceLooks;
 	for (const auto &value : overlays) {
 		const QJsonObject overlay = value.toObject();
 		const QString route = overlay.value("canvas").toString();
@@ -1752,6 +1837,30 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		}
 		if (!validateSource(overlay.value("source").toString(), "overlay", true, route)) {
 			return error(validationError);
+		}
+		auto &occupied = overlaySourceLooks[route + "/" + overlay.value("source").toString()];
+		for (const auto &look : overlay.value("looks").toArray()) {
+			if (occupied.contains(look.toString())) return error("The same source is used in more than one shared layer on the " +
+				QString(route == "vertical" ? "portrait" : "landscape") + " canvas for the same Look. Choose a different source or different Looks.");
+			occupied.insert(look.toString());
+		}
+		for (const auto &entry : requested) {
+			const auto stage = entry.toObject(); if (!stage.contains("referenceStage")) continue;
+			const QString theme = stage.value("theme").toString(); bool targeted = false;
+			for (const auto &look : stage.value("referenceLooks").toArray())
+				if (overlay.value("looks").toArray().contains(theme + "/saved:" + look.toString())) targeted = true;
+			if (!targeted) continue;
+			QJsonObject reference;
+			for (const auto &saved : oldStages) if (saved.toObject().value("name") == stage.value("referenceStage")) reference = saved.toObject();
+			const QString sceneName = reference.value(route).toString(), sourceId = overlay.value("source").toString();
+			OBSSourceAutoRelease scene = obs_get_source_by_name(sceneName.toUtf8().constData());
+			if (!scene && route == "vertical") scene = obs_canvas_get_source_by_name(verticalCanvas, sceneName.toUtf8().constData());
+			if (pulseSceneUsesSource(scene, sourceId, stage.value("sourceBindings").toObject(), stage.value("disabledSources").toArray())) {
+				OBSSourceAutoRelease source = sourceId.startsWith("new:") ? nullptr : obs_get_source_by_uuid(sourceId.toUtf8().constData());
+				const QString sourceName = source ? QString::fromUtf8(obs_source_get_name(source)) : definitions.value(sourceId.mid(4)).toObject().value("name").toString();
+				return error("The shared layer “" + sourceName + "” already exists in saved layout “" + stage.value("referenceStage").toString() +
+					"”. Leave this shared slot empty, or choose another scope or source.");
+			}
 		}
 	}
 	for (const auto &value : requested) {
@@ -1782,6 +1891,8 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 	QJsonArray stages = oldStages, newActions;
 	std::vector<OBSSource> created;
 	QStringList createdFiles;
+	QStringList createdStingers;
+	auto *frontend = static_cast<QObject *>(obs_frontend_get_main_window());
 	auto fail = [&](const QString &message) {
 		actions = oldActions;
 		for (auto it = created.rbegin(); it != created.rend(); ++it) {
@@ -1790,6 +1901,12 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			}
 		}
 		created.clear();
+		for (auto it = createdStingers.crbegin(); it != createdStingers.crend(); ++it) {
+			bool removed = false;
+			if (frontend) QMetaObject::invokeMethod(frontend, "PulseWeaverRemoveWizardStinger", Qt::DirectConnection,
+				Q_RETURN_ARG(bool, removed), Q_ARG(QString, *it));
+		}
+		createdStingers.clear();
 		for (const QString &file : createdFiles) {
 			QFile::remove(file);
 		}
@@ -1804,6 +1921,15 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		return error("Could not save the clipped-corner mask.");
 	}
 	createdFiles << maskPath;
+	for (const QString &id : usedStingers) {
+		const auto spec = newStingers.value(id).toObject(); QString uuid;
+		const QString name = spec.value("name").toString().trimmed(), file = spec.value("path").toString();
+		const int point = spec.value("transitionPointMs").toInt();
+		if (!frontend || !QMetaObject::invokeMethod(frontend, "PulseWeaverCreateWizardStinger", Qt::DirectConnection,
+			Q_RETURN_ARG(QString, uuid), Q_ARG(QString, name), Q_ARG(QString, file), Q_ARG(int, point)) || uuid.isEmpty())
+			return fail("Could not add stinger “" + name + "”. Your answers are preserved; check the video and try again.");
+		createdStingers.append(uuid); resolvedStingers.insert("new-stinger:" + id, "stinger:" + name);
+	}
 	QMap<QString, QString> resolved;
 	auto createSource = [&](const QString &key, const QString &route, const QString &lookId) -> OBSSource {
 		if (!key.startsWith("new:")) {
@@ -1847,6 +1973,12 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			if (!target.isEmpty()) {
 				obs_data_set_string(settings, "window", target.toUtf8().constData());
 			}
+		} else if (kind == "ffmpeg_source") {
+			obs_data_set_bool(settings, "is_local_file", true);
+			obs_data_set_string(settings, "local_file", target.toUtf8().constData());
+			obs_data_set_bool(settings, "looping", spec.value("loop").toBool());
+		} else if (kind == "image_source") {
+			obs_data_set_string(settings, "file", target.toUtf8().constData());
 		} else {
 			actual = "browser_source";
 			obs_data_set_int(settings, "width", width);
@@ -1926,16 +2058,57 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				    obs_source_get_uuid(obs_scene_get_source(horizontal)));
 		obs_data_set_bool(metadata, "pulseweaver.native_vertical", true);
 		obs_data_set_bool(metadata, "pulseweaver.follow_horizontal", false);
-        if (stage.contains("referenceStage")) {
-            QJsonObject reference;
-            for (const auto &entry : oldStages) if (entry.toObject().value("name") == stage.value("referenceStage")) reference = entry.toObject();
-            const auto cloned = cloneReferenceStage(name, reference, stage.value("referenceLooks").toArray(), stage,
-                horizontal, portrait, created, referenceUnits);
-            if (!cloned.value("ok").toBool()) return fail(cloned.value("message").toString());
-            stages.append(withTransitions(cloned.value("stage").toObject(), stage));
-            for (const auto &look : cloned.value("actions").toArray()) newActions.append(look);
-            continue;
-        }
+		if (stage.contains("referenceStage")) {
+			QJsonObject reference, resolvedStage = stage, bindings = stage.value("sourceBindings").toObject();
+			for (const auto &entry : oldStages) if (entry.toObject().value("name") == stage.value("referenceStage")) reference = entry.toObject();
+			for (auto binding = bindings.begin(); binding != bindings.end(); ++binding) if (binding.value().toString().startsWith("new:")) {
+				OBSSourceAutoRelease original = obs_get_source_by_uuid(binding.key().toUtf8().constData());
+				const bool browser = QString::fromUtf8(obs_source_get_unversioned_id(original)) == "browser_source";
+				const bool vertical = browser ? !pulseBrowserMatchesCanvas(original, false) : obs_source_get_height(original) > obs_source_get_width(original);
+				const QString route = vertical ? "vertical" : "horizontal";
+				OBSSource source = createSource(binding.value().toString(), route, {});
+				if (!source) return fail("Could not create a replacement input for " + theme->name + ".");
+				binding.value() = QString::fromUtf8(obs_source_get_uuid(source));
+			}
+			resolvedStage.insert("sourceBindings", bindings);
+			const auto cloned = cloneReferenceStage(name, reference, stage.value("referenceLooks").toArray(), resolvedStage,
+				horizontal, portrait, created, referenceUnits);
+			if (!cloned.value("ok").toBool()) return fail(cloned.value("message").toString());
+			stages.append(withTransitions(cloned.value("stage").toObject(), stage));
+			QJsonArray clonedActions = cloned.value("actions").toArray();
+			// Shared layers also belong to copied layouts. One scene item per slot
+			// is reused across every copied Look, with explicit visibility targets.
+			for (const QString &route : {QString("horizontal"), QString("vertical")}) {
+				obs_scene_t *scene = route == "vertical" ? portrait.Get() : horizontal.Get();
+				const QString container = route == "vertical" ? portraitName : name;
+				const int width = route == "vertical" ? verticalInfo.base_width : horizontalInfo.base_width;
+				const int height = route == "vertical" ? verticalInfo.base_height : horizontalInfo.base_height;
+				for (int slot = 1; slot <= 3; ++slot) for (const auto &entry : overlays) {
+					const auto overlay = entry.toObject();
+					if (overlay.value("canvas").toString() != route || overlay.value("order").toInt() != slot) continue;
+					bool relevant = false;
+					for (const auto &action : clonedActions) if (overlay.value("looks").toArray().contains(theme->id + "/saved:" + action.toObject().value("referenceLookId").toString())) relevant = true;
+					if (!relevant) continue;
+					OBSSource source = createSource(overlay.value("source").toString(), route, {});
+					OBSSceneItem item = source ? obs_scene_add(scene, source) : nullptr;
+					if (!item) return fail("Could not add a shared alert layer to " + name + ".");
+					position(item, {"overlay", {0, 0, 1, 1}, false, false}, width, height, {});
+					obs_sceneitem_set_order(item, OBS_ORDER_MOVE_TOP); obs_sceneitem_set_locked(item, true);
+					for (int index = 0; index < clonedActions.size(); ++index) {
+						auto action = clonedActions[index].toObject(); auto targets = action.value("items").toArray();
+						Transform transform = capture(item);
+						transform.visible = overlay.value("looks").toArray().contains(theme->id + "/saved:" + action.value("referenceLookId").toString());
+						targets.append(QJsonObject{{"container", container}, {"itemId", QString::number(obs_sceneitem_get_id(item))},
+							{"source", obs_source_get_name(source)}, {"sourceUuid", obs_source_get_uuid(source)}, {"graphic", true},
+							{"sourceWidth", int(obs_source_get_width(source))}, {"sourceHeight", int(obs_source_get_height(source))}, {"transform", serialize(transform)}});
+						action.insert("items", targets); clonedActions[index] = action;
+						if (index == 0) obs_sceneitem_set_visible(item, transform.visible);
+					}
+				}
+			}
+			for (const auto &look : clonedActions) newActions.append(look);
+			continue;
+		}
 		const QJsonObject framing = stage.value("framing").toObject();
 		const int firstLook = newActions.size();
 		QJsonObject savedRoles;
@@ -2034,7 +2207,12 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 						source = treatedSources.value(treatmentKey);
 						token += "/treated";
 					}
-					if (!add(source, token, panel, PulseShow::graphic(panel.role))) {
+					auto placedPanel = panel;
+					if (panel.role == "graphic" && roleIds.value(vertical ? "graphicPortraitFullCanvas" : "graphicFullCanvas").toBool()) {
+						placedPanel.rect = QRectF(0, 0, 1, 1);
+						placedPanel.fill = false;
+					}
+					if (!add(source, token, placedPanel, PulseShow::graphic(panel.role))) {
 						return fail("Could not add a layer to " + name + ".");
 					}
 				}

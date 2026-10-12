@@ -1,5 +1,7 @@
 # 1.14 unstable workflow coverage
 
+Historical coverage snapshot from the unstable interface. Wizard page names below refer to that version; use [Create your show](SETUP-WIZARD-GUIDE.md) for the current setup flow.
+
 | Task | Current UI | Authoritative state | Remaining work |
 |---|---|---|---|
 | First show with new or existing video sources | Settings → Start here → Build my show | OBS sources/scenes, stage catalogue, motion store | Device previews and a reversible whole-show edit flow |

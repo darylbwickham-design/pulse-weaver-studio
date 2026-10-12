@@ -4,6 +4,7 @@
 #include "pulse-overlay-renderer.hpp"
 #include "pulse-overlay-migration.hpp"
 #include "pulse-runtime-safety.hpp"
+#include "pulse-show-templates.hpp"
 #include "../obs-browser/panel/browser-panel.hpp"
 
 #include <obs-module.h>
@@ -26,6 +27,8 @@
 #include <QGraphicsScene>
 #include <QGraphicsTextItem>
 #include <QGraphicsView>
+#include <QGridLayout>
+#include <QGuiApplication>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -40,6 +43,8 @@
 #include <QPushButton>
 #include <QQueue>
 #include <QSaveFile>
+#include <QScreen>
+#include <QScrollArea>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -1527,39 +1532,54 @@ struct PulseOverlayRuntime::Impl {
 		dialog = new QDialog(static_cast<QWidget *>(obs_frontend_get_main_window()));
 		dialog->setAttribute(Qt::WA_DeleteOnClose);
 		dialog->setWindowTitle("Pulse Weaver — Overlay Designer");
-		dialog->resize(1560, 900);
+		const auto *editorScreen = dialog->parentWidget() ? dialog->parentWidget()->screen() : QGuiApplication::primaryScreen();
+		const QRect available = editorScreen ? editorScreen->availableGeometry() : QRect(0, 0, 1280, 900);
+		const QSize editorSize(qMin(1200, available.width() - 40), qMin(820, available.height() - 60));
+		dialog->resize(editorSize);
+		dialog->move(available.center() - QPoint(editorSize.width() / 2, editorSize.height() / 2));
 		previewSession = QUuid::createUuid().toString(QUuid::WithoutBraces);
 		// Overlay editing follows the active application theme.
 		auto *root = new QVBoxLayout(dialog);
-		auto *head = new QHBoxLayout;
+		auto *head = new QGridLayout;
 		auto *title = new QLabel("OVERLAY DESIGNER  •  DRAFT, PREVIEW, PUBLISH");
 		title->setObjectName("PulseWeaverHeading");
-		head->addWidget(title);
-		head->addStretch();
+		title->setWordWrap(true); root->addWidget(title);
 		auto *test = new QPushButton("TEST DRAFT PREVIEW");
 		auto *publishButton = new QPushButton("PUBLISH DRAFT");
 		auto *browser = new QPushButton("OPEN PUBLISHED URL");
+		test->setToolTip("Test the current draft in this editor's private preview");
+		publishButton->setToolTip("Save the local published revision. Existing browser sources use it on their next reload; this does not upload it to a marketplace.");
+		browser->setToolTip("Open this overlay's published browser page");
 		placementTarget = new QComboBox;
+		placementTarget->setAccessibleName("Canvas for adding the overlay");
 		placementTarget->addItem("Landscape", "landscape");
 		placementTarget->addItem("Portrait", "portrait");
 		placementTarget->addItem("Both", "both");
 		auto *addScene = new QPushButton("ADD TO CAMERA SCENE");
-		head->addWidget(test);
-		head->addWidget(publishButton);
-		head->addWidget(browser);
-		head->addWidget(placementTarget);
-		head->addWidget(addScene);
+		addScene->setToolTip("Add the published overlay to the selected landscape, portrait or both Camera scenes");
+		head->addWidget(test, 0, 0);
+		head->addWidget(publishButton, 0, 1);
+		head->addWidget(browser, 0, 2);
+		head->addWidget(placementTarget, 1, 0);
+		head->addWidget(addScene, 1, 1, 1, 2);
+		for (int column = 0; column < 3; ++column) head->setColumnStretch(column, 1);
 		root->addLayout(head);
 
 		auto *splitter = new QSplitter;
+		splitter->setChildrenCollapsible(false);
 		auto *left = new QWidget;
 		auto *leftLayout = new QVBoxLayout(left);
+		leftLayout->setContentsMargins(4, 4, 4, 4);
 		leftLayout->addWidget(new QLabel("OVERLAYS"));
 		documentList = new QListWidget;
+		documentList->setMinimumSize(0, 70);
 		leftLayout->addWidget(documentList, 1);
 		auto *documentButtons = new QHBoxLayout;
 		for (const QString &label : {QString("+"), QString("DUP"), QString("−")}) {
 			auto *button = new QPushButton(label);
+			const QString hint = label == "+" ? "Create an overlay" : label == "DUP" ? "Duplicate the selected overlay" : "Delete the selected overlay";
+			button->setAccessibleName(hint); button->setToolTip(hint);
+			button->setMinimumWidth(28); button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
 			documentButtons->addWidget(button);
 			if (label == "+")
 				QObject::connect(button, &QPushButton::clicked, dialog, [this] {
@@ -1598,15 +1618,16 @@ struct PulseOverlayRuntime::Impl {
 				});
 		}
 		leftLayout->addLayout(documentButtons);
-		auto *importWeb = new QPushButton("IMPORT STREAM ELEMENTS / LUMIA URL");
-		importWeb->setToolTip("Import a hosted overlay URL as a direct top-level browser source; the provider keeps handling its own events");
+		auto *importWeb = new QPushButton("ADD WEB OVERLAY…");
+		importWeb->setToolTip("Use a browser-source link from Lumia or another compatible overlay service");
 		QObject::connect(importWeb, &QPushButton::clicked, dialog, [this] {
 			bool ok = false;
-			const QString urlText = QInputDialog::getText(dialog, "Import hosted overlay", "StreamElements, Lumia or compatible overlay URL", QLineEdit::Normal, {}, &ok).trimmed();
+			const QString urlText = QInputDialog::getText(dialog, "Add web overlay", "Browser-source link (import templates in their service first)", QLineEdit::Normal, {}, &ok).trimmed();
 			const QUrl url(urlText);
-			if (!ok || !url.isValid() || (url.scheme() != "https" && url.scheme() != "http")) {
+			const QString linkProblem = PulseShow::browserLinkProblem(urlText);
+			if (!ok || !linkProblem.isEmpty()) {
 				if (ok)
-					QMessageBox::warning(dialog, "Import hosted overlay", "Enter a complete HTTPS or HTTP overlay URL.");
+					QMessageBox::warning(dialog, "Add web overlay", linkProblem);
 				return;
 			}
 			const QString suggested = url.host().isEmpty() ? "Imported Overlay" : url.host() + " Overlay";
@@ -1634,13 +1655,16 @@ struct PulseOverlayRuntime::Impl {
 		leftLayout->addWidget(newAlertBox);
 		leftLayout->addWidget(new QLabel("LAYERS"));
 		layers = new QListWidget;
+		layers->setMinimumSize(0, 70);
 		leftLayout->addWidget(layers, 1);
-		auto *elementButtons = new QHBoxLayout;
+		auto *elementButtons = new QGridLayout;
 		for (const auto &pair : {qMakePair(QString("TEXT"), QString("text")), qMakePair(QString("SHAPE"), QString("shape")), qMakePair(QString("IMAGE"), QString("image")), qMakePair(QString("VIDEO"), QString("video")), qMakePair(QString("GOAL"), QString("progress"))}) {
 			auto *button = new QPushButton(pair.first);
 			button->setToolTip("Add " + pair.second + " layer");
 			QObject::connect(button, &QPushButton::clicked, dialog, [this, type = pair.second] { addElement(type); });
-			elementButtons->addWidget(button);
+			const int position = elementButtons->count();
+			button->setMinimumWidth(40); button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+			elementButtons->addWidget(button, position / 3, position % 3);
 		}
 		leftLayout->addLayout(elementButtons);
 		auto *removeLayer = new QPushButton("REMOVE SELECTED LAYER");
@@ -1660,7 +1684,9 @@ struct PulseOverlayRuntime::Impl {
 		leftLayout->addWidget(removeLayer);
 
 		auto *center = new QWidget;
+		center->setMinimumWidth(0); center->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
 		auto *centerLayout = new QVBoxLayout(center);
+		centerLayout->setContentsMargins(4, 4, 4, 4);
 		scene = new QGraphicsScene(center);
 		PulseRuntimeSafety::silenceSceneOnOwnerDestruction(scene, dialog);
 		view = new QGraphicsView(scene);
@@ -1668,6 +1694,7 @@ struct PulseOverlayRuntime::Impl {
 		view->setRenderHint(QPainter::Antialiasing, true);
 		view->setDragMode(QGraphicsView::RubberBandDrag);
 		auto *canvasTabs = new QTabWidget(center);
+		canvasTabs->setMinimumWidth(0); canvasTabs->setUsesScrollButtons(true); canvasTabs->setElideMode(Qt::ElideRight);
 		canvasTabs->addTab(view, "DESIGN CANVAS");
 		auto *previewPage = new QWidget(canvasTabs);
 		auto *previewLayout = new QVBoxLayout(previewPage);
@@ -1687,13 +1714,22 @@ struct PulseOverlayRuntime::Impl {
 		canvasTabs->addTab(previewPage, "LIVE DRAFT PREVIEW");
 		centerLayout->addWidget(canvasTabs, 1);
 		editorStatus = new QLabel;
+		editorStatus->setWordWrap(true); editorStatus->setMinimumWidth(0);
 		editorStatus->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		centerLayout->addWidget(editorStatus);
 
 		auto *right = new QTabWidget;
+		right->setMinimumWidth(240); right->setUsesScrollButtons(true); right->setElideMode(Qt::ElideRight);
+		auto scrollPanel = [](QWidget *content) {
+			auto *scroll = new QScrollArea;
+			scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
+			scroll->setMinimumSize(0, 0); scroll->setWidget(content);
+			return scroll;
+		};
 		auto *properties = new QWidget;
 		auto *propertiesLayout = new QVBoxLayout(properties);
 		auto *documentForm = new QFormLayout;
+		documentForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
 		name = new QLineEdit;
 		trigger = new QLineEdit;
 		trigger->setPlaceholderText("e.g. twitch.channel.follow");
@@ -1716,6 +1752,7 @@ struct PulseOverlayRuntime::Impl {
 		propertiesLayout->addLayout(documentForm);
 		propertiesLayout->addWidget(new QLabel("SELECTED LAYER"));
 		auto *elementForm = new QFormLayout;
+		elementForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
 		elementName = new QLineEdit;
 		elementText = new QLineEdit;
 		elementBinding = new QLineEdit;
@@ -1760,7 +1797,7 @@ struct PulseOverlayRuntime::Impl {
 		stateButtons->addWidget(lockedButton);
 		propertiesLayout->addLayout(stateButtons);
 		propertiesLayout->addStretch();
-		right->addTab(properties, "PROPERTIES");
+		right->addTab(scrollPanel(properties), "Properties");
 
 		auto *alertPage = new QWidget;
 		auto *alertLayout = new QVBoxLayout(alertPage);
@@ -1768,7 +1805,10 @@ struct PulseOverlayRuntime::Impl {
 		alertCopy->setWordWrap(true);
 		alertLayout->addWidget(alertCopy);
 		auto *alertForm = new QFormLayout;
+		alertForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
 		alertVariationSelect = new QComboBox;
+		alertVariationSelect->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		alertVariationSelect->setMinimumContentsLength(8); alertVariationSelect->setMinimumWidth(0);
 		auto *variationRow = new QWidget(alertPage);
 		auto *variationRowLayout = new QHBoxLayout(variationRow);
 		variationRowLayout->setContentsMargins(0, 0, 0, 0);
@@ -1777,6 +1817,9 @@ struct PulseOverlayRuntime::Impl {
 		auto *variationDown = new QPushButton("↓", variationRow);
 		variationUp->setToolTip("Move this variation earlier");
 		variationDown->setToolTip("Move this variation later");
+		variationUp->setAccessibleName("Move variation earlier");
+		variationDown->setAccessibleName("Move variation later");
+		variationUp->setFixedWidth(30); variationDown->setFixedWidth(30);
 		variationRowLayout->addWidget(variationUp);
 		variationRowLayout->addWidget(variationDown);
 		alertHeadline = new QLineEdit;
@@ -1817,14 +1860,15 @@ struct PulseOverlayRuntime::Impl {
 		auto *saveAlert = new QPushButton("SAVE ALERT SETTINGS");
 		alertLayout->addWidget(saveAlert);
 		alertLayout->addStretch();
-		right->addTab(alertPage, "ALERT BOX");
+		right->addTab(scrollPanel(alertPage), "Alert Box");
 
 		auto *code = new QWidget;
 		auto *codeLayout = new QVBoxLayout(code);
 		auto *codeScope = new QLabel("Custom code shares the visual layers and receives overlay events. External scripts and direct network requests are blocked; use HTTPS image, video and sound URLs for media.");
 		codeScope->setWordWrap(true);
 		codeLayout->addWidget(codeScope);
-		codeLayout->addWidget(new QLabel("Additional HTML — preserved alongside visual layers"));
+		auto *htmlLabel = new QLabel("Additional HTML — preserved alongside visual layers");
+		htmlLabel->setWordWrap(true); codeLayout->addWidget(htmlLabel);
 		htmlCode = new QTextEdit;
 		codeLayout->addWidget(htmlCode, 1);
 		codeLayout->addWidget(new QLabel("Additional CSS"));
@@ -1835,12 +1879,14 @@ struct PulseOverlayRuntime::Impl {
 		codeLayout->addWidget(jsCode, 1);
 		auto *saveCode = new QPushButton("SAVE DRAFT CODE");
 		codeLayout->addWidget(saveCode);
-		right->addTab(code, "ADVANCED CODE");
+		right->addTab(scrollPanel(code), "Advanced code");
 
-		splitter->addWidget(left);
+		auto *leftScroll = scrollPanel(left); leftScroll->setMinimumWidth(200);
+		splitter->addWidget(leftScroll);
 		splitter->addWidget(center);
 		splitter->addWidget(right);
-		splitter->setSizes({300, 880, 380});
+		splitter->setStretchFactor(0, 0); splitter->setStretchFactor(1, 1); splitter->setStretchFactor(2, 0);
+		splitter->setSizes({220, 620, 320});
 		root->addWidget(splitter, 1);
 
 		QObject::connect(documentList, &QListWidget::currentRowChanged, dialog, [this] { if (!loading) loadDocument(); });

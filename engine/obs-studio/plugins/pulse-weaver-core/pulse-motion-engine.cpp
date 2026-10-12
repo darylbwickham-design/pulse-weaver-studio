@@ -1110,10 +1110,15 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 		auto *button = new QToolButton(lookTools);
 		button->setText(label);
 		button->setAccessibleName("Place source: " + label);
+		button->setToolTip(operation == "cover" ? "Fill the canvas, cropping the image edges if needed" :
+			operation == "corner" ? "Place a smaller view in the corner" :
+			operation == "left" ? "Place the source in the left half" : "Place the source in the right half");
 		button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
 		button->setMinimumHeight(67);
 		button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-		QPixmap diagram(70, 38);
+		const qreal ratio = button->devicePixelRatioF();
+		QPixmap diagram(qRound(70 * ratio), qRound(38 * ratio));
+		diagram.setDevicePixelRatio(ratio);
 		diagram.fill(QColor(10, 17, 28));
 		QPainter painter(&diagram);
 		painter.setPen(QPen(QColor(80, 168, 207), 2));
@@ -1366,6 +1371,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	summaryLabel->hide();
 	auto *buttons = new QHBoxLayout;
 	saveButton = new QPushButton("Save look");
+	saveButton->setToolTip("Save the current source positions, visibility and layer order in this Look");
 	saveButton->setObjectName("Primary");
 	auto *run = new QPushButton("Run saved look live");
 	run->setToolTip("Save edits first. Within the same Stage, sources move to this Look. From another Stage, its Stage transition reveals the finished Look.");
@@ -3907,7 +3913,8 @@ QJsonObject PulseMotionEngine::cloneReferenceStage(const QString &name, const QJ
     const QString prefix = name, portraitName = name + " · Portrait", collection = motionCollection();
     const bool setupWizard = true;
     const QJsonObject sourceBindings = choices.value("sourceBindings").toObject();
-    const QString bindingKey = QString::fromUtf8(QJsonDocument(sourceBindings).toJson(QJsonDocument::Compact));
+    const QJsonArray disabledSources = choices.value("disabledSources").toArray();
+    const QString bindingKey = QString::fromUtf8(QJsonDocument(QJsonObject{{"bindings", sourceBindings}, {"disabled", disabledSources}}).toJson(QJsonDocument::Compact));
     for (auto it = sourceBindings.begin(); it != sourceBindings.end(); ++it) {
         OBSSourceAutoRelease from = obs_get_source_by_uuid(it.key().toUtf8().constData());
         OBSSourceAutoRelease to = obs_get_source_by_uuid(it.value().toString().toUtf8().constData());
@@ -3982,13 +3989,14 @@ QJsonObject PulseMotionEngine::cloneReferenceStage(const QString &name, const QJ
 		obs_data_apply(metadata, originalMeta);
 		obs_data_set_bool(metadata, "pulseweaver.motion_graphic", motionGraphicSwitch(obs_source_get_name(source), source));
 		struct UnitCopy { PulseMotionEngine *engine; obs_scene_t *scene; obs_canvas_t *canvas;
-			std::function<OBSSource(obs_source_t *, obs_canvas_t *)> *assign; std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; bool ok = true; } context{this, copy, canvas, &assignedSource, &copyItemSettings};
+			std::function<OBSSource(obs_source_t *, obs_canvas_t *)> *assign; std::function<void(obs_sceneitem_t *, obs_sceneitem_t *)> *settings; const QJsonArray *disabled; bool ok = true; } context{this, copy, canvas, &assignedSource, &copyItemSettings, &disabledSources};
 		obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *original, void *opaque) {
 			auto &context = *static_cast<UnitCopy *>(opaque);
 			OBSSource source = (*context.assign)(obs_sceneitem_get_source(original), context.canvas);
 			OBSSceneItem item = source ? motionAddSource(context.scene, source) : nullptr;
 			if (!item) { context.ok = false; return false; }
 			context.engine->apply(item, PulseMotionEngine::capture(original), true);
+            if (context.disabled->contains(QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(original))))) obs_sceneitem_set_visible(item, false);
 			(*context.settings)(original, item);
 			return true;
 		}, &context);

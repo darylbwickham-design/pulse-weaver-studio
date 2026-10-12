@@ -1788,6 +1788,8 @@ public slots:
 	void SetCurrentTransition(const QString &uuid);
 
 	void SetTransitionDuration(int duration);
+	QString PulseWeaverCreateWizardStinger(const QString &name, const QString &filePath, int transitionPointMs);
+	bool PulseWeaverRemoveWizardStinger(const QString &uuid);
 
 private slots:
 	void AddTransition(const char *id);

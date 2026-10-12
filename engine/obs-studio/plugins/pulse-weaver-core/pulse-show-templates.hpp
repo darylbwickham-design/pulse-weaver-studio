@@ -22,7 +22,8 @@ inline QJsonObject rolesForLook(const QJsonObject &stage, const QString &look)
 {
 	QJsonObject roles = stage.value("roles").toObject();
 	const auto artwork = stage.value("lookArtwork").toObject().value(look).toObject();
-	for (const QString &role : {QString("graphic"), QString("graphicPortrait")})
+	for (const QString &role : {QString("graphic"), QString("graphicPortrait"),
+		QString("graphicFullCanvas"), QString("graphicPortraitFullCanvas")})
 		if (artwork.contains(role)) roles.insert(role, artwork.value(role));
 	return roles;
 }

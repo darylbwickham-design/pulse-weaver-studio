@@ -1,6 +1,7 @@
 #include "pulse-motion-engine.hpp"
 
 #include <QCheckBox>
+#include <QBuffer>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QFormLayout>
@@ -8,6 +9,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QJsonDocument>
+#include <QImageReader>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -27,6 +29,7 @@
 #include "pulse-setup-flexible.hpp"
 #include "pulse-lumia-brand.hpp"
 #include "../../shared/qt/PulseInstructions.hpp"
+#include "../../shared/qt/PulseOutputActivity.hpp"
 
 namespace {
 class SetupPage final : public QWizardPage {
@@ -71,29 +74,37 @@ void PulseMotionEngine::openShowWizard()
 	auto text = [](QVBoxLayout *layout, QWidget *parent, const QString &message) {
 		auto *label = new QLabel(message, parent); label->setWordWrap(true); layout->addWidget(label); return label;
 	};
-	auto [connectPage, connectLayout] = page("1  Connect Lumia", "Get the visual assets ready for your show.");
+	auto [connectPage, connectLayout] = page("1  Prepare your show", "Set up Lumia and prepare your artwork.");
+	text(connectLayout, connectPage, "A Stage is a part of your stream, such as Starting or Game. A Look is a layout you switch to within that Stage. Sources supply cameras, captures, media and overlays. Each Look has a landscape canvas and a portrait canvas.");
 	auto *lumiaBrand = new QLabel(connectPage);
-	QPixmap lumiaLogo; lumiaLogo.loadFromData(QByteArray(pulseLumiaLogo), "SVG");
-	if (!lumiaLogo.isNull()) lumiaBrand->setPixmap(lumiaLogo.scaled(242, 80, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+	QBuffer lumiaSvg;
+	lumiaSvg.setData(QByteArray(pulseLumiaLogo)); lumiaSvg.open(QIODevice::ReadOnly);
+	QImageReader logoReader(&lumiaSvg, "svg");
+	const qreal logoRatio = lumiaBrand->devicePixelRatioF();
+	// Rasterize the vector at display resolution instead of enlarging its 121×40 intrinsic bitmap.
+	logoReader.setScaledSize(logoReader.size().scaled(QSize(qRound(242 * logoRatio), qRound(80 * logoRatio)), Qt::KeepAspectRatio));
+	QPixmap lumiaLogo = QPixmap::fromImage(logoReader.read());
+	lumiaLogo.setDevicePixelRatio(logoRatio);
+	if (!lumiaLogo.isNull()) lumiaBrand->setPixmap(lumiaLogo);
 	else lumiaBrand->setText("Lumia Stream");
 	lumiaBrand->setAccessibleName("Lumia Stream"); connectLayout->addWidget(lumiaBrand);
-	text(connectLayout, connectPage, "Lumia Stream provides your overlay artwork, branding and widgets. Pulse Weaver arranges your cameras and content and moves them between Looks. Install Lumia Stream, then connect its Pulse Weaver plugin.");
+	text(connectLayout, connectPage, "Lumia Stream provides the Lumia overlay templates for Pulse Weaver, including the countdown and widgets, and is required to use them. Install Lumia, connect its Pulse Weaver plugin, import the templates you need and copy their browser links for page 4. You can also reuse the Lumia browser sources already in your setup. Lumia is the recommended way to control animations, Stage / Look changes and show actions; Pulse Weaver arranges your cameras and content and moves them between Looks.");
 	auto *download = new QPushButton("Download Lumia Stream", connectPage);
 	connect(download, &QPushButton::clicked, &wizard, [] { QDesktopServices::openUrl(QUrl("https://www.lumiastream.com/downloads")); });
 	connectLayout->addWidget(download);
 	text(connectLayout, connectPage, "In Lumia, add the Pulse Weaver plugin and follow its connection instructions. In Overlays, import each template your chosen Looks use, including its landscape (H) and portrait (V) versions. Customize your logo, colours and text there.");
-	auto *marketplace = new QPushButton("Get Pulse Weaver overlays", connectPage);
+	auto *marketplace = new QPushButton("Get Lumia overlays", connectPage);
 	connect(marketplace, &QPushButton::clicked, &wizard, [&wizard] { PulseInstructions::openDialog(&wizard); });
 	connectLayout->addWidget(marketplace);
 	text(connectLayout, connectPage, "A template share link imports an overlay into your Lumia library. After importing, use the overlay's chain / copy-link button to obtain your own browser link, then assign it on page 4. Match H to landscape and V to portrait. Add chat, alerts, frames and Newsroom only when you use them. Existing sources can be kept.");
-	text(connectLayout, connectPage, "The Lumia logo beside the readiness status on Show Control opens Lumia setup instructions: overlay imports, countdown and scene-switch actions, Fortnite commands and stingers. You can also read them here while setting up your show.");
+	text(connectLayout, connectPage, "The Lumia bulb beside the readiness status on Show Control keeps the setup instructions available after this wizard: overlay imports, starting the countdown, running your chosen command at zero, Chat Physics and camera clearances, Stage / Look changes, Fortnite commands and stingers. You can also read them here while setting up your show.");
 	auto *instructions = new QPushButton("Read Lumia setup instructions", connectPage);
 	connect(instructions, &QPushButton::clicked, &wizard, [&wizard] { PulseInstructions::openDialog(&wizard); });
 	connectLayout->addWidget(instructions);
 	for (const QString &label : {QString("Lumia Stream is installed"), QString("The Pulse Weaver plugin is connected"),
-		QString("My overlays are ready, or I will use the existing sources")}) connectLayout->addWidget(new QCheckBox(label, connectPage));
-	text(connectLayout, connectPage, "You can prepare a show before completing the Lumia connection. These are manual readiness checks; they do not verify the connection or run overlay commands.");
-	text(connectLayout, connectPage, "Before continuing, add any cameras, captures or media feeds you need in Camera. The source questions reuse those existing inputs. New Lumia browser links can be added directly on page 4. Optional stingers must already be added in Studio to appear in the wizard; you can also assign them after creating the show.");
+		QString("My Lumia templates are imported, or their browser sources are already available")}) connectLayout->addWidget(new QCheckBox(label, connectPage));
+	text(connectLayout, connectPage, "You can prepare your stage and source choices while completing the Lumia setup. These checkboxes are readiness reminders; they do not verify the connection or run overlay commands. Configure the countdown's completion command in Lumia using the guide so it can select your next Stage / Look when the timer reaches zero.");
+	text(connectLayout, connectPage, "Choose existing sources or add new ones while assigning your feeds on page 4. For optional stage transitions, page 3 lets you reuse a stinger or add a video and its cut point. Choose landscape and portrait versions where needed; new sources and stingers are added only when you create your show.");
 	connectLayout->addStretch();
 
 	auto [stagePage, stageLayout] = page("2  Choose stage groups", "Which parts of your stream should this show include?");
@@ -134,6 +145,7 @@ void PulseMotionEngine::openShowWizard()
 	text(sourceLayout, sourcePage, "After creating your show, select the Lumia logo on Show Control to finish its Lumia commands. Select your new Stages / Looks in the countdown and scene-switch actions, and add the accompanying alert commands once for both canvases.");
 	lookPage->problem = [&] { return setup.problem(false); };
 	sourcePage->problem = [&] {
+		if (PulseHasActiveOutputs()) return QString("Stop streaming, recording and other outputs before creating your show. Your choices will stay here.");
 		QString error = stagePage->problem(); if (error.isEmpty()) error = setup.problem(true); return error;
 	};
 	auto update = [&] {

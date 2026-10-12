@@ -8,7 +8,7 @@ Incoming YouTube chat automatically uses the web scanner in the combined chat bo
 
 ## Connecting your platforms
 
-Packaged builds include the platform application registrations configured for that package, never a signed-in user's account or personal configuration. Start in **Connections** to connect accounts; advanced custom registrations remain available:
+Packaged builds include the platform application registrations configured for that package, never a signed-in user's account or personal configuration. Open **Action → Connections** (or **Connections** on Show) to connect accounts; advanced custom registrations remain available:
 
 - **Twitch:** uses Pulse Weaver's registered public desktop application. Connect uses device authorization; no Twitch client secret or developer registration is required.
 - **Kick:** packaged builds support Pulse Weaver's registered application and OAuth relay. A custom registration uses `http://localhost:18757/auth/callback` and its own Client ID and secret.
@@ -35,7 +35,7 @@ changes and adding output destinations, see
 
 ## Source and builds
 
-See [BUILD.md](BUILD.md). Native application source is in `engine/obs-studio`; optional Lumia plugin source is in `integrations/lumia-pulseweaver`. The P logo and native theme assets are included.
+See [BUILD.md](BUILD.md). Native application source is in `engine/obs-studio`; Lumia companion plugin source is in `integrations/lumia-pulseweaver`. The P logo and native theme assets are included.
 
 The 1.14 branch includes named looks, camera close-ups and multi-source layouts, Stage-aware execution, conservative Move/Lumia import, and a shared controller surface for Lumia, LumiCon and Stream Deck. The earlier `codex/native-motion-engine` branch remains the isolated Motion Preview lineage. See [the product and implementation overview](docs/design/native-motion-overview.md).
 
@@ -45,6 +45,12 @@ This repository starts with a clean source snapshot. Build outputs, personal con
 
 Pulse Weaver is derived from OBS Studio and distributed under GPL version 2 or later; see [LICENSE](LICENSE), [UPSTREAM.md](UPSTREAM.md), and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). See the [Privacy Notice](PRIVACY.md) and [Terms of Service](TERMS.md) for the app's data practices and service terms. This is an independent project and is not an official OBS Studio release.
 
-## Wizard implementation requirements
+## Build your show
 
-The setup wizard uses one four-page flow with broader layout options available by default. Each Look has its own landscape/portrait artwork, and extra overlays can target one Look or several. See [the setup wizard guide](docs/SETUP-WIZARD-GUIDE.md) and [1.14.2 release notes](docs/RELEASE-v1.14.2.md). The older theme builder guide is historical.
+Open **Settings → Start here → Build my show**, or **Show Control → Control → Build my show…**. The four-page wizard guides you from stage groups and functional Looks to source assignments and review. A Stage holds related Looks; a Look is one presentation you choose while running your show.
+
+Each stage group has its own source assignments. Reuse existing inputs or create cameras, captures, media files, images and browser sources in the wizard. New inputs can be reused by other groups, and each Look has separate landscape and portrait artwork. Three shared alert layers per format can be assigned to the selected Looks. Add or reuse stingers and select the transition used when entering each Stage.
+
+**Lumia Stream is required for the Lumia overlay templates for Pulse Weaver, including the countdown and widgets**, and its [companion plugin](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/download/v1.14.2/PulseWeaver-Lumia-1.4.4.lumiaplugin) is the recommended way to control animations and show actions. Install Lumia, import and connect the plugin, then import the templates. On page 4, reuse the corresponding Lumia browser sources or add their browser links. The Lumia bulb on Show Control explains the countdown start payload and the command to run when the timer reaches zero.
+
+In **Control**, design and rehearse Looks, then save them. **Show** contains the live Stage, chat, audio and output controls. The Lumia bulb opens that service's overlay and command instructions. See [the current setup guide](docs/SETUP-WIZARD-GUIDE.md) for the full flow and [1.14.2 release notes](docs/RELEASE-v1.14.2.md) for the published release. The older theme-builder guide is historical.

@@ -28,6 +28,7 @@
 #include <slider-ignorewheel.hpp>
 
 #include <QToolTip>
+#include <QFileInfo>
 #include <QWidgetAction>
 
 extern bool disable_3p_plugins;
@@ -450,6 +451,59 @@ OBSSource OBSBasic::GetCurrentTransition()
 	}
 
 	return transition->second;
+}
+
+QString OBSBasic::PulseWeaverCreateWizardStinger(const QString &name, const QString &filePath, int transitionPointMs)
+{
+	// The wizard validates its whole draft first. Register without selecting or
+	// saving so the caller can roll back if a later part of show creation fails.
+	const QString trimmedName = name.trimmed();
+	const QFileInfo file(filePath);
+	if (trimmedName.isEmpty() || trimmedName.size() > 90 || !file.isAbsolute() || !file.isFile() ||
+	    !file.isReadable() || transitionPointMs < 0 || transitionPointMs > 120000 ||
+	    FindTransition(trimmedName.toUtf8().constData())) return {};
+	bool available = false;
+	const char *type = nullptr;
+	for (size_t index = 0; obs_enum_transition_types(index, &type); ++index)
+		if (QString::fromUtf8(type) == "obs_stinger_transition") { available = true; break; }
+	if (!available) return {};
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_string(settings, "path", file.absoluteFilePath().toUtf8().constData());
+	obs_data_set_int(settings, "transition_point", transitionPointMs);
+	obs_data_set_int(settings, "tp_type", 0); // Milliseconds, matching the wizard's cut-point question.
+	obs_data_set_int(settings, "audio_monitoring", OBS_MONITORING_TYPE_NONE);
+	OBSSourceAutoRelease source = obs_source_create_private("obs_stinger_transition", trimmedName.toUtf8().constData(), settings);
+	if (!source) return {};
+	obs_data_t *privateData = obs_source_get_private_settings(source);
+	obs_data_set_bool(privateData, "pulseweaver_wizard_stinger", true);
+	obs_data_release(privateData);
+	InitTransition(source);
+	const std::string uuid = obs_source_get_uuid(source);
+	transitions.insert({uuid, OBSSource(source)});
+	transitionNameToUuids.insert({trimmedName.toUtf8().constData(), uuid});
+	transitionUuids.push_back(uuid);
+	emit TransitionAdded(trimmedName, QString::fromStdString(uuid));
+	OnEvent(OBS_FRONTEND_EVENT_TRANSITION_LIST_CHANGED);
+	return QString::fromStdString(uuid);
+}
+
+bool OBSBasic::PulseWeaverRemoveWizardStinger(const QString &uuid)
+{
+	const std::string key = uuid.toStdString();
+	const auto found = transitions.find(key);
+	if (found == transitions.end() || key == currentTransitionUuid) return false;
+	OBSSource source = found->second;
+	if (!source || obs_transition_is_active(source) ||
+	    QString::fromUtf8(obs_source_get_id(source)) != "obs_stinger_transition") return false;
+	OBSDataAutoRelease privateData = obs_source_get_private_settings(source);
+	if (!obs_data_get_bool(privateData, "pulseweaver_wizard_stinger")) return false;
+	for (const auto &quick : quickTransitions) if (quick.source == source) return false;
+	transitionNameToUuids.erase(obs_source_get_name(source));
+	transitionUuids.erase(std::remove(transitionUuids.begin(), transitionUuids.end(), key), transitionUuids.end());
+	transitions.erase(found);
+	emit TransitionRemoved(uuid);
+	OnEvent(OBS_FRONTEND_EVENT_TRANSITION_LIST_CHANGED);
+	return true;
 }
 
 void OBSBasic::AddTransition(const char *id)
