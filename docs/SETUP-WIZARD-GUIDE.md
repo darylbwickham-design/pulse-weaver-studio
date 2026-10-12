@@ -2,10 +2,12 @@
 
 Open **Show Control → Control → Build my show…**. The wizard has one flow with layout options available by default.
 
+Add the cameras, captures and media feeds you need in **Camera** before opening the wizard. The feed questions reuse existing inputs; new browser overlay links can be added on page 4. Add any stingers in Studio first, or assign them in Manage stages after creating the show.
+
 1. **Connect Lumia.** Install Lumia Stream, add the Pulse Weaver companion plugin and import the templates your chosen Looks use. **Get Pulse Weaver overlays** opens the import links and setup guidance. You can proceed with existing sources. These are manual readiness checks.
 2. **Choose stage groups.** Select Starting, Chat, Game, Projects, Celebration and Intermission as needed. Ending and BRB belong to Intermission.
 3. **Choose functional Looks and options.** Select only the operating views you need. Configure composition, fit/crop, inset position and portrait proportion within those Looks. Existing saved presets appear when a compatible local reference is available; they retain their framing and camera treatments. A fresh installation uses the general layout options.
-4. **Assign sources and review.** Assign Feed A, B and C according to each question. Reuse cameras or captures where useful, skip optional feeds, and add your own overlay browser links for each canvas. Review both orientations and choose **Create my show** with all outputs stopped.
+4. **Assign sources and review.** Assign Feed A, B and C according to each question. Reuse cameras or captures where useful and skip optional feeds. Each Look has separate landscape and portrait artwork choices, so Countdown, Getting ready, BRB and Ending can use different templates. Extra overlays can target one Look, a selected stage group or all new layout Looks. Review both placement diagrams and choose **Create my show** with all outputs stopped.
 
 Related Looks share sources so Pulse Weaver Move can animate between them. Switching Stages uses a transition. Optional stingers are separate landscape and portrait choices; the Lumia guide links to Profounder. Existing shows and device settings remain available.
 
@@ -17,9 +19,11 @@ Import only the required MAIN, READY, BRB, END, ALERT and NEWS families. H means
 
 Newsroom is visible on load by default. For an event-only news intro, import a separate copy and turn off **Show persistent Newsroom on load**. Give each Look the intended overlay copy.
 
+Assign MAIN to Countdown, READY to Getting ready, BRB to Be right back and END to Ending. Add NEWS through the extra overlay questions and choose its intended Look. Match H/V artwork to the canvas. If you later deselect an overlay's target, choose another target or skip that overlay before creating the show.
+
 Import ALERT01-H's accompanying commands once. Its two chat controls and five disabled reward-code helpers serve both orientations. Copy the helpers into your own Twitch Points rewards and choose costs and permissions. The portrait copy carries no duplicate commands. Use one audible owner across overlays so alerts, TTS and effects do not play twice.
 
-The shared countdown starts through the `start-screen` payload described in the guide. Set its next Stage / Look command yourself and enable automatic completion in one instance only. Shared templates have automatic completion disabled by default.
+The shared Lumia countdown starts through the `start-screen` payload described in the guide. Its duration comes from that action. The wizard's minutes setting controls only **Built-in countdown**. Set the Lumia timer's next Stage / Look command yourself and enable automatic completion in one instance only. Shared templates have automatic completion disabled by default.
 
 Native Credits use Lumia's session data. Repeated activation uses the tested viewer compatibility bridge; populated session entries and separate-account import still need acceptance testing.
 

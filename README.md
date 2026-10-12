@@ -47,4 +47,4 @@ Pulse Weaver is derived from OBS Studio and distributed under GPL version 2 or l
 
 ## Wizard implementation requirements
 
-The experimental alpha uses one four-page setup wizard with broader layout options available by default. Alpha 8 keeps visited web chat panels loaded when switching views, preserving drafts and scroll position. It includes alpha 7's named chat panels and portrait wizard fixes. See [the setup wizard guide](docs/SETUP-WIZARD-GUIDE.md) and [alpha 8 release notes](docs/RELEASE-v1.14.2-alpha.8.md). The older theme builder guide is historical.
+The experimental alpha uses one four-page setup wizard with broader layout options available by default. Alpha 9 gives each Look its own landscape/portrait artwork, allows overlays to target one Look, and clarifies setup instructions. It includes alpha 8's retained chat panels. See [the setup wizard guide](docs/SETUP-WIZARD-GUIDE.md) and [alpha 9 release notes](docs/RELEASE-v1.14.2-alpha.9.md). The older theme builder guide is historical.

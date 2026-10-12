@@ -35,7 +35,7 @@ inline QWidget *createPage(QWidget *parent)
 <h2>Import and connect your overlays</h2>
 <ol><li><a href="https://www.lumiastream.com/downloads">Install Lumia Stream</a> and connect its Pulse Weaver plugin to the installation you are using.</li>
 <li>Import the templates needed by your chosen Looks into Lumia. H is landscape and V is portrait. Customize the text, logo, colours and artwork in Lumia.</li>
-<li>Use each imported overlay's chain / copy-link button to get your own browser link. Assign it to the matching canvas on the wizard's source page. A template share link imports a template; it is not the browser link.</li>
+<li>Use each imported overlay's chain / copy-link button to get your own browser link. On page 4, assign MAIN to Countdown, READY to Getting ready, BRB to Be right back and END to Ending, using each Look's separate landscape and portrait artwork questions. A template share link imports a template; it is not the browser link.</li>
 <li>Add any accompanying commands once. Both canvas versions can use the same command set. Select your own Twitch rewards and Pulse Weaver Stages / Looks after importing.</li></ol>
 <p>Use the shared alert overlay for alerts and the Fortnite widget. Add optional chat, camera frames and Newsroom only when your chosen Looks use them.</p>
 <h3>Pulse Weaver template import links</h3>
@@ -43,6 +43,7 @@ inline QWidget *createPage(QWidget *parent)
 <table cellspacing="8"><tr><th align="left">Template pair</th><th>Landscape</th><th>Portrait</th></tr><tr><td>Starting countdown</td><td><a href="https://api.lumiastream.com/shared/download/a2f38b4f-50b6-4733-a26c-e8610557564d">PW-MAIN01-H</a></td><td><a href="https://api.lumiastream.com/shared/download/a2f38b68-98a4-426a-b4d3-9b073f539d90">PW-MAIN01-V</a></td></tr><tr><td>Getting ready</td><td><a href="https://api.lumiastream.com/shared/download/a2f38b6a-264d-442f-a79d-59cd0be76fa7">PW-READY01-H</a></td><td><a href="https://api.lumiastream.com/shared/download/a2f38b6b-f146-4b08-82a4-f31284fbf23a">PW-READY01-V</a></td></tr><tr><td>Be right back</td><td><a href="https://api.lumiastream.com/shared/download/a2f38b6d-3094-478b-8fb7-a8016dfc9cbe">PW-BRB01-H</a></td><td><a href="https://api.lumiastream.com/shared/download/a2f38b6e-c0bd-4dcf-a9bb-a7f036cc58cf">PW-BRB01-V</a></td></tr><tr><td>Ending + Credits</td><td><a href="https://api.lumiastream.com/shared/download/a2f38b76-7ac2-4f2a-96bb-1c150ef6c7f8">PW-END01-H</a></td><td><a href="https://api.lumiastream.com/shared/download/a2f38b7c-a5a9-4be1-8aa6-d83f9f10f94c">PW-END01-V</a></td></tr><tr><td>Shared alerts + Fortnite</td><td><a href="https://api.lumiastream.com/shared/download/a2f38b7e-f534-4553-add7-cd2644a64489">PW-ALERT01-H</a></td><td><a href="https://api.lumiastream.com/shared/download/a2f38ba7-de88-4b45-a79c-068c63182298">PW-ALERT01-V</a></td></tr><tr><td>Newsroom / news intro</td><td><a href="https://api.lumiastream.com/shared/download/a2f38ba9-478c-4d1b-880a-d1953294ef2a">PW-NEWS01-H</a></td><td><a href="https://api.lumiastream.com/shared/download/a2f38baa-cc3f-4f42-b629-6e26b50d60bc">PW-NEWS01-V</a></td></tr></table>
 <p>When importing <b>PW-ALERT01-H</b>, accept its accompanying command bundle once. The portrait copy has no duplicate commands. See Fortnite challenges for the reward setup.</p>
 <h3>Newsroom and news intro</h3>
+<p>For Newsroom, add NEWS as an extra overlay on page 4 and choose the specific Look that should show it. Add the matching H/V copies to their respective canvas slots. Use a group or all Looks only when you want the overlay throughout those presentations. The shared ALERT overlay can target several Looks through a stage group.</p>
 <p>Newsroom is visible on load by default. For an event-only News intro, import a separate copy in Lumia and turn off <b>Show persistent Newsroom on load</b>. Its Code ID is <code>PW-NEWS01</code>. A news payload plays the intro and bulletin; a stop payload clears it:</p>
 <pre>{"type":"news","title":"Your bulletin","message":"Your update"}
 {"type":"stop"}</pre>
@@ -52,6 +53,7 @@ inline QWidget *createPage(QWidget *parent)
 )PW"));
 	topic("Starting countdown", QStringLiteral(R"PW(
 <h2>Show Starting and start the timer</h2>
+<p>These steps apply to imported Lumia artwork. If you selected <b>Built-in countdown</b>, its duration comes from the wizard instead; the Lumia payload below does not control that built-in page.</p>
 <p>Choosing the Starting presentation and starting its Lumia countdown are two actions. The timer payload does not change your Stage.</p>
 <ol><li>Create a command or shortcut in Lumia. Add Pulse Weaver's <b>Run Stage Look / Motion Action</b> and choose your show's Starting Countdown Look. For the saved layout preset, choose its Starting Look and select the Countdown content. If your plugin offers <b>Activate Stage</b>, choose Starting and separately select its countdown presentation.</li>
 <li>Ensure the Starting overlays are loaded before the timer action. Check this with your chosen stinger; add a short delay if loading requires it.</li>
@@ -69,13 +71,13 @@ This starts ten minutes. Change 600 to your desired duration in seconds.</li></o
 )PW"));
 	topic("Fortnite challenges", QStringLiteral(R"PW(
 <h2>Commands for the shared alert widget</h2>
-<p>Install the command set once for the landscape and portrait alerts. The saved setup uses these Twitch point rewards; you can change costs for your channel:</p>
-<table cellspacing="10"><tr><th align="left">Reward</th><th>Points</th><th align="left">Default</th></tr>
-<tr><td>Fortnite Challenge</td><td>1500</td><td>Enabled: random challenge</td></tr>
-<tr><td>hipfire challenge</td><td>2000</td><td>Enabled: Hip-Fire Only</td></tr>
-<tr><td>custom challenge</td><td>5000</td><td>Enabled: viewer supplies text</td></tr>
-<tr><td>FIRSTGUN</td><td>2000</td><td>Disabled: First Gun Only</td></tr>
-<tr><td>NOHIGH</td><td>2000</td><td>Disabled: No High Ground</td></tr></table>
+<p>Install the command set once for the landscape and portrait alerts. Create your own Twitch Points rewards and choose their costs and enabled state. The import contains disabled code helpers, not ready-made reward bindings:</p>
+<table cellspacing="10"><tr><th align="left">Reward purpose</th><th align="left">Code helper</th></tr>
+<tr><td>Random challenge</td><td>pwfnrandom</td></tr>
+<tr><td>Hip-Fire Only</td><td>pwfnhipfire</td></tr>
+<tr><td>Viewer supplies a custom challenge</td><td>pwfncustom</td></tr>
+<tr><td>First Gun Only</td><td>pwfnfirstgun</td></tr>
+<tr><td>No High Ground</td><td>pwfnnohigh</td></tr></table>
 <p>Link the rewards to your own Twitch channel. Keep viewer text required for custom challenge. Choose who can use the commands and their cooldowns in Lumia.</p>
 <p>Each reward has one Code action: it selects the challenge once, sends the resolved result to <code>FN_Challenge</code> and posts one Twitch chat message. Both displays show that result. Do not add a second random-roll or chat action.</p>
 <h3>Chat controls</h3>

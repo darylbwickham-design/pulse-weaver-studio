@@ -4,9 +4,28 @@
 #include <QJsonObject>
 #include <QRectF>
 #include <QStringList>
+#include <QUrl>
 #include <vector>
 
 namespace PulseShow {
+inline QString browserLinkProblem(const QString &value)
+{
+	const QUrl url(value.trimmed());
+	if (!url.isValid() || url.host().isEmpty() || (url.scheme() != "https" && url.scheme() != "http"))
+		return "Enter a complete HTTP or HTTPS browser link.";
+	if (url.host().compare("api.lumiastream.com", Qt::CaseInsensitive) == 0 &&
+	    url.path().startsWith("/shared/download/", Qt::CaseInsensitive))
+		return "This is a Lumia template import link. Import it in Lumia, then paste the overlay's chain / copy-link browser URL.";
+	return {};
+}
+inline QJsonObject rolesForLook(const QJsonObject &stage, const QString &look)
+{
+	QJsonObject roles = stage.value("roles").toObject();
+	const auto artwork = stage.value("lookArtwork").toObject().value(look).toObject();
+	for (const QString &role : {QString("graphic"), QString("graphicPortrait")})
+		if (artwork.contains(role)) roles.insert(role, artwork.value(role));
+	return roles;
+}
 struct Look {
 	QString id, name, description, main, support, layout;
 	bool optionalPresenter = false;

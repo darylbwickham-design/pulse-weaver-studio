@@ -15,6 +15,8 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScreen>
+#include <QGuiApplication>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QUrl>
@@ -50,6 +52,10 @@ void PulseMotionEngine::openShowWizard()
 	wizard.setOption(QWizard::NoBackButtonOnStartPage);
 	wizard.setButtonText(QWizard::FinishButton, "Create my show");
 	wizard.resize(1040, 820);
+	if (const auto *screen = QGuiApplication::primaryScreen()) {
+		const auto available = screen->availableGeometry().size();
+		wizard.resize(qMin(1040, available.width() - 40), qMin(820, available.height() - 60));
+	}
 	auto page = [&](const QString &title, const QString &subtitle) {
 		auto *value = new SetupPage;
 		value->setTitle(title); value->setSubTitle(subtitle);
@@ -87,6 +93,7 @@ void PulseMotionEngine::openShowWizard()
 	for (const QString &label : {QString("Lumia Stream is installed"), QString("The Pulse Weaver plugin is connected"),
 		QString("My overlays are ready, or I will use the existing sources")}) connectLayout->addWidget(new QCheckBox(label, connectPage));
 	text(connectLayout, connectPage, "You can prepare a show before completing the Lumia connection. These are manual readiness checks; they do not verify the connection or run overlay commands.");
+	text(connectLayout, connectPage, "Before continuing, add any cameras, captures or media feeds you need in Camera. The source questions reuse those existing inputs. New Lumia browser links can be added directly on page 4. Optional stingers must already be added in Studio to appear in the wizard; you can also assign them after creating the show.");
 	connectLayout->addStretch();
 
 	auto [stagePage, stageLayout] = page("2  Choose stage groups", "Which parts of your stream should this show include?");
@@ -114,7 +121,7 @@ void PulseMotionEngine::openShowWizard()
 	};
 	auto [lookPage, lookLayout] = page("3  Choose Looks and options", "Select your operating presentations and their layout options.");
 	text(lookLayout, lookPage, "Choose an on-air focus swap only if you will use that alternate presentation. Landscape, portrait and layout options belong to each Look.");
-	auto [sourcePage, sourceLayout] = page("4  Assign sources and review", "Answer one source question at a time, then review both canvases and create your show.");
+	auto [sourcePage, sourceLayout] = page("4  Assign sources and review", "Assign feeds and each Look's artwork, then review both canvas diagrams and create your show.");
 	QFile manifestFile(QDir(QFileInfo(storagePath).absolutePath()).filePath("setup-reference.json"));
 	QJsonObject manifest;
 	if (manifestFile.open(QIODevice::ReadOnly)) manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();

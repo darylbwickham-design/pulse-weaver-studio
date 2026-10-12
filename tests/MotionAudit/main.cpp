@@ -693,7 +693,7 @@ static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *por
 		for (auto *widget : sourcePage.findChildren<QSpinBox *>()) if (widget->accessibleName() == name) return widget;
 		return nullptr;
 	};
-	const QString horizontalLabel = "Starting · Landscape title / countdown", verticalLabel = "Starting · Portrait title / countdown";
+	const QString horizontalLabel = "Starting · Countdown · Landscape artwork", verticalLabel = "Starting · Countdown · Portrait artwork";
 	QComboBox *horizontal = combo(horizontalLabel), *vertical = combo(verticalLabel);
 	check(horizontal && vertical && horizontal != vertical,
 		"wizard presents independent landscape and portrait graphic questions");
@@ -707,7 +707,7 @@ static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *por
 	vertical->setCurrentIndex(vertical->findData(obs_source_get_uuid(portrait)));
 	check(setup.problem(true).isEmpty(), "independent valid H/V artwork completes the selected Starting questions");
 	QJsonObject draft = setup.draft("UI Questions Trial");
-	QJsonObject roles = draft.value("stages").toArray().first().toObject().value("roles").toObject();
+	QJsonObject roles = PulseShow::rolesForLook(draft.value("stages").toArray().first().toObject(), "countdown");
 	check(roles.value("graphic").toString() == obs_source_get_uuid(landscape) &&
 		roles.value("graphicPortrait").toString() == obs_source_get_uuid(portrait),
 		"wizard draft stores each graphic assignment under its correct canvas role");
@@ -725,14 +725,18 @@ static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *por
 	check(horizontalTime->value() == 7, "portrait countdown edit updates the paired landscape duration");
 	draft = setup.draft("UI Questions Trial");
 	const auto builtins = draft.value("newSources").toObject();
-	check(builtins.value("Starting/graphic/horizontal").toObject().value("minutes").toInt() == 7 &&
-		builtins.value("Starting/graphic/vertical").toObject().value("minutes").toInt() == 7,
+	check(builtins.value("Starting/graphic/countdown/horizontal").toObject().value("minutes").toInt() == 7 &&
+		builtins.value("Starting/graphic/countdown/vertical").toObject().value("minutes").toInt() == 7,
 		"both generated graphic definitions carry the shared countdown duration");
 	horizontal->setCurrentIndex(horizontal->findData("url")); vertical->setCurrentIndex(vertical->findData("url"));
 	QLineEdit *horizontalUrl = input(horizontalLabel+" browser URL"), *verticalUrl = input(verticalLabel+" browser URL");
 	check(horizontalUrl && verticalUrl, "wizard provides a browser link field for each format");
 	horizontalUrl->setText("https://example.invalid/landscape"); verticalUrl->setText("https://example.invalid/portrait");
 	check(setup.problem(true).isEmpty(), "separate valid browser URLs complete the artwork questions");
+	check(horizontalTime->isHidden(), "Lumia artwork does not offer an ineffective built-in timer setting");
+	horizontalUrl->setText("https://api.lumiastream.com/shared/download/example");
+	check(setup.problem(true).contains("template import link"), "wizard rejects a template share link with import instructions");
+	horizontalUrl->setText("https://example.invalid/landscape");
 	setup.update({"Chat"}); setup.update({"Starting"});
 	for (auto *button : sourcePage.findChildren<QPushButton *>()) if (button->text() == "Next source") button->click();
 	for (auto *button : sourcePage.findChildren<QPushButton *>()) if (button->text() == "Previous source") button->click();
@@ -740,13 +744,27 @@ static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *por
 		horizontalUrl->text() == "https://example.invalid/landscape" && verticalUrl->text() == "https://example.invalid/portrait",
 		"group and source back-navigation retains independent format answers");
 	draft = setup.draft("UI Questions Trial");
-	roles = draft.value("stages").toArray().first().toObject().value("roles").toObject();
+	roles = PulseShow::rolesForLook(draft.value("stages").toArray().first().toObject(), "countdown");
 	const auto links = draft.value("newSources").toObject();
-	check(roles.value("graphic") == "new:Starting/graphic/horizontal" &&
-		roles.value("graphicPortrait") == "new:Starting/graphic/vertical" &&
-		links.value("Starting/graphic/horizontal").toObject().value("url") == "https://example.invalid/landscape" &&
-		links.value("Starting/graphic/vertical").toObject().value("url") == "https://example.invalid/portrait",
+	check(roles.value("graphic") == "new:Starting/graphic/countdown/horizontal" &&
+		roles.value("graphicPortrait") == "new:Starting/graphic/countdown/vertical" &&
+		links.value("Starting/graphic/countdown/horizontal").toObject().value("url") == "https://example.invalid/landscape" &&
+		links.value("Starting/graphic/countdown/vertical").toObject().value("url") == "https://example.invalid/portrait",
 		"wizard emits independent new browser definitions and format roles after navigating back");
+	const auto welcome = PulseShow::rolesForLook(draft.value("stages").toArray().first().toObject(), "welcome");
+	check(welcome.value("graphic") != roles.value("graphic") && welcome.value("graphicPortrait") != roles.value("graphicPortrait"),
+		"changing Countdown artwork leaves Welcome's separate artwork intact");
+	auto *overlay = combo("Landscape overlay 1"), *scope = combo("Landscape overlay 1 visibility");
+	check(overlay && scope && scope->findData("setup-starting/countdown") >= 0, "overlay can target a single selected Look");
+	overlay->setCurrentIndex(overlay->findData(obs_source_get_uuid(landscape)));
+	scope->setCurrentIndex(scope->findData("setup-starting/countdown"));
+	draft = setup.draft("Scoped Overlay Trial");
+	check(draft.value("overlays").toArray().first().toObject().value("looks").toArray() == QJsonArray{"setup-starting/countdown"},
+		"single-Look overlay excludes other Looks in the same stage");
+	for (auto *box : lookPage.findChildren<QCheckBox *>()) if (box->text() == "Countdown") box->setChecked(false);
+	check(setup.problem(true).contains("Choose a selected Look"), "deselecting an overlay target prompts retargeting instead of silently dropping it");
+	overlay->setCurrentIndex(overlay->findData(""));
+	check(setup.problem(true).isEmpty(), "skipping an orphaned overlay clears the validation error");
 }
 
 static void themedBuilderTests(const obs_video_info &video)
@@ -955,6 +973,8 @@ static void themedBuilderTests(const obs_video_info &video)
 			const bool vertical = container.endsWith(" · Portrait");
 			OBSSourceAutoRelease browser = obs_get_source_by_uuid(uuid.toUtf8().constData());
 			OBSDataAutoRelease settings = obs_source_get_settings(browser);
+			check(!obs_data_get_bool(settings, "shutdown") && !obs_data_get_bool(settings, "restart_when_active"),
+				"new imported browser overlays retain timer and widget state across Look switches");
 			const int width = vertical ? 480 : 640, height = vertical ? 640 : 480;
 			check(obs_source_get_width(browser) == width && obs_source_get_height(browser) == height &&
 				obs_data_get_int(settings,"width") == width && obs_data_get_int(settings,"height") == height,
@@ -1022,6 +1042,43 @@ static void themedBuilderTests(const obs_video_info &video)
 	OBSSourceAutoRelease squareGraphic = obs_source_create("browser_source","Square graphic fixture",squareBrowserSettings,nullptr);
 	OBSSourceAutoRelease unknownGraphic = obs_source_create("browser_source","Unknown-size graphic fixture",nullptr,nullptr);
 	setupGraphicQuestionTests(landscapeGraphic,portraitGraphic,squareGraphic,unknownGraphic);
+	QJsonObject perLookStage{{"theme", "setup-intermission"}, {"looks", QJsonArray{"brb", "ending"}},
+		{"lookArtwork", QJsonObject{
+			{"brb", QJsonObject{{"graphic", obs_source_get_uuid(landscapeGraphic)}, {"graphicPortrait", obs_source_get_uuid(portraitGraphic)}}},
+			{"ending", QJsonObject{{"graphic", obs_source_get_uuid(squareGraphic)}, {"graphicPortrait", obs_source_get_uuid(unknownGraphic)}}}}}};
+	QJsonObject perLookRequest{{"schema", 2}, {"name", "Per Look Artwork"}, {"stages", QJsonArray{perLookStage}}};
+	check(engine.createGuidedShow(perLookRequest).value("ok").toBool(), "BRB and Ending accept different artwork within one stage");
+	for (const auto &value : PulseMotionEngineTestAccess::actions(engine)) {
+		const auto action = value.toObject(); if (action.value("stage") != "Per Look Artwork · Intermission") continue;
+		const bool ending = action.value("templateId").toString().endsWith("/ending");
+		int visible = 0, hidden = 0;
+		for (const auto &entry : action.value("items").toArray()) {
+			const auto item = entry.toObject(); const bool shown = item.value("transform").toObject().value("visible").toBool();
+			if (!shown) { ++hidden; continue; } ++visible;
+			const bool portrait = item.value("container").toString().endsWith("Portrait");
+			const auto expected = ending ? (portrait ? unknownGraphic.Get() : squareGraphic.Get()) :
+				(portrait ? portraitGraphic.Get() : landscapeGraphic.Get());
+			check(item.value("sourceUuid").toString() == obs_source_get_uuid(expected), "each Look displays its own artwork on the correct canvas");
+		}
+		check(visible == 2 && hidden == 2, "each Look hides the other Look's artwork in both directions");
+	}
+	const auto beforeArtworkFailure = PulseMotionEngineTestAccess::actions(engine);
+	const auto beforeArtworkStages = readFile(stagePath);
+	QJsonObject invalidPerLook = perLookStage;
+	invalidPerLook.insert("lookArtwork", QJsonObject{{"brb", perLookStage.value("lookArtwork").toObject().value("brb")},
+		{"ending", QJsonObject{{"graphic", obs_source_get_uuid(landscapeGraphic)}, {"graphicPortrait", obs_source_get_uuid(landscapeGraphic)}}}});
+	check(!engine.createGuidedShow({{"schema", 2}, {"name", "Invalid Look Artwork"}, {"stages", QJsonArray{invalidPerLook}}}).value("ok").toBool() &&
+		PulseMotionEngineTestAccess::actions(engine) == beforeArtworkFailure && readFile(stagePath) == beforeArtworkStages,
+		"per-Look portrait mismatch is rejected without partial creation");
+	QJsonObject invalidImport = browserChoices; invalidImport.insert("name", "Import URL Trial");
+	invalidImport.insert("newSources", QJsonObject{{"browser", QJsonObject{{"name", "Import URL fixture"}, {"kind", "browser_source"},
+		{"url", "https://api.lumiastream.com/shared/download/example"}}}});
+	check(!engine.createGuidedShow(invalidImport).value("ok").toBool() && readFile(stagePath) == beforeArtworkStages,
+		"native builder rejects template import links without mutating the show");
+	for (const char *name : {"Per Look Artwork · Intermission", "Per Look Artwork · Intermission · Portrait"}) {
+		OBSSourceAutoRelease source = obs_get_source_by_name(name); if (!source) source = obs_canvas_get_source_by_name(canvas, name);
+		if (source) obs_source_remove(source);
+	}
 	for (const auto &[name, graphic] : std::vector<std::pair<QString,obs_source_t *>>{
 		{"Square Graphics Trial",squareGraphic},{"Unknown Graphics Trial",unknownGraphic}}) {
 		QJsonObject adaptable = separateGraphics; adaptable.insert("name",name);

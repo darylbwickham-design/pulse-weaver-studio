@@ -1639,10 +1639,9 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				return false;
 			}
 			if (kind == "browser_source") {
-				const QUrl url(definition.value("url").toString());
-				if (!url.isValid() || url.host().isEmpty() ||
-				    (url.scheme() != "http" && url.scheme() != "https")) {
-					validationError = "Enter a complete URL for " + name + ".";
+				const QString linkProblem = PulseShow::browserLinkProblem(definition.value("url").toString());
+				if (!linkProblem.isEmpty()) {
+					validationError = name + ": " + linkProblem;
 					return false;
 				}
 			}
@@ -1707,8 +1706,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		if (chosen.isEmpty()) {
 			return error("Choose at least one Look for " + theme->name + ".");
 		}
-		const QJsonObject roles = stage.value("roles").toObject();
-		auto validateRole = [&](const QString &role, bool required) {
+		auto validateRole = [&](const QJsonObject &roles, const QString &role, bool required) {
 			if (!validateSource(roles.value(role).toString(), role, required, "horizontal")) return false;
 			if (role == "graphic") {
 				const QString portraitId = roles.contains("graphicPortrait") ?
@@ -1729,8 +1727,9 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				return error("Unknown or duplicate Look: " + key);
 			}
 			selectedLooks.insert(key);
-			if (!validateRole(look->main, true) ||
-			    (!look->support.isEmpty() && !validateRole(look->support, !look->optionalPresenter))) {
+			const QJsonObject roles = PulseShow::rolesForLook(stage, look->id);
+			if (!validateRole(roles, look->main, true) ||
+			    (!look->support.isEmpty() && !validateRole(roles, look->support, !look->optionalPresenter))) {
 				return error(theme->name + " → " + look->name + ": " + validationError);
 			}
 		}
@@ -1854,7 +1853,10 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			obs_data_set_int(settings, "height", height);
 			obs_data_set_string(settings, "css",
 					    "body { background-color: rgba(0,0,0,0); margin: 0; overflow: hidden; }");
-			obs_data_set_bool(settings, "shutdown", true);
+			// Keep imported overlays warm so Look switches do not reset Lumia
+			// countdowns or widget state. Built-in timers restart with their page.
+			obs_data_set_bool(settings, "shutdown", graphic);
+			obs_data_set_bool(settings, "restart_when_active", false);
 			obs_data_set_bool(settings, "reroute_audio", true);
 			if (!graphic) {
 				name += " · " + route;
@@ -1934,8 +1936,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
             for (const auto &look : cloned.value("actions").toArray()) newActions.append(look);
             continue;
         }
-		const QJsonObject roleIds = stage.value("roles").toObject(),
-				  framing = stage.value("framing").toObject();
+		const QJsonObject framing = stage.value("framing").toObject();
 		const int firstLook = newActions.size();
 		QJsonObject savedRoles;
 		struct Item {
@@ -1946,6 +1947,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		QMap<QString, OBSSource> treatedSources;
 		for (const auto &id : stage.value("looks").toArray()) {
 			const auto *look = PulseShow::look(*theme, id.toString());
+			const QJsonObject roleIds = PulseShow::rolesForLook(stage, look->id);
 			const QString lookKey = theme->id + "/" + look->id;
 			QJsonArray targets;
 			for (bool vertical : {false, true}) {
@@ -2002,6 +2004,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 							    ".");
 					}
 					QString token = panel.role;
+					if (panel.role == "graphic") token += "/" + QString::fromUtf8(obs_source_get_uuid(source));
 					if (definitions.value(sourceId.mid(4)).toObject().value("kind").toString() ==
 					    "builtin_graphic") {
 						token += "/" + PulseShow::graphicVariant(lookKey);
