@@ -30,6 +30,68 @@ try{
    using var child=Process.GetProcessById(childId);Check(child.WaitForExit(15000),"clean launcher child timed out");
    Check(File.ReadAllText(resultPath)=="CLEAN","installer child inherited an open log handle");
  }
+ // Reproduce a folder handle that permits reading but denies directory rename.
+ // This is deliberately independent of user installs, permissions and accounts.
+ var lockedRoot=Path.Combine(temp,"locked-config");Seed(lockedRoot,"1.14.3");
+ Directory.CreateDirectory(Path.Combine(lockedRoot,"config","empty"));
+ var lockedStage=Path.Combine(temp,"locked-stage");Recovery.CopyTree(lockedRoot,lockedStage);
+ Put(lockedStage,"bin/64bit/pulseweaver-update.json","{\"tag\":\"v1.14.4-alpha.1\"}");
+ using(var directoryHandle=NativeHandle.OpenDirectory(Path.Combine(lockedRoot,"config"))) {
+   Check(!directoryHandle.IsInvalid,"could not open synthetic locked config directory");
+   bool oldSwapBlocked=false;
+   try { Directory.Move(Path.Combine(lockedRoot,"config"),Path.Combine(temp,"would-rename-config")); }
+   catch(UnauthorizedAccessException){oldSwapBlocked=true;}catch(IOException){oldSwapBlocked=true;}
+   Check(oldSwapBlocked,"synthetic lock did not reproduce Windows directory rename failure");
+   Recovery.Replace(lockedRoot,lockedStage,preserveUnchangedConfig:true);
+   Check(Recovery.InstalledVersion(lockedRoot)=="1.14.4-alpha.1","update with readable locked config did not complete");
+   Check(File.ReadAllText(Path.Combine(lockedRoot,"config/scenes.json")).EndsWith("1.14.3"),"in-place settings changed bytes");
+   Check(Directory.Exists(Path.Combine(lockedRoot,"config/empty")),"in-place settings lost empty directory");
+   Check(!Recovery.Pending(lockedRoot),"successful config-preserving update left pending transaction");
+ }
+ // Rollback journals must omit the preserved config on every failure boundary.
+ for(int stop=1;stop<=8;stop++) {
+   var instance=Path.Combine(temp,"preserve-fault"+stop);Seed(instance,"1.14.3");
+   var stage=Path.Combine(temp,"preserve-stage"+stop);Recovery.CopyTree(instance,stage);
+   Put(stage,"bin/64bit/pulseweaver-update.json","{\"tag\":\"v1.14.4-alpha.1\"}");Put(stage,"new.dll","new");
+   using(var directoryHandle=NativeHandle.OpenDirectory(Path.Combine(instance,"config"))) {
+     bool failed=false;try{Recovery.Replace(instance,stage,step=>{if(step==stop)throw new IOException("Injected failure");},true);}catch(IOException){failed=true;}
+     if(failed) {
+       Check(Recovery.InstalledVersion(instance)=="1.14.3","preserved-config failure did not restore runtime");
+       Check(File.ReadAllText(Path.Combine(instance,"config/scenes.json")).EndsWith("1.14.3"),"preserved-config rollback touched settings");
+       Check(!File.Exists(Path.Combine(instance,"new.dll")),"preserved-config rollback left new file");
+       Check(!Recovery.Pending(instance),"preserved-config rollback left journal");
+     }
+   }
+ }
+ // Same-length changed content and different empty directories cannot be skipped.
+ var changedRoot=Path.Combine(temp,"changed-config");Seed(changedRoot,"1.14.3");
+ var changedStage=Path.Combine(temp,"changed-stage");Recovery.CopyTree(changedRoot,changedStage);
+ Put(changedStage,"config/scenes.json",File.ReadAllText(Path.Combine(changedStage,"config/scenes.json")).Replace("1.14.3","1.14.4"));
+ Recovery.Replace(changedRoot,changedStage,preserveUnchangedConfig:true);
+ Check(File.ReadAllText(Path.Combine(changedRoot,"config/scenes.json")).EndsWith("1.14.4"),"same-length configuration change was incorrectly skipped");
+ var directoryRoot=Path.Combine(temp,"directory-config");Seed(directoryRoot,"1.14.3");
+ var directoryStage=Path.Combine(temp,"directory-stage");Recovery.CopyTree(directoryRoot,directoryStage);
+ Directory.CreateDirectory(Path.Combine(directoryStage,"config","new-empty"));
+ Recovery.Replace(directoryRoot,directoryStage,preserveUnchangedConfig:true);
+ Check(Directory.Exists(Path.Combine(directoryRoot,"config/new-empty")),"directory configuration change was incorrectly skipped");
+ var hashLockedRoot=Path.Combine(temp,"hash-locked-root");Seed(hashLockedRoot,"1.14.3");
+ var hashLockedStage=Path.Combine(temp,"hash-locked-stage");Recovery.CopyTree(hashLockedRoot,hashLockedStage);
+ using(var writer=new FileStream(Path.Combine(hashLockedRoot,"config/scenes.json"),FileMode.Open,FileAccess.Write,FileShare.ReadWrite)) {
+   bool refused=false;try{Recovery.Replace(hashLockedRoot,hashLockedStage,preserveUnchangedConfig:true);}catch(IOException){refused=true;}
+   Check(refused,"configuration comparison bypassed an active writer");
+   Check(!Directory.Exists(Recovery.WorkDirectory(hashLockedRoot)),"failed configuration comparison orphaned a recovery work folder");
+ }
+ var readonlyRoot=Path.Combine(temp,"readonly-config");Seed(readonlyRoot,"1.14.3");
+ var readonlyOriginal=Path.Combine(readonlyRoot,"config/scenes.json");File.SetAttributes(readonlyOriginal,FileAttributes.ReadOnly);
+ var readonlyStage=Path.Combine(Recovery.BackupDirectory(readonlyRoot),"stage-"+Guid.NewGuid().ToString("N"));
+ Recovery.CopyTree(readonlyRoot,readonlyStage);Put(readonlyStage,"bin/64bit/pulseweaver-update.json","{\"tag\":\"v1.14.4-alpha.1\"}");
+ Recovery.Replace(readonlyRoot,readonlyStage,preserveUnchangedConfig:true);Recovery.DiscardStage(readonlyRoot,readonlyStage);
+ Check(!Directory.Exists(readonlyStage),"readonly staged config copies prevented cleanup");
+ Check((File.GetAttributes(readonlyOriginal) & FileAttributes.ReadOnly)!=0,"cleanup changed original config attributes");
+ File.SetAttributes(readonlyOriginal,FileAttributes.Normal);
+ bool unsafeCleanupRefused=false;try{Recovery.DiscardStage(readonlyRoot,Path.Combine(readonlyRoot,"config"));}catch(IOException){unsafeCleanupRefused=true;}
+ Check(unsafeCleanupRefused,"staging cleanup accepted installed settings");
+ Check(File.ReadAllText(readonlyOriginal).EndsWith("1.14.3"),"readonly cleanup changed installed config bytes");
  var root=Path.Combine(temp,"Studio");Seed(root,"1.12.7");
  Check(Recovery.BackupDirectory(root+Path.DirectorySeparatorChar)==Recovery.BackupDirectory(root),"trailing separator placed backup inside installation");
  Check(Recovery.WorkDirectory(root+Path.DirectorySeparatorChar)==Recovery.WorkDirectory(root),"trailing separator changed recovery journal location");
@@ -101,6 +163,10 @@ try{
 finally{Directory.Delete(temp,true);}
 
 static class NativeHandle {
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
+ static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string path,uint access,uint sharing,IntPtr security,uint disposition,uint flags,IntPtr template);
+ internal static Microsoft.Win32.SafeHandles.SafeFileHandle OpenDirectory(string path) =>
+   CreateFileW(path,0x80000000,3,IntPtr.Zero,3,0x02000000,IntPtr.Zero);
  [DllImport("kernel32.dll",SetLastError=true)] [return:MarshalAs(UnmanagedType.Bool)]
  internal static extern bool SetHandleInformation(IntPtr handle,uint mask,uint flags);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]

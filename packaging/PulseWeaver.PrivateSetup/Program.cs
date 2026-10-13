@@ -43,6 +43,7 @@ internal static class Program
 #else
     internal static readonly string ReleaseTag = "v" + Version;
 #endif
+    internal static string DisplayVersion => ReleaseTag.TrimStart('v');
     const string InstallManifestName = ".pulseweaver-installed-files.txt";
     internal static readonly string InstallDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", InstallFolderName);
     internal static readonly string AppPath = Path.Combine(InstallDirectory, "bin", "64bit", "PulseWeaverCore.exe");
@@ -119,8 +120,8 @@ internal static class Program
             if(!File.Exists(Path.Combine(stage,"bin","64bit","PulseWeaverCore.exe"))) throw new IOException("Incomplete runtime payload.");
             if(!ConfiguredLanguage(stage).Equals(languageCode,StringComparison.OrdinalIgnoreCase)) WriteLanguage(languageCode,stage);
             if(!upgradeSelfTest && Process.GetProcessesByName("PulseWeaverCore").Length>0) throw new IOException("Pulse Weaver started during staging. Close it and retry; the installation has not been changed.");
-            progress(70,"Committing the verified update with rollback protection…"); Recovery.Replace(root,stage);
-        } finally { if(Directory.Exists(stage)) Directory.Delete(stage,true); }
+            progress(70,"Committing the verified update with rollback protection…"); Recovery.Replace(root,stage,preserveUnchangedConfig:true);
+        } finally { Recovery.DiscardStage(root,stage); }
     }
 
     internal static void Maintain(string operation, string? backup, Action<int,string> progress)
@@ -468,13 +469,13 @@ internal sealed class SetupForm : Form
 		var existingInstall = File.Exists(Program.AppPath);
 		downgrade = Recovery.RequiresRestore(Program.InstallDirectory, Program.ReleaseTag);
 		if (existingInstall) {
-			var installedVersion = Registry.CurrentUser.OpenSubKey(Program.UninstallRegistryPath)?.GetValue("DisplayVersion")?.ToString();
-			var update = string.IsNullOrWhiteSpace(installedVersion) || !string.Equals(installedVersion, Program.Version, StringComparison.OrdinalIgnoreCase);
-			install.Text = downgrade ? "ROLL BACK VIA BACKUP" : update ? $"UPDATE TO {Program.Version}" : "REPAIR " + Program.ProductLabel.ToUpperInvariant();
+			var installedVersion = Recovery.InstalledVersion(Program.InstallDirectory);
+			var update = !string.Equals(installedVersion, Program.DisplayVersion, StringComparison.OrdinalIgnoreCase);
+			install.Text = downgrade ? "ROLL BACK VIA BACKUP" : update ? $"UPDATE TO {Program.DisplayVersion}" : "REPAIR " + Program.ProductLabel.ToUpperInvariant();
 			uninstall.Visible = true;
-			status.Text = update ? $"{Program.ProductLabel} {installedVersion} is installed — update available" : $"{Program.ProductLabel} {Program.Version} is installed — repair or uninstall";
+			status.Text = update ? $"{Program.ProductLabel} {installedVersion} is installed — update available" : $"{Program.ProductLabel} {Program.DisplayVersion} is installed — repair or uninstall";
 		}
-        Text = $"{Program.ProductLabel} {Program.Version} Setup";
+        Text = $"{Program.ProductLabel} {Program.DisplayVersion} Setup";
         ClientSize = new Size(760, 720); MinimumSize = new Size(680, 620);
         StartPosition = FormStartPosition.CenterScreen; BackColor = Color.FromArgb(15, 19, 29);
         ForeColor = Color.FromArgb(230, 235, 244); Font = new Font("Segoe UI", 10); AutoScaleMode = AutoScaleMode.Dpi;
@@ -493,7 +494,7 @@ internal sealed class SetupForm : Form
         var logo = Icon.ExtractAssociatedIcon(Application.ExecutablePath)?.ToBitmap();
         brand.Controls.Add(new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(48, 48), Location = new Point(0, 4) });
         brand.Controls.Add(new Label { Text = "Pulse Weaver", Font = new Font("Segoe UI", 20, FontStyle.Bold), AutoSize = true, Location = new Point(64, 0) });
-        brand.Controls.Add(new Label { Text = $"{Program.InstallerSubtitle}  ·  {Program.Version}", Font = new Font("Segoe UI", 9), ForeColor = Color.FromArgb(155, 171, 194), AutoSize = true, Location = new Point(66, 38) });
+        brand.Controls.Add(new Label { Text = $"{Program.InstallerSubtitle}  ·  {Program.DisplayVersion}", Font = new Font("Segoe UI", 9), ForeColor = Color.FromArgb(155, 171, 194), AutoSize = true, Location = new Point(66, 38) });
         Add(brand);
         Add(new Label { Text = existingInstall ? "Update your studio" : "Set up your studio", Font = new Font("Segoe UI", 18, FontStyle.Bold), AutoSize = true });
         var destination = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Padding = new Padding(16), BackColor = Color.FromArgb(24, 31, 44) };

@@ -49,6 +49,15 @@ int main(int argc, char **argv)
 	check(selectRelease(alphaReleases, privateWindows)->identity.tag == "v1.12.16", "Alpha is opt-in");
 	check(selectRelease(alphaReleases, privateWindows, true)->identity.tag == "v1.13.0-alpha.10", "Alpha opt-in selects numeric revision");
 	check(selectRelease(alphaReleases, alpha)->identity.tag == "v1.13.0-alpha.10", "Alpha keeps receiving alpha updates");
+	const QJsonArray installerRepair{release({"windows-alpha", "v1.14.4-alpha.1"}),
+		release({"windows-alpha", "v1.14.4-alpha.2"}), release({"windows-private", "v1.14.3"})};
+	check(selectRelease(installerRepair, {"windows-alpha", "v1.14.4-alpha.1"})->identity.tag == "v1.14.4-alpha.2",
+		"Alpha 1 discovers the corrected Alpha 2 installer");
+	check(selectRelease(installerRepair, {"windows-private", "v1.14.3"}, true)->identity.tag == "v1.14.4-alpha.2",
+		"Regular users opted into alpha discover the installer repair");
+	check(!selectRelease(installerRepair, {"windows-private", "v1.14.3"}), "Regular users remain on release unless they opt into alpha");
+	check(assetName({"windows-alpha", "v1.14.4-alpha.2"}) == "PulseWeaver-Setup-1.14.4-alpha.2.exe",
+		"Alpha 2 requires the correctly named installer asset");
 	check(!selectRelease(QJsonArray{release({"windows-private", "v1.12.16"})}, alpha), "Return to older release requires recovery");
 	check(selectRelease(QJsonArray{release({"windows-private", "v1.13.0"})}, alpha)->identity.channel == "windows-private", "Final release supersedes alpha with same base version");
 	check(!selectRelease(QJsonArray{release(alpha)}, {"windows-private", "v1.13.0"}, true), "Alpha cannot downgrade final release");

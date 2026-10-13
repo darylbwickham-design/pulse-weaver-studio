@@ -16,6 +16,7 @@ without this identity do not guess an installation channel.
 | windows-private | v1.12.15 | PulseWeaver-Setup-1.12.15-BETA.exe |
 | windows-private | v1.14.3 | PulseWeaver-Setup-1.14.3.exe |
 | windows-alpha | v1.14.4-alpha.1 | PulseWeaver-Setup-1.14.4-alpha.1.exe |
+| windows-alpha | v1.14.4-alpha.2 | PulseWeaver-Setup-1.14.4-alpha.2.exe |
 | windows-unstable (superseded preview) | v1.14.0-unstable.12 | Updates to regular v1.14.3 |
 | mac-arm64-preview | mac-v0.1.0-alpha.2 | PulseWeaver-Mac-mac-v0.1.0-alpha.2-AppleSilicon.dmg |
 

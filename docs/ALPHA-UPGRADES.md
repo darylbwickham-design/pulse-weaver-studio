@@ -1,6 +1,6 @@
 # Release and alpha updates
 
-**1.14.0 is the regular release and supersedes its alpha and unstable previews.** Existing 1.14 preview installations are offered the final 1.14.0 release. The website presents one current Windows download; historical previews remain available for reference. Incoming YouTube chat always uses the scanner, while sending and moderation use the API, regardless of old reader preferences.
+**1.14.4-alpha.2 repairs installer access errors during updates.** The broadcast runtime and Lumia integration are unchanged from alpha 1. The regular release remains 1.14.3; receiving alpha builds requires opting in. Unchanged configuration stays in place during the update, with verified backups and rollback retained.
 
 The regular release remains on the release channel by default. Open **Studio → Updates → Include experimental alpha builds** to opt in, then check for updates. **Include unstable showcase builds** is a separate opt-in. Downloading a preview never installs it automatically.
 

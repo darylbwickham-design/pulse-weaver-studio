@@ -71,6 +71,22 @@ internal static class Recovery
         return new FileStream(Path.Combine(backups,"maintenance.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
     }
     static string Hash(string file) { using var input = File.OpenRead(file); return Convert.ToHexString(SHA256.HashData(input)); }
+    static bool SameTree(string first, string second)
+    {
+        if (!Directory.Exists(first) || !Directory.Exists(second)) return false;
+        var firstDirectories = Directory.EnumerateDirectories(first,"*",SearchOption.AllDirectories)
+            .Select(p => Path.GetRelativePath(first,p)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var secondDirectories = Directory.EnumerateDirectories(second,"*",SearchOption.AllDirectories)
+            .Select(p => Path.GetRelativePath(second,p)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!firstDirectories.SetEquals(secondDirectories)) return false;
+        var firstFiles = Directory.EnumerateFiles(first,"*",SearchOption.AllDirectories)
+            .ToDictionary(p => Path.GetRelativePath(first,p),StringComparer.OrdinalIgnoreCase);
+        var secondFiles = Directory.EnumerateFiles(second,"*",SearchOption.AllDirectories)
+            .ToDictionary(p => Path.GetRelativePath(second,p),StringComparer.OrdinalIgnoreCase);
+        if (!firstFiles.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(secondFiles.Keys)) return false;
+        return firstFiles.All(pair => new FileInfo(pair.Value).Length == new FileInfo(secondFiles[pair.Key]).Length &&
+            Hash(pair.Value) == Hash(secondFiles[pair.Key]));
+    }
     static IEnumerable<string> Top(string root) => Directory.Exists(root)
         ? Directory.EnumerateFileSystemEntries(root).Select(Path.GetFileName).Where(n => n is not null && !Excluded(n)).Cast<string>()
         : Enumerable.Empty<string>();
@@ -78,6 +94,23 @@ internal static class Recovery
     {
         SafeTree(from); Directory.CreateDirectory(to); SafeTree(to);
         foreach (var name in Top(from)) Copy(Path.Combine(from,name), Path.Combine(to,name));
+    }
+    internal static void DiscardStage(string root, string stage)
+    {
+        var full = CanonicalRoot(stage);
+        if (!Path.GetDirectoryName(full)!.Equals(BackupDirectory(root),StringComparison.OrdinalIgnoreCase) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(full),"^(stage|restore)-[a-f0-9]{32}$"))
+            throw new IOException("Refusing to clean a folder outside this operation's staging area.");
+        if (!Directory.Exists(full)) return;
+        SafeTree(full);
+        // File.Copy retains readonly attributes. Clear them only on disposable
+        // staged copies; unchanged original settings retain their attributes.
+        foreach (var file in Directory.EnumerateFiles(full,"*",SearchOption.AllDirectories))
+            File.SetAttributes(file,File.GetAttributes(file) & ~FileAttributes.ReadOnly);
+        foreach (var directory in Directory.EnumerateDirectories(full,"*",SearchOption.AllDirectories))
+            File.SetAttributes(directory,File.GetAttributes(directory) & ~FileAttributes.ReadOnly);
+        File.SetAttributes(full,File.GetAttributes(full) & ~FileAttributes.ReadOnly);
+        Directory.Delete(full,true);
     }
     static void Copy(string from, string to)
     {
@@ -177,20 +210,31 @@ internal static class Recovery
         var history=Path.Combine(BackupDirectory(root),"transactions"); Directory.CreateDirectory(history);
         Directory.Move(work,Path.Combine(history,DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N")));
     }
-    internal static void Replace(string root, string prepared, Action<int>? fault = null)
+    internal static void Replace(string root, string prepared, Action<int>? fault = null, bool preserveUnchangedConfig = false)
     {
         SafeTree(root); SafeTree(prepared); Directory.CreateDirectory(root);
         if(Pending(root)) throw new IOException("An interrupted operation must be recovered first.");
         var work=WorkDirectory(root);
         if(Directory.Exists(work)) throw new IOException("Recovery work directory already exists; preserve it for inspection.");
+        // Updates stage a copy of the existing configuration. If its bytes and
+        // directory/file sets are unchanged, leave that original folder in place.
+        // Windows can deny renaming a directory even when every file is readable
+        // (for example, an Explorer/extension handle without delete sharing).
+        // Changed settings still use the full journaled swap, as does restoration.
+        var keepConfig = preserveUnchangedConfig && SameTree(Path.Combine(root,"config"),Path.Combine(prepared,"config"));
+        bool Included(string name) => !keepConfig || !name.Equals("config",StringComparison.OrdinalIgnoreCase);
+        var state=new Transaction(1,CanonicalRoot(root),Top(root).Where(Included).ToArray(),Top(prepared).Where(Included).ToArray());
         Directory.CreateDirectory(Path.Combine(work,"previous"));
-        var state=new Transaction(1,CanonicalRoot(root),Top(root).ToArray(),Top(prepared).ToArray());
         Journal(work,state);
         try {
             int step=0;
             foreach(var name in state.Before) { Move(Path.Combine(root,name),Path.Combine(work,"previous",name)); fault?.Invoke(++step); }
             foreach(var name in state.After) { Move(Path.Combine(prepared,name),Path.Combine(root,name)); fault?.Invoke(++step); }
             Journal(work,state with {Committed=true});
+        } catch (UnauthorizedAccessException ex) {
+            RecoverInterrupted(root);
+            throw new IOException("Windows blocked access while replacing the app or settings. The previous installation was restored. " +
+                "Close Pulse Weaver and any windows or tools using its install folder, then reopen the downloaded installer. " + ex.Message, ex);
         } catch { RecoverInterrupted(root); throw; }
         RecoverInterrupted(root);
     }
@@ -207,6 +251,6 @@ internal static class Recovery
             progress(75,"Restoring the saved app version and settings together…"); Replace(root,staging);
             progress(100,"Restored "+snapshot.Version+". Previous state backed up at "+safety);
             return snapshot.Version;
-        } finally { if(Directory.Exists(staging)) Directory.Delete(staging,true); }
+        } finally { DiscardStage(root,staging); }
     }
 }

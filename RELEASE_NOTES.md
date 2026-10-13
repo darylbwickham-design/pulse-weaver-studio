@@ -1,3 +1,23 @@
+# Pulse Weaver 1.14.4-alpha.2 — Installer update fix
+
+This alpha fixes updates that stop with “Access to the path …\config is denied”.
+When the staged settings are unchanged, setup leaves the existing config folder
+in place instead of renaming it. Full verified backups and rollback remain active;
+changed settings and full restores still use the normal protected transaction.
+
+Setup now displays the full alpha revision. Readonly staged copies are cleaned
+without changing the original settings, and access errors explain how to retry.
+The broadcast runtime, Lumia 1.4.4 plugin and wizard assets are unchanged from alpha 1.
+
+Validation: 104 recovery checks, a real Windows directory-lock reproduction,
+all rollback boundaries, payload validation, and a private copied-profile
+upgrade/restore with byte-for-byte configuration preservation. Updater checks
+confirm alpha 1 discovers alpha 2 and regular users receive it only when opted in.
+
+Download **PulseWeaver-Setup-1.14.4-alpha.2.exe**. Close Pulse Weaver and older setup
+windows, then run it. The matching source archive and SHA-256 checksums are included.
+
+---
 # Pulse Weaver 1.12.15 Beta — Crash and stability fixes
 
 This update fixes an Overlay Designer selection callback that could run while the window was being destroyed. The faulty callback sequence was reproduced in a regression test and the protected sequence passed 100 deletion cycles. It is consistent with the reported Qt selection crash; the friend's exact live-camera sequence has not been reproduced on their hardware.
