@@ -23,7 +23,7 @@ From the repository root, in a developer PowerShell:
 
 ```powershell
 cmake -S engine/obs-studio -B engine/obs-studio/build_pw_vs1714_sdk22621 -G "Visual Studio 17 2022" -A "x64,version=10.0.22621.0" -DENABLE_BROWSER=ON -DENABLE_WEBSOCKET=ON -DENABLE_AJA=OFF -DENABLE_VLC=OFF -DYOUTUBE_CLIENTID= -DYOUTUBE_SECRET= -DYOUTUBE_CLIENTID_HASH=0 -DYOUTUBE_SECRET_HASH=0
-cmake --build engine/obs-studio/build_pw_vs1714_sdk22621 --config RelWithDebInfo --target obs-studio pulse-weaver-core pulse-weaver-sample-clock --parallel 4
+cmake --build engine/obs-studio/build_pw_vs1714_sdk22621 --config RelWithDebInfo --target obs-studio pulse-weaver-core pulse-weaver-sample-clock altron-teleport --parallel 4
 node --test tests/LumiaPlugin.test.cjs
 ```
 

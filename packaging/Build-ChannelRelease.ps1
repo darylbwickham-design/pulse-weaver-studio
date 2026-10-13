@@ -16,6 +16,9 @@ $output = Join-Path $projectRoot "artifacts/channel-$tag"
 if (Test-Path -LiteralPath $output) { throw "Output already exists: $output" }
 $registration = Get-YouTubeDesktopRegistration -Path $YouTubeDesktopClientJson
 Assert-PulseWeaverRuntimeComponents -Root $runtime
+foreach ($relative in @('obs-plugins/64bit/altron-teleport.dll','data/obs-plugins/altron-teleport/white-teleport.effect')) {
+    if (!(Test-Path -LiteralPath (Join-Path $runtime $relative))) { throw "Build the altron-teleport native target before packaging: $relative" }
+}
 foreach ($folder in @('bin','data','obs-plugins')) { Assert-PulseWeaverRuntimeTree -Root (Join-Path $runtime $folder) }
 $payload = Join-Path $output 'payload'
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
@@ -59,6 +62,8 @@ $pluginZip = Join-Path $output "PulseWeaver-Lumia-$pluginVersion.zip"
 Compress-Archive -Path (Join-Path $pluginStage '*') -DestinationPath $pluginZip
 $plugin = [IO.Path]::ChangeExtension($pluginZip,'.lumiaplugin')
 Move-Item -LiteralPath $pluginZip -Destination $plugin
+New-Item -ItemType Directory -Force -Path (Join-Path $payload 'integrations') | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/altron-teleport') -Destination (Join-Path $payload 'integrations/altron-teleport') -Recurse
 $bundledPluginDirectory = Join-Path $payload 'integrations/lumia'
 New-Item -ItemType Directory -Path $bundledPluginDirectory -Force | Out-Null
 Copy-Item -LiteralPath $plugin -Destination $bundledPluginDirectory

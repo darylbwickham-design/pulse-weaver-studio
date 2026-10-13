@@ -1,0 +1,71 @@
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float elapsed;
+uniform int role;
+uniform float intensity;
+uniform float centre_x;
+uniform float centre_y;
+uniform float pixel_x;
+uniform float pixel_y;
+sampler_state linear_sampler { Filter = Linear; AddressU = Clamp; AddressV = Clamp; };
+struct VertData { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+VertData VS(VertData v) { VertData o; o.pos=mul(float4(v.pos.xyz,1.0),ViewProj); o.uv=v.uv; return o; }
+float inside(float2 uv) { return step(0.0,uv.x)*step(uv.x,1.0)*step(0.0,uv.y)*step(uv.y,1.0); }
+float4 sample_at(float2 uv) { return image.Sample(linear_sampler,uv)*inside(uv); }
+float4 PS(VertData v) : TARGET {
+ float2 uv=v.uv;
+ float t=elapsed;
+ float4 plain=sample_at(uv);
+ if(t<0.0) return plain;
+ if(role==1) {
+  plain*=1.0-smoothstep(1.65,2.02,t);
+  float roomFlash=smoothstep(1.82,1.94,t)*(1.0-smoothstep(2.07,2.29,t));
+  plain.rgb=lerp(plain.rgb,float3(1.0,1.0,1.0),roomFlash);
+  plain.a=lerp(plain.a,1.0,roomFlash);
+  return plain;
+ }
+ float launch=smoothstep(1.05,1.92,t);
+ float charge=smoothstep(0.10,0.80,t);
+ float width=lerp(1.0,0.025,launch);
+ float stretch=lerp(1.0,3.6,launch);
+ float lift=launch*launch*1.85;
+ float2 srcuv=float2((uv.x-centre_x)/width+centre_x,(uv.y-centre_y+lift)/stretch+centre_y);
+ float4 cam=sample_at(srcuv);
+ float fade=1.0-smoothstep(1.28,1.64,t);
+ float whitening=smoothstep(0.68,1.35,t);
+ cam.rgb=lerp(cam.rgb,float3(1.0,0.99,0.96)*cam.a,whitening)*fade;
+ cam.a*=fade;
+ float2 dx=float2(pixel_x*5.0/width,0.0);
+ float2 dy=float2(0.0,pixel_y*5.0/stretch);
+ float nearby=max(max(sample_at(srcuv+dx).a,sample_at(srcuv-dx).a),max(sample_at(srcuv+dy).a,sample_at(srcuv-dy).a));
+ float outline=max(0.0,nearby-sample_at(srcuv).a);
+ float hand=0.45+0.55*pow(0.5+0.5*sin(srcuv.y*86.0+sin(srcuv.x*55.0+t*8.0)+t*11.0),2.0);
+ float rim=outline*hand*charge*fade*intensity;
+ float streaks=0.0;
+ float envelope=smoothstep(0.30,0.95,t)*(1.0-smoothstep(1.90,2.50,t));
+ float energyLift=smoothstep(1.58,2.35,t)*1.30;
+ float tail=1.0-smoothstep(0.86-energyLift,1.06-energyLift,uv.y);
+ float lower=smoothstep(0.08-energyLift,0.24-energyLift,uv.y);
+ for(int i=0;i<9;i=i+1) {
+  float f=float(i);
+  float spread=lerp(0.17,0.024,launch);
+  float path=centre_x+(f-4.0)*spread/4.0;
+  path+=sin(uv.y*(18.0+f*1.8)+t*(3.0+f*0.31)+f*2.6)*lerp(0.022,0.007,launch);
+  path+=sin(uv.y*47.0-t*4.0+f*6.1)*lerp(0.007,0.003,launch);
+  float dist=abs(uv.x-path);
+  float core=exp(-dist*dist/(0.0000035+0.0000025*launch));
+  float bloom=exp(-dist*dist/0.000065)*0.17;
+  float broken=0.48+0.52*pow(0.5+0.5*sin(uv.y*38.0+t*6.0+f*3.9),2.0);
+  streaks+=(core+bloom)*broken*envelope*tail*lower*0.65;
+ }
+ float light=saturate((streaks+rim)*intensity);
+ float3 white=float3(1.0,0.99,0.95);
+ cam.rgb=cam.rgb*(1.0-light)+white*light;
+ cam.a=cam.a+(1.0-cam.a)*light;
+ float flash=smoothstep(1.82,1.94,t)*(1.0-smoothstep(2.07,2.29,t));
+ cam.rgb=lerp(cam.rgb,float3(1.0,1.0,1.0),flash);
+ cam.a=lerp(cam.a,1.0,flash);
+ if(t>=2.60) return float4(0.0,0.0,0.0,0.0);
+ return cam;
+}
+technique Draw { pass { vertex_shader=VS(v); pixel_shader=PS(v); } }

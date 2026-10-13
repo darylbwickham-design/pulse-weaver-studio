@@ -1,0 +1,5 @@
+const defaults={backend:'pulse-weaver',stageName:'PW White Teleport',programScene:'PW White Teleport',actorScene:'PW Teleport Actor',cameraSource:'PW Teleport AI Camera',filterName:'White Ranger Teleport'};
+function normalize(input={}){const next={...defaults};if(input.backend!==undefined){if(!['obs','pulse-weaver'].includes(input.backend))throw Error('Choose OBS or Pulse Weaver');next.backend=input.backend;}for(const key of Object.keys(defaults).filter(k=>k!=='backend')){if(input[key]!==undefined){if(typeof input[key]!=='string'||!input[key].trim()||input[key].length>200)throw Error('Invalid '+key);next[key]=input[key].trim();}}return next;}
+function fromSettings(s={}){return normalize({backend:s.teleportBackend,stageName:s.teleportStage,programScene:s.teleportScene,actorScene:s.teleportActor,cameraSource:s.teleportCamera,filterName:s.teleportFilter});}
+async function selectScene(api,config,selectStage){if(config.backend==='obs')return api.call('SetCurrentProgramScene',{sceneName:config.programScene});return selectStage(config.stageName);}
+module.exports={normalize,fromSettings,selectScene,defaults};

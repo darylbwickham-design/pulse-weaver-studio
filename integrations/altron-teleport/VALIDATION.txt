@@ -1,0 +1,15 @@
+Altron native teleport alpha 0.1.0 / local Pulse Weaver 1.14.4-alpha.3
+Windows x64, MSVC 14.44, D3D11, 60 fps, 48 kHz stereo.
+
+PASS: Real Pulse Weaver libobs/GPU frame output (installed 1.14.4-alpha.1; identical obs.dll SHA-256 to the released alpha.2 payload used for alpha.3).
+PASS: The same DLL also loads and runs the visual/audio tests with standard OBS 32.2.2's runtime.
+PASS: Shader compiles; camera visible at idle, scribbles during departure/arrival, actor holds hidden after out, arrival returns live camera, reset returns idle.
+PASS: Independent filter instances do not trigger together.
+PASS: Arrival/departure WAV files produce samples in the actual stream audio mixer.
+PASS: 350 ms arrival delay does not start early; volume 35% produces half the amplitude of 70%; reset cancels a queued cue; missing-file playback does not block the visual.
+PASS: All test sources and decoder threads are released before module unload; test process exits successfully.
+PASS: Native bridge cue counters target only the configured helper; older Lua filters use the prior hotkey fallback; unrelated filters are rejected.
+PASS: Helper migration preserves the old Lua filter disabled, restores it after a synthetic rename failure, and stops before mutation if the native plugin is missing.
+PASS: Full alpha installer /test validates/extracts its payload and preserves synthetic existing scene configuration byte-for-byte.
+
+These are isolated engine/mixer tests and installer tests, not a live broadcast. Existing live Stages were not modified or the alpha installed automatically. The routine still uses the Lumia avatar plugin, private overlay and updated Node bridge. Per-source headphone device selection is not provided: local monitoring uses Pulse Weaver/OBS's shared monitoring device.

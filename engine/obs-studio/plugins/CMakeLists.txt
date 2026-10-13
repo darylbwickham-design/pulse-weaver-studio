@@ -59,6 +59,7 @@ add_obs_plugin(
     WITH_MESSAGE
 )
 add_obs_plugin(pulse-weaver-core PLATFORMS WINDOWS)
+add_obs_plugin(altron-teleport PLATFORMS WINDOWS)
 add_obs_plugin(pulse-weaver-sample-clock PLATFORMS WINDOWS)
 add_obs_plugin(image-source)
 add_obs_plugin(linux-alsa PLATFORMS LINUX FREEBSD OPENBSD)
