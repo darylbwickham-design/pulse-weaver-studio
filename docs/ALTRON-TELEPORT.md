@@ -1,32 +1,32 @@
-# Altron Teleport for Pulse Weaver — native alpha 0.1.0
+# Altron Command Centre — included in Pulse Weaver 1.14.4-alpha.4
 
-Included in the local Pulse Weaver 1.14.4-alpha.3 preview. No Lua script is needed for the native effect. The existing Lumia avatar plugin and privately shared overlay still supply the command centre, TTS/headphone glow, backgrounds and per-location camera placements. Do not share your Pulse Weaver config folder.
-
-If using the smaller add-on ZIP instead of the full alpha app installer: extract the complete ZIP, close Pulse Weaver, and double-click **Install-Pulse-Weaver.cmd**. It copies only the native DLL and shader into the default per-user Pulse Weaver installation. It refuses overwriting an existing native add-on. The full alpha app installer is the update path.
+The command controller, smooth white scribble teleport filter and sound player are built into this Pulse Weaver app update. They start and stop with the app. No separate bridge, Node installation, Lua script or WebSocket/Stage API setup is required for Altron.
 
 ## First setup
 
-1. Install the alpha, then start Pulse Weaver. Enable its OBS WebSocket server and local Stage API as before.
-2. Use a working camera cutout scene/source. Double-click `integrations/altron-teleport/bridge/Setup-Pulse-Weaver.cmd`, enter the cutout name and your alert source name. This creates NEW show/helper scenes and a native audio source, stopping if their names are already in use. It never edits your camera or Stage definitions.
-3. In Manage stages, create a new `PW White Teleport` Stage and assign its landscape view to the new `PW White Teleport` scene. In the Lumia avatar plugin select Pulse Weaver Stage mode and SAVE.
-4. Start the UPDATED `integrations/altron-teleport/bridge/Start-Bridge.cmd`. Only one bridge should run. Node.js 22+ remains required for this bridge; the native visual/audio effect itself does not need Node or Lua.
-5. Import the privately supplied Lumia overlay and your existing Altron command routine. TEST the command, or call it from any Lumia alert/Lumi-Con key as before.
+1. Install the full alpha.4 app update and open Pulse Weaver. If the previous standalone Altron bridge is running, close its window once so the built-in controller can use port 18767.
+2. In the privately supplied Lumia avatar plugin, choose **Pulse Weaver Stage** mode and SAVE. Keep the private Lumia overlay and existing Altron command routine.
+3. Open **Studio → Tools → Altron Command Centre**. Choose your working background-removed camera scene/source and alert layer, then click **Create / use Altron show**. It creates the dedicated show, helper scenes, audio source and a new `PW White Teleport` Stage. Existing Stage entries and original camera transforms are preserved. Stop active streams/recordings before setup.
+4. For the existing proof of concept, the same button upgrades only its dedicated Altron helpers. The old Lua filter is retained disabled as a backup; other uses of Lua remain unchanged.
+5. TEST the existing **!altron-show** command in Lumia, or call it from any Lumia alert or Lumi-Con key. The app's dialog also has Enter, Teleport in, Teleport out and Reset buttons for quick tests. Lumia must be open with the avatar plugin running.
 
-## Existing Altron proof-of-concept
+The single show scene stays selected while Lumia changes locations. Destination images, Altron's head placement and camera placements remain configurable in the native Lumia overlay/plugin settings. The head follows the actual camera transform, including movement, scaling, rotation and cropping. The show uses the existing camera cutout as a scene reference rather than opening the hardware camera again.
 
-Close the old bridge and use `integrations/altron-teleport/bridge/Use-Native-Teleport.cmd` after installing the alpha. It updates ONLY the dedicated `PW Teleport Actor` helper's teleport filter and adds audio to `PW White Teleport`. The previous Lua filter is preserved disabled as `White Ranger Teleport (Lua backup)`. Original cameras, transforms, backgrounds, alerts and Stage definitions remain untouched. Start the updated bridge afterwards. You can leave the old Lua loaded for other uses; native cues target this specific filter directly.
+## Your own sound effects
 
-## Choose your own sounds
+Click **Choose arrival / departure sounds** in the command-centre dialog, or open **Altron Teleport Audio → Properties** in the dedicated show.
 
-In the dedicated show scene, open **Altron Teleport Audio → Properties**.
+- Choose separate arrival/departure files (WAV, MP3, OGG, FLAC or M4A), volume and delays from 0–1500 ms. Blank or missing files produce a silent teleport.
+- Sound plays through Pulse Weaver's mixer and assigned recording/stream tracks. To hear it locally, enable monitoring and select headphones in **Settings → Audio → Monitoring Device**. This is the app's shared monitoring device.
+- Arrival/departure cues trigger sound automatically. Reset cancels pending cues and playback. A small amount of already buffered audio may drain afterwards.
 
-- Browse for separate arrival and departure files (WAV, MP3, OGG, FLAC or M4A). Files stay on your PC; blank/missing files mean a silent effect.
-- Set sound volume and separate delays from 0–1500 ms after the visual cue.
-- Sound goes through the app's audio mixer and stream/recording tracks. To hear it locally, enable the monitoring checkbox and select your headphones in **Settings → Audio → Monitoring Device**. This uses the app's shared monitoring device; it does not replace it or provide a separate per-source device selector.
-- Put the dedicated show Stage live, then use **Test arrival sound / Test departure sound**, or **Test arrival / Test departure** in the actor's filter properties. Reset cancels queued sounds and stops playback. Already buffered audio can take a brief mixer interval to drain.
+The Lumia headphone-output monitor and TTS routing remain in the avatar plugin. They drive the talking head independently of the native teleport sound player.
 
-Arrival/departure animation automatically triggers the matching sound. One Lumi-Con action triggers both. The existing bridge's Enter/Reset actions show the camera normally; only animated In/Out cues play sounds.
+## Troubleshooting
 
-## Compatibility and testing
+- **Port unavailable:** close the previous standalone bridge once. Pulse Weaver retries automatically; subsequent app starts need no bridge launcher.
+- **Lumia unavailable:** open Lumia and enable the private avatar plugin. The built-in controller uses its registered local overlay port (8766 by default).
+- **Helper or Stage name conflict:** setup stops without overwriting unrelated sources or Stage assignments. Use the dedicated Altron names configured in Lumia.
+- **Camera cutout missing:** select a working background-removal scene/source. This update reuses your cutout; it does not install a new background-removal model.
 
-The existing GPU shader is reused, with a separate clock per filter. The updated bridge detects native versus Lua filters and preserves the Lua fallback for older installs. Native DLL compatibility was checked with the recipient runtimes listed in VALIDATION.txt; other versions/platforms require testing or a matching build. This preview does not change existing Stage settings automatically and is not yet a published channel update.
+This is a local Windows x64 alpha preview, not a published updater release. See VALIDATION.txt for tested behavior. Private overlays, avatar artwork, account settings and user configurations are excluded from the public native source package.

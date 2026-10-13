@@ -63,7 +63,11 @@ Compress-Archive -Path (Join-Path $pluginStage '*') -DestinationPath $pluginZip
 $plugin = [IO.Path]::ChangeExtension($pluginZip,'.lumiaplugin')
 Move-Item -LiteralPath $pluginZip -Destination $plugin
 New-Item -ItemType Directory -Force -Path (Join-Path $payload 'integrations') | Out-Null
-Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/altron-teleport') -Destination (Join-Path $payload 'integrations/altron-teleport') -Recurse
+$altronDocs = Join-Path $payload 'integrations/altron-teleport'
+New-Item -ItemType Directory -Path $altronDocs -Force | Out-Null
+foreach ($name in @('README.md','VALIDATION.txt')) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot "integrations/altron-teleport/$name") -Destination $altronDocs
+}
 $bundledPluginDirectory = Join-Path $payload 'integrations/lumia'
 New-Item -ItemType Directory -Path $bundledPluginDirectory -Force | Out-Null
 Copy-Item -LiteralPath $plugin -Destination $bundledPluginDirectory

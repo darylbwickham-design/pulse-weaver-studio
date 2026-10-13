@@ -5,6 +5,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include "native-control.hpp"
 
 OBS_DECLARE_MODULE()
 MODULE_EXPORT const char *obs_module_description(void) { return "Altron live-camera teleport and user-supplied arrival/departure audio"; }
@@ -341,6 +342,9 @@ bool obs_module_load(void)
   sound.get_defaults = sound_defaults; sound.get_properties = sound_properties;
   sound.video_tick = sound_tick;
   obs_register_source(&sound);
-  blog(LOG_INFO, "[Altron] Native teleport alpha 0.1.0 loaded (no Lua required)");
+  altronNativeLoad(obs_current_module());
+  blog(LOG_INFO, "[Altron] Native teleport alpha 0.2.0 loaded (built-in control, no external bridge)");
   return true;
 }
+
+void obs_module_unload(void) { altronNativeUnload(); }
