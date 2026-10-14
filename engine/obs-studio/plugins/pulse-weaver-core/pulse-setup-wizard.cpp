@@ -124,7 +124,8 @@ void PulseMotionEngine::openShowWizard()
 	auto *instructions = new QPushButton("Get Lumia overlays and setup instructions", connectPage);
 	connect(instructions, &QPushButton::clicked, &wizard, [&wizard] { PulseInstructions::openDialog(&wizard); });
 	artwork->addWidget(instructions); artwork->addWidget(new QCheckBox("My Lumia templates or browser sources are ready", connectPage));
-	text(connectLayout, connectPage, "These checkboxes are reminders. You can continue planning while finishing Lumia setup. The Lumia bulb on Show Control keeps the countdown, Chat Box Physics, Newsroom, alert and stinger instructions available after this wizard.");
+	text(artwork, connectPage, "Game challenges are optional. The guide explains Custom Game Challenges profiles, its display layer and native actions. For a new plugin setup, skip ALERT01-H's legacy challenge command bundle; existing connected controls can be kept.");
+	text(connectLayout, connectPage, "These checkboxes are reminders. You can continue planning while finishing Lumia setup. The Lumia bulb on Show Control opens this same guide for countdowns, Chat Box Physics, Custom Game Challenges, Newsroom, alerts and stingers.");
 	text(connectLayout, connectPage, "Next, choose your stage groups and Looks. Page 3 offers optional stingers; page 4 lets you reuse or create sources. Nothing is added until you choose Create my show.");
 	connectLayout->addStretch();
 

@@ -19,7 +19,7 @@ New sources and stingers are drafts until **Create my show**. Cancelling discard
 
 ## Lumia overlays and actions
 
-The Lumia bulb beside the readiness status on **Show Control** opens the same guide available in the wizard. It contains all twelve import links, countdown start and completion instructions, Chat Physics setup, Fortnite challenge setup and stinger guidance. Other supporting services can accompany Lumia in this area later.
+The Lumia bulb beside the readiness status on **Show Control** opens the same guide available in the wizard. It contains all twelve import links, countdown start and completion instructions, Chat Physics setup, Custom Game Challenges profiles and native actions, and stinger guidance. Other supporting services can accompany Lumia in this area later.
 
 Import only the required MAIN, READY, BRB, END, ALERT and NEWS families. H means landscape and V means portrait. Customize text, logos, colours and artwork in Lumia. An import link is different from a browser source link: after importing, use Lumia's chain / copy-link button and assign that link to the correct canvas.
 
@@ -27,7 +27,7 @@ Newsroom is visible on load by default. For an event-only news intro, import a s
 
 Assign MAIN to Countdown, READY to Getting ready, BRB to Be right back and END to Ending. Add NEWS through the shared overlay questions and choose its intended Look. Match H/V artwork to the canvas. If you later deselect an overlay's target, choose another target or skip that overlay before creating the show.
 
-Import ALERT01-H's accompanying commands once. Its two chat controls and five disabled reward-code helpers serve both orientations. Copy the helpers into your own Twitch Points rewards and choose costs and permissions. The portrait copy carries no duplicate commands. New browser sources start with output audio excluded; existing browser audio settings are preserved. Enable audio for one intended source in audio routing after creation and keep its other canvas copy silent, so alerts, TTS and effects do not play twice.
+For a fresh **Custom Game Challenges** setup, skip ALERT01-H's old seven-command bundle and use the optional plugin's native actions. The public ALERT templates retain a legacy `FN_Challenge` widget; disable that challenge layer when adding the new display, keeping unrelated alerts. The portrait template has no command bundle. Neither public template automatically connects to the new plugin. Existing connected users may keep their controls and skip example imports. See [Custom Game Challenges 1.0.5 setup](LUMIA-GAME-CHALLENGES-2026-10-14.md) for the display, correct import destinations and manual Twitch reward linking. New browser sources start with output audio excluded; existing browser audio settings are preserved. Enable audio for one intended source in audio routing after creation and keep its other canvas copy silent, so alerts, TTS and effects do not play twice.
 
 The shared Lumia countdown starts through the `start-screen` payload described in the guide: `{"action":"start","durationSeconds":600}` starts ten minutes. A Pulse Weaver **Run Stage Look / Motion Action** selects the Starting Countdown Look; the separate payload starts the timer. Send the payload once for both formats.
 
