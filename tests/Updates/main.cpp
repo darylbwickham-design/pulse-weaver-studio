@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <QSslSocket>
+#include <QFile>
+#include <QJsonDocument>
 
 using namespace PulseUpdates;
 static void check(bool ok, const char *description)
@@ -22,6 +24,21 @@ static QJsonObject release(const Identity &identity)
 int main(int argc, char **argv)
 {
 	QCoreApplication application(argc, argv);
+	if (argc == 4 && QString::fromLocal8Bit(argv[1]) == "--release-catalog") {
+		QFile file(QString::fromLocal8Bit(argv[2]));
+		check(file.open(QIODevice::ReadOnly), "Read release catalogue fixture");
+		const auto catalog = QJsonDocument::fromJson(file.readAll()).array();
+		const QString expected = QString::fromLocal8Bit(argv[3]);
+		check(!catalog.isEmpty(), "Release catalogue is populated");
+		const auto alphaUpdate = selectRelease(catalog, {"windows-alpha", "v1.14.4-alpha.4"});
+		check(alphaUpdate && alphaUpdate->identity.tag == expected, "Existing alpha discovers the exact new installer");
+		const auto optedIn = selectRelease(catalog, {"windows-private", "v1.14.3"}, true);
+		check(optedIn && optedIn->identity.tag == expected, "Stable with alpha opt-in discovers the new alpha");
+		check(!selectRelease(catalog, {"windows-private", "v1.14.3"}), "Stable users without opt-in receive no alpha");
+		check(!selectRelease(catalog, {"windows-alpha", expected}), "New alpha does not offer itself as an update");
+		std::puts("PASS: live catalogue alpha update, exact installer asset/digest, stable opt-in isolation and current-version checks");
+		return 0;
+	}
 	if (argc > 1) {
 		QCoreApplication::setLibraryPaths({QString::fromLocal8Bit(argv[1])});
 		check(QSslSocket::supportsSsl(), "Packaged Qt plugins support HTTPS downloads");

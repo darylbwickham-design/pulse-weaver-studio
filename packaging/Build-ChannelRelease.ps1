@@ -40,7 +40,7 @@ $identity | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $payload 'bin/6
 New-Item -ItemType File -Path (Join-Path $payload 'portable_mode.txt') | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $payload 'docs') | Out-Null
 foreach ($doc in @('PRIVACY.md','TERMS.md')) { Copy-Item -LiteralPath (Join-Path $projectRoot $doc) -Destination (Join-Path $payload 'docs') }
-foreach ($doc in @('ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md','SETUP-WIZARD-GUIDE.md','LUMIA-IMPORT-LINKS.txt')) {
+foreach ($doc in @('ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md','SETUP-WIZARD-GUIDE.md','LUMIA-GAME-CHALLENGES-2026-10-14.md','LUMIA-IMPORT-LINKS.txt')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$doc") -Destination (Join-Path $payload 'docs')
 }
 # Publish the isolated gRPC chat transport into every channel's clean payload.

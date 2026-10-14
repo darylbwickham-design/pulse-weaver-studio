@@ -1,6 +1,6 @@
 # Release and alpha updates
 
-**1.14.4-alpha.2 repairs installer access errors during updates.** The broadcast runtime and Lumia integration are unchanged from alpha 1. The regular release remains 1.14.3; receiving alpha builds requires opting in. Unchanged configuration stays in place during the update, with verified backups and rollback retained.
+**1.14.4-alpha.5 updates the shared Lumia setup guide for Custom Game Challenges 1.0.5.** Both the wizard and Show Control's Lumia bulb explain saved game profiles, native actions, optional reward imports and Next versus Clear. Fresh plugin setups skip the old ALERT challenge command bundle; existing connected setups can keep their controls. The new challenge plugin remains a separate optional install. Alpha 4's Altron support and alpha 2's configuration-preserving installer repair are retained. The regular release remains 1.14.3; receiving alpha builds requires opting in. Unchanged configuration stays in place during the update, with verified backups and rollback retained.
 
 The regular release remains on the release channel by default. Open **Studio → Updates → Include experimental alpha builds** to opt in, then check for updates. **Include unstable showcase builds** is a separate opt-in. Downloading a preview never installs it automatically.
 
