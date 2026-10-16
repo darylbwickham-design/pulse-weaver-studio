@@ -97,15 +97,24 @@ public:
 
 // The existing controller owns persistence, output guards and accepted mode.
 // Mirror its accepted value after every click, including rejected live changes.
+inline QColor routeAccent(const QString &provider)
+{
+	if (provider.compare("Twitch", Qt::CaseInsensitive) == 0) return QColor("#9146FF");
+	if (provider.compare("YouTube", Qt::CaseInsensitive) == 0) return QColor("#FF0033");
+	if (provider.compare("Kick", Qt::CaseInsensitive) == 0) return QColor("#53FC18");
+	return QColor("#F5AA29"); // Recording
+}
+
 class SlidingChoiceTrack final : public QWidget {
 	QVariantAnimation slide;
+	QColor accent;
 	qreal position = -1;
 	int selected = -1;
 public:
 	static constexpr int cellWidth = 47;
 	static constexpr int cellHeight = 28;
 	static constexpr int inset = 2;
-	explicit SlidingChoiceTrack(int count, QWidget *parent) : QWidget(parent), slide(this) {
+	explicit SlidingChoiceTrack(int count, const QColor &colour, QWidget *parent) : QWidget(parent), slide(this), accent(colour) {
 		setObjectName("PulseWeaverRouteTrack");
 		setFixedSize(count * cellWidth + inset * 2, cellHeight + inset * 2);
 		slide.setObjectName("PulseWeaverRouteThumbAnimation");
@@ -129,16 +138,17 @@ protected:
 		QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
 		if (!isEnabled()) painter.setOpacity(.45);
 		const QRectF rail = QRectF(rect()).adjusted(.5, .5, -.5, -.5);
-		const QColor base = palette().color(QPalette::Base);
+		const int grey = qGray(palette().color(QPalette::Base).rgb());
+		const QColor base(grey, grey, grey);
 		QLinearGradient recess(rail.topLeft(), rail.bottomLeft()); recess.setColorAt(0, base.darker(155)); recess.setColorAt(1, base.lighter(125));
-		painter.setPen(QPen(palette().color(QPalette::Mid).darker(130), 1)); painter.setBrush(recess);
+		const int edgeGrey = qGray(palette().color(QPalette::Mid).rgb());
+		painter.setPen(QPen(QColor(edgeGrey, edgeGrey, edgeGrey).darker(130), 1)); painter.setBrush(recess);
 		painter.drawRoundedRect(rail, 15, 15);
 		painter.setPen(QPen(QColor(255, 255, 255, 22), 1));
 		painter.drawLine(QPointF(14, height() - 1.5), QPointF(width() - 14, height() - 1.5));
 		if (position < 0) return;
 		const QRectF thumb(inset + position * cellWidth + 1, inset, cellWidth - 2, cellHeight - 2);
 		painter.setPen(Qt::NoPen); painter.setBrush(QColor(0, 0, 0, 110)); painter.drawRoundedRect(thumb.translated(0, 2), 12, 12);
-		const QColor accent = palette().color(QPalette::Highlight);
 		QLinearGradient cap(thumb.topLeft(), thumb.bottomLeft()); cap.setColorAt(0, accent.lighter(150)); cap.setColorAt(.48, accent.lighter(110)); cap.setColorAt(1, accent.darker(120));
 		painter.setPen(QPen(accent.lighter(160), 1)); painter.setBrush(cap); painter.drawRoundedRect(thumb, 12, 12);
 		painter.setPen(QPen(QColor(255, 255, 255, 95), 1));
@@ -160,7 +170,9 @@ public:
 		setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 		auto *column = new QVBoxLayout(this); column->setContentsMargins(0, 0, 0, 0); column->setSpacing(2);
 		if(showTitle) {auto *title = new QLabel(provider, this); title->setObjectName("PulseWeaverKicker"); column->addWidget(title);}
-		auto *track = new SlidingChoiceTrack(controller->count(), this);
+		const QColor accent = routeAccent(provider);
+		const QString selectedText = qGray(accent.rgb()) > 145 ? "#15191F" : "#FFFFFF";
+		auto *track = new SlidingChoiceTrack(controller->count(), accent, this);
 		auto *row = new QHBoxLayout(track);
 		row->setContentsMargins(SlidingChoiceTrack::inset, SlidingChoiceTrack::inset, SlidingChoiceTrack::inset, SlidingChoiceTrack::inset);
 		row->setSpacing(0); column->addWidget(track, 0, Qt::AlignLeft);
@@ -174,8 +186,8 @@ public:
 			button->setCursor(Qt::PointingHandCursor);
 			button->setAccessibleName(provider + " " + label);
 			button->setToolTip(provider + (mode == "standard" ? ": use your recording settings" : mode == "dual" ? ": landscape and portrait" : mode == "off" ? ": output disabled" : ": " + label));
-			button->setStyleSheet("QToolButton{background:transparent;color:palette(text);border:1px solid transparent;border-radius:12px;padding:0px;font-size:9pt;}"
-				"QToolButton:checked{color:palette(highlighted-text);}QToolButton:focus{border-color:palette(highlight);}QToolButton:disabled{color:palette(placeholder-text);}");
+			button->setStyleSheet(QString("QToolButton{background:transparent;color:#9DA4AF;border:1px solid transparent;border-radius:12px;padding:0px;font-size:9pt;}"
+				"QToolButton:checked{color:%1;}QToolButton:focus{border-color:%2;}QToolButton:disabled{color:palette(placeholder-text);}").arg(selectedText, accent.name()));
 			group->addButton(button, index); row->addWidget(button);
 		}
 		const QPointer<QComboBox> guarded = controller;
