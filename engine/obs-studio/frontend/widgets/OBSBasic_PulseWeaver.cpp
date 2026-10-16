@@ -2145,6 +2145,7 @@ void OBSBasic::InitPulseWeaverShell()
 	QTimer::singleShot(7000, this, refreshGameWindows);
 
 	auto *destinations = new QHBoxLayout;
+	destinations->setSpacing(16);
 	auto *outputPanel = new QFrame(showMain);
 	outputPanel->setObjectName("PulseWeaverOutputRouting");
 	outputPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -2253,12 +2254,13 @@ void OBSBasic::InitPulseWeaverShell()
 			});
 		});
 		route->setParent(showMain); route->hide();
-		destinations->addWidget(new PulseStudioControls::RouteChoices(label, route), 1);
+		destinations->addWidget(new PulseStudioControls::RouteChoices(label, route));
 		return route;
 	};
 	pulseTwitchDestination = makeDestination("Twitch", "twitch", true, true);
 	pulseYouTubeDestination = makeDestination("YouTube", "youtube", false, true);
 	pulseKickDestination = makeDestination("Kick", "kick", false, false);
+	destinations->addStretch(1);
 	connect(this, &OBSBasic::StreamingStarting, this, [this](bool) {
 		const QString mode = pulseTwitchDestination ? pulseTwitchDestination->currentData().toString() : QString("off");
 		if (mode == "off")

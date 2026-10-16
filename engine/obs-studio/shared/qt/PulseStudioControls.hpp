@@ -9,15 +9,29 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QPointer>
+#include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QToolButton>
+#include <QVariantAnimation>
 #include <QVBoxLayout>
 
 namespace PulseStudioControls {
 class LivePreviewToggle final : public QCheckBox {
+	QVariantAnimation slide;
+	qreal position = 0;
 public:
-	explicit LivePreviewToggle(QWidget *parent) : QCheckBox("Live previews", parent) { setCursor(Qt::PointingHandCursor); }
+	explicit LivePreviewToggle(QWidget *parent) : QCheckBox("Live previews", parent), slide(this) {
+		setCursor(Qt::PointingHandCursor);
+		slide.setDuration(160); slide.setEasingCurve(QEasingCurve::OutCubic);
+		connect(&slide, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {position = value.toReal(); update();});
+		connect(this, &QCheckBox::toggled, this, [this](bool checked) {
+			slide.stop();
+			if (isVisible()) {slide.setStartValue(position); slide.setEndValue(checked ? 1.0 : 0.0); slide.start();}
+			else {position = checked ? 1 : 0; update();}
+		});
+	}
 	QSize sizeHint() const override { return {fontMetrics().horizontalAdvance(text()) + 45, qMax(26, fontMetrics().height() + 4)}; }
 	QSize minimumSizeHint() const override { return sizeHint(); }
 protected:
@@ -25,10 +39,14 @@ protected:
 	void paintEvent(QPaintEvent *) override {
 		QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
 		const QRectF track(1, (height() - 18) / 2.0, 32, 18);
-		painter.setPen(Qt::NoPen); painter.setBrush(palette().color(isChecked() ? QPalette::Highlight : QPalette::Mid));
+		const QColor base = palette().color(isChecked() ? QPalette::Highlight : QPalette::Mid);
+		QLinearGradient rail(track.topLeft(), track.bottomLeft()); rail.setColorAt(0, base.darker(140)); rail.setColorAt(1, base);
+		painter.setPen(QPen(base.darker(160), 1)); painter.setBrush(rail);
 		painter.drawRoundedRect(track, 9, 9);
-		painter.setBrush(palette().color(QPalette::HighlightedText));
-		painter.drawEllipse(QRectF(track.x() + (isChecked() ? 17 : 3), track.y() + 3, 12, 12));
+		const QRectF thumb(track.x() + 3 + 14 * position, track.y() + 2, 12, 12);
+		painter.setPen(Qt::NoPen); painter.setBrush(QColor(0, 0, 0, 90)); painter.drawEllipse(thumb.translated(0, 2));
+		QLinearGradient cap(thumb.topLeft(), thumb.bottomLeft()); cap.setColorAt(0, Qt::white); cap.setColorAt(1, QColor("#BFC9D9"));
+		painter.setPen(QPen(QColor(255, 255, 255, 140), 1)); painter.setBrush(cap); painter.drawEllipse(thumb);
 		painter.setPen(palette().color(isEnabled() ? QPalette::WindowText : QPalette::PlaceholderText));
 		painter.drawText(QRect(43, 0, width() - 43, height()), Qt::AlignLeft | Qt::AlignVCenter, text());
 		if(hasFocus()) { painter.setBrush(Qt::NoBrush); painter.setPen(QPen(palette().color(QPalette::Highlight), 1)); painter.drawRoundedRect(track.adjusted(-1, -1, 1, 1), 10, 10); }
@@ -60,6 +78,9 @@ public:
 		rate->setRange(0, 2); rate->setSingleStep(1); rate->setPageStep(1);
 		rate->setTickInterval(1); rate->setTickPosition(QSlider::NoTicks);
 		rate->setMinimumWidth(compact ? 60 : 90); rate->setMaximumWidth(compact ? 80 : 150);
+		rate->setStyleSheet("QSlider::groove:horizontal{height:4px;background:palette(mid);border:1px solid palette(dark);border-radius:3px;}"
+			"QSlider::sub-page:horizontal{background:palette(highlight);border-radius:3px;}"
+			"QSlider::handle:horizontal{width:13px;margin:-5px 0;background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #FFFFFF,stop:1 #AFBED1);border:1px solid #8091A8;border-radius:7px;}");
 		rate->setValue(savedFps == 60 ? 2 : savedFps == 30 ? 1 : 0);
 		rate->setAccessibleName("Preview refresh rate"); if(caption) caption->setBuddy(rate);
 		rate->setToolTip("15 FPS: less CPU · 30 FPS: smoother · 60 FPS: full preview rate. Changes previews only, not stream output.");
@@ -76,8 +97,57 @@ public:
 
 // The existing controller owns persistence, output guards and accepted mode.
 // Mirror its accepted value after every click, including rejected live changes.
+class SlidingChoiceTrack final : public QWidget {
+	QVariantAnimation slide;
+	qreal position = -1;
+	int selected = -1;
+public:
+	static constexpr int cellWidth = 47;
+	static constexpr int cellHeight = 28;
+	static constexpr int inset = 2;
+	explicit SlidingChoiceTrack(int count, QWidget *parent) : QWidget(parent), slide(this) {
+		setObjectName("PulseWeaverRouteTrack");
+		setFixedSize(count * cellWidth + inset * 2, cellHeight + inset * 2);
+		slide.setObjectName("PulseWeaverRouteThumbAnimation");
+		slide.setDuration(180); slide.setEasingCurve(QEasingCurve::OutCubic);
+		connect(&slide, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+			position = value.toReal(); setProperty("thumbPosition", position); update();
+		});
+	}
+	void select(int index, bool animate) {
+		if (index == selected) return;
+		slide.stop(); selected = index; setProperty("thumbIndex", index);
+		if (animate && position >= 0 && isVisible() && isEnabled()) {
+			slide.setStartValue(position); slide.setEndValue(qreal(index)); slide.start();
+		} else {position = index; setProperty("thumbPosition", position); update();}
+	}
+protected:
+	void resizeEvent(QResizeEvent *event) override {
+		QWidget::resizeEvent(event); slide.stop(); position = selected; setProperty("thumbPosition", position);
+	}
+	void paintEvent(QPaintEvent *) override {
+		QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
+		if (!isEnabled()) painter.setOpacity(.45);
+		const QRectF rail = QRectF(rect()).adjusted(.5, .5, -.5, -.5);
+		const QColor base = palette().color(QPalette::Base);
+		QLinearGradient recess(rail.topLeft(), rail.bottomLeft()); recess.setColorAt(0, base.darker(155)); recess.setColorAt(1, base.lighter(125));
+		painter.setPen(QPen(palette().color(QPalette::Mid).darker(130), 1)); painter.setBrush(recess);
+		painter.drawRoundedRect(rail, 15, 15);
+		painter.setPen(QPen(QColor(255, 255, 255, 22), 1));
+		painter.drawLine(QPointF(14, height() - 1.5), QPointF(width() - 14, height() - 1.5));
+		if (position < 0) return;
+		const QRectF thumb(inset + position * cellWidth + 1, inset, cellWidth - 2, cellHeight - 2);
+		painter.setPen(Qt::NoPen); painter.setBrush(QColor(0, 0, 0, 110)); painter.drawRoundedRect(thumb.translated(0, 2), 12, 12);
+		const QColor accent = palette().color(QPalette::Highlight);
+		QLinearGradient cap(thumb.topLeft(), thumb.bottomLeft()); cap.setColorAt(0, accent.lighter(150)); cap.setColorAt(.48, accent.lighter(110)); cap.setColorAt(1, accent.darker(120));
+		painter.setPen(QPen(accent.lighter(160), 1)); painter.setBrush(cap); painter.drawRoundedRect(thumb, 12, 12);
+		painter.setPen(QPen(QColor(255, 255, 255, 95), 1));
+		painter.drawLine(thumb.topLeft() + QPointF(10, 2), thumb.topRight() + QPointF(-10, 2));
+	}
+};
+
 class RouteChoices final : public QWidget {
-    QComboBox *model;
+	QPointer<QComboBox> model;
 protected:
 	bool eventFilter(QObject *watched, QEvent *event) override {
 		if(watched == model && event->type() == QEvent::EnabledChange) setEnabled(model->isEnabled());
@@ -87,38 +157,39 @@ public:
 	RouteChoices(const QString &provider, QComboBox *controller, QWidget *parent = nullptr, bool showTitle = true) : QWidget(parent), model(controller)
 	{
 		setObjectName("PulseWeaverRouteChoices" + provider);
-		setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+		setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 		auto *column = new QVBoxLayout(this); column->setContentsMargins(0, 0, 0, 0); column->setSpacing(2);
 		if(showTitle) {auto *title = new QLabel(provider, this); title->setObjectName("PulseWeaverKicker"); column->addWidget(title);}
-		auto *track = new QFrame(this); track->setObjectName("PulseWeaverRouteTrack");
-		track->setStyleSheet("QFrame#PulseWeaverRouteTrack{background:palette(base);border:1px solid palette(mid);border-radius:13px;}");
-		auto *row = new QHBoxLayout(track); const int inset = showTitle ? 2 : 1;
-		row->setContentsMargins(inset, inset, inset, inset); row->setSpacing(0); column->addWidget(track);
+		auto *track = new SlidingChoiceTrack(controller->count(), this);
+		auto *row = new QHBoxLayout(track);
+		row->setContentsMargins(SlidingChoiceTrack::inset, SlidingChoiceTrack::inset, SlidingChoiceTrack::inset, SlidingChoiceTrack::inset);
+		row->setSpacing(0); column->addWidget(track, 0, Qt::AlignLeft);
 		auto *group = new QButtonGroup(this); group->setExclusive(true);
 		for (int index = 0; index < controller->count(); ++index) {
 			const QString mode = controller->itemData(index).toString();
 			const QString label = mode == "standard" ? "Default" : mode == "off" ? "Off" : mode == "horizontal" ? "16:9" : mode == "vertical" ? "9:16" : "Both";
 			auto *button = new QToolButton(track); button->setText(label); button->setCheckable(true);
 			button->setObjectName("PulseWeaverRouteChoice"); button->setProperty("routeMode", mode);
-			button->setMinimumHeight(26); button->setMinimumWidth(34);
-			button->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+			button->setFixedSize(SlidingChoiceTrack::cellWidth, SlidingChoiceTrack::cellHeight);
+			button->setCursor(Qt::PointingHandCursor);
 			button->setAccessibleName(provider + " " + label);
 			button->setToolTip(provider + (mode == "standard" ? ": use your recording settings" : mode == "dual" ? ": landscape and portrait" : mode == "off" ? ": output disabled" : ": " + label));
-			button->setStyleSheet("QToolButton{background:transparent;color:palette(text);border:1px solid transparent;border-radius:11px;padding:2px 6px;}QToolButton:hover{background:palette(alternate-base);}QToolButton:checked{background:palette(highlight);color:palette(highlighted-text);}QToolButton:focus{border-color:palette(highlight);}");
-			// The transport has one fixed-size slot. Keep all five recording
-			// choices readable without growing the footer at larger UI fonts.
-			if(!showTitle) button->setStyleSheet(button->styleSheet() + "QToolButton{padding:0px 3px;font-size:10pt;}");
+			button->setStyleSheet("QToolButton{background:transparent;color:palette(text);border:1px solid transparent;border-radius:12px;padding:0px;font-size:9pt;}"
+				"QToolButton:checked{color:palette(highlighted-text);}QToolButton:focus{border-color:palette(highlight);}QToolButton:disabled{color:palette(placeholder-text);}");
 			group->addButton(button, index); row->addWidget(button);
 		}
-		auto sync = [controller, group] {
-			if (auto *button = group->button(controller->currentIndex())) button->setChecked(true);
+		const QPointer<QComboBox> guarded = controller;
+		auto sync = [guarded, group, track](bool animate) {
+			if (!guarded) return;
+			if (auto *button = group->button(guarded->currentIndex())) button->setChecked(true);
+			track->select(guarded->currentIndex(), animate);
 		};
-		connect(group, &QButtonGroup::idClicked, this, [controller, sync](int index) {
-			if(controller->isEnabled()) controller->setCurrentIndex(index); sync();
+		connect(group, &QButtonGroup::idClicked, this, [guarded, sync](int index) {
+			if(guarded && guarded->isEnabled()) guarded->setCurrentIndex(index); sync(true);
 		});
-		connect(controller, &QComboBox::currentIndexChanged, this, [sync](int) { sync(); });
+		connect(controller, &QComboBox::currentIndexChanged, this, [sync](int) { sync(true); });
 		controller->installEventFilter(this); setEnabled(controller->isEnabled());
-		sync();
+		sync(false);
 	}
 };
 } // namespace PulseStudioControls

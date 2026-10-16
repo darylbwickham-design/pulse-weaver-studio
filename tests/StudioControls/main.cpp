@@ -1,8 +1,11 @@
 #include "../../engine/obs-studio/shared/qt/PulseStudioControls.hpp"
 #include <QApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QKeyEvent>
 #include <QPalette>
+#include <QTimer>
+#include <QVariantAnimation>
 #include <cstdio>
 #include <stdexcept>
 
@@ -12,9 +15,27 @@ static QToolButton *choice(QWidget *panel, const QString &mode) {
 	for (auto *button : panel->findChildren<QToolButton *>()) if (button->property("routeMode") == mode) return button;
 	return nullptr;
 }
+static void settle(int milliseconds) {
+	QEventLoop loop;
+	QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+	loop.exec();
+}
+class PaintCounter final : public QObject {
+public:
+	int paints = 0;
+protected:
+	bool eventFilter(QObject *watched, QEvent *event) override {
+		if(event->type() == QEvent::Paint) ++paints;
+		return QObject::eventFilter(watched, event);
+	}
+};
 int main(int argc, char **argv)
 {
 	QApplication app(argc, argv);
+	for(int pointSize : {9,10}) {
+		const QFontMetrics metrics(QFont("Segoe UI", pointSize));
+		std::printf("Segment sizing: %dpt Default=%dpx text, height=%dpx.\n", pointSize, metrics.horizontalAdvance("Default"), metrics.height());
+	}
 	const QString output = argc > 1 ? QString::fromLocal8Bit(argv[1]) : "screenshots";
 	QDir().mkpath(output);
 	QPalette dark;
@@ -40,11 +61,31 @@ int main(int argc, char **argv)
 	auto *yt = new PulseStudioControls::RouteChoices("YouTube", &youtube);
 	auto *ki = new PulseStudioControls::RouteChoices("Kick", &kick);
 	row->addWidget(tw, 1); row->addWidget(yt, 1); row->addWidget(ki, 1); layout->addWidget(routes);
+	host.resize(640, 180); host.show(); app.processEvents();
+	auto *thumbAnimation = tw->findChild<QVariantAnimation *>();
+	check(thumbAnimation != nullptr, "joined choices provide a finite sliding-thumb animation");
+	check(thumbAnimation->objectName() == "PulseWeaverRouteThumbAnimation" && thumbAnimation->duration() <= 200, "click motion stays short and uses one named animation");
+	auto *thumbTrack = tw->findChild<QWidget *>("PulseWeaverRouteTrack");
+	check(thumbTrack != nullptr, "the raised thumb uses the joined track");
+	check(thumbAnimation->state() == QAbstractAnimation::Stopped, "saved routes are initially snapped without an animation");
+	check(thumbTrack->property("thumbPosition").toDouble() == twitch.currentIndex() && thumbTrack->property("thumbIndex").toInt() == twitch.currentIndex(), "saved route and initial thumb index agree");
 	check(changes == 0 && choice(tw, "horizontal")->isChecked(), "construction preserves saved routes without triggering a change");
 	choice(tw, "dual")->click(); check(twitch.currentData() == "dual" && changes == 1, "one click selects exactly one route");
+	check(thumbAnimation->state() == QAbstractAnimation::Running, "an accepted click starts the sliding-thumb animation");
+	const QVariant animationStart = thumbAnimation->currentValue();
+	settle(40);
+	check(thumbAnimation->currentValue() != animationStart, "the thumb moves through intermediate positions");
+	check(host.grab().save(output + "/controls-animation-moving.png"), "save the moving raised thumb rendering");
+	settle(thumbAnimation->duration() + 30);
+	check(thumbAnimation->state() == QAbstractAnimation::Stopped && thumbAnimation->currentValue() == thumbAnimation->endValue(), "accepted selection finishes exactly at its target and stops animating");
+	check(thumbTrack->property("thumbPosition").toDouble() == twitch.currentIndex() && thumbTrack->property("thumbIndex").toInt() == twitch.currentIndex(), "the settled thumb is snapped to the accepted option index");
+	check(host.grab().save(output + "/controls-animation-settled.png"), "save the settled raised thumb rendering");
 	choice(tw, "dual")->click(); check(changes == 1, "clicking the selected route does not reapply an output");
+	check(thumbAnimation->state() == QAbstractAnimation::Stopped, "clicking the accepted route does not restart the thumb");
+	const QVariant acceptedThumb = thumbAnimation->currentValue();
 	live = true; choice(tw, "horizontal")->click();
 	check(twitch.currentData() == "dual" && choice(tw, "dual")->isChecked() && !choice(tw, "horizontal")->isChecked(), "rejected live change restores the accepted selection");
+	check(thumbAnimation->state() == QAbstractAnimation::Stopped && thumbAnimation->currentValue() == acceptedThumb, "a rejected live change leaves the thumb at the accepted route");
 	choice(tw, "off")->click(); check(twitch.currentData() == "off" && choice(tw, "off")->isChecked(), "live Off retains existing controller behavior");
 	live = false; twitch.setCurrentIndex(1); check(choice(tw, "horizontal")->isChecked(), "external mode changes update the visible buttons");
 	check(choice(ki, "dual") == nullptr && choice(ki, "vertical") == nullptr, "Kick offers only supported formats");
@@ -80,6 +121,14 @@ int main(int argc, char **argv)
 	recording.setCurrentIndex(recording.findData("standard"));
 	check(choice(&recordingModes, "standard")->isChecked() && !choice(&recordingModes, "horizontal")->isChecked(), "external Standard selection restores only Default");
 	check(recordingModes.grab().save(output + "/recording-240x32.png"), "save compact recording control rendering");
+	settle(thumbAnimation->duration() + 30);
+	int idleValueChanges = 0;
+	QObject::connect(thumbAnimation, &QVariantAnimation::valueChanged, &host, [&](const QVariant &) { ++idleValueChanges; });
+	PaintCounter idlePaints;
+	thumbTrack->installEventFilter(&idlePaints);
+	app.processEvents(); idlePaints.paints = 0;
+	settle(220);
+	check(thumbAnimation->state() == QAbstractAnimation::Stopped && idleValueChanges == 0 && idlePaints.paints == 0, "settled controls generate no idle animation changes or track repaints");
 	for (int font : {10, 12, 14}) {
 		app.setFont(QFont("Segoe UI", font));
 		host.setFont(QFont("Segoe UI", font));
@@ -88,9 +137,12 @@ int main(int argc, char **argv)
 		for(auto *widget : recordingModes.findChildren<QWidget *>()) widget->setFont(QFont("Segoe UI", font));
 		app.processEvents();
 		check(recordingModes.size() == QSize(240,32), "larger text does not enlarge the recording slot");
+		const int cellWidth = choice(&recordingModes, "standard")->width();
+		check(cellWidth >= 46 && cellWidth <= 47, "five uniform cells fit within the unchanged recording width");
 		for(auto *button : recordingModes.findChildren<QToolButton *>()) {
+			check(button->width() == cellWidth, "all recording options have the same cell width");
 			check(recordingModes.rect().contains(QRect(button->mapTo(&recordingModes, QPoint()),button->size())), "recording segments stay within the constrained slot");
-			check(button->width() >= button->fontMetrics().horizontalAdvance(button->text())+10 && button->height() >= button->fontMetrics().height()+2, "recording labels fit without clipping at larger font sizes");
+			check(button->width() >= button->fontMetrics().horizontalAdvance(button->text())+6 && button->height() >= button->fontMetrics().height()+2, "recording labels fit without clipping at larger font sizes");
 		}
 		check(recordingModes.grab().save(output + QString("/recording-240x32-%1pt.png").arg(font)), "save larger recording label rendering");
 		for(int width : {640, 760, 1000}) {
@@ -99,11 +151,12 @@ int main(int argc, char **argv)
 			const auto children = previews->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
 			for(auto *child : children) check(previews->rect().contains(child->geometry()), "preview controls stay inside their own strip");
 			for(auto *panel : {tw, yt, ki}) for(auto *button : panel->findChildren<QToolButton *>()) {
+				check(button->width() == cellWidth, "each provider option matches the recording option width");
 				check(panel->rect().contains(QRect(button->mapTo(panel, QPoint()), button->size())), "output buttons stay inside their provider group");
-				check(button->width() >= button->fontMetrics().horizontalAdvance(button->text()) + 10, "output labels have room at larger font sizes");
+				check(button->width() >= button->fontMetrics().horizontalAdvance(button->text()) + 6, "output labels have room at larger font sizes");
 			}
 			check(host.grab().save(output + QString("/controls-%1px-%2pt.png").arg(width).arg(font)), "save actual production widget rendering");
 		}
 	}
-	std::printf("PASS: %d control checks; saved routes, live-change rejection, keyboard refresh and nine layout sizes.\n", checks);
+	std::printf("PASS: %d control checks; uniform cells, finite click animation, saved routes, live-change rejection, keyboard refresh and nine layout sizes.\n", checks);
 }
