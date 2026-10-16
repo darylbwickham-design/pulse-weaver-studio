@@ -292,6 +292,8 @@ struct obs_display {
 	bool enabled;
 	uint32_t cx, cy;
 	uint32_t next_cx, next_cy;
+	uint32_t draw_fps_limit;
+	uint64_t next_draw_ns;
 	uint32_t background_color;
 	gs_swapchain_t *swap;
 	pthread_mutex_t draw_callbacks_mutex;

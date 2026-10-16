@@ -7,6 +7,8 @@
 #include <obs-nix-platform.h>
 #endif
 
+#include <QCoreApplication>
+#include <QVariant>
 #include <QWindow>
 #ifdef ENABLE_WAYLAND
 #include <QApplication>
@@ -155,6 +157,9 @@ void OBSQTDisplay::CreateDisplay()
 	}
 
 	display = obs_display_create(&info, backgroundColor);
+	const auto *application = QCoreApplication::instance();
+	const int requested = application ? application->property("pulsePreviewFps").toInt() : 60;
+	obs_display_set_draw_fps_limit(display, requested == 15 || requested == 30 ? requested : 60);
 
 	emit DisplayCreated(this);
 }

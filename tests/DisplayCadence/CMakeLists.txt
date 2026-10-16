@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.28)
+project(PulseDisplayCadenceTests LANGUAGES CXX)
+add_executable(PulseDisplayCadenceTests main.cpp)
+target_compile_features(PulseDisplayCadenceTests PRIVATE cxx_std_17)
+enable_testing()
+add_test(NAME PulseDisplayCadenceTests COMMAND PulseDisplayCadenceTests)

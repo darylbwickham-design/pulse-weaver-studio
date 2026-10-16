@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.28)
+project(PulseStudioControlsChecks LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+add_executable(PulseStudioControlsChecks main.cpp)
+target_compile_options(PulseStudioControlsChecks PRIVATE /utf-8)
+target_link_libraries(PulseStudioControlsChecks PRIVATE Qt6::Widgets)

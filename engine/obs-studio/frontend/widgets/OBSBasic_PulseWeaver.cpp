@@ -12,6 +12,8 @@
 #include "../../shared/qt/PulseOutputBitrates.hpp"
 #include "../../shared/qt/PulseOutputActivity.hpp"
 #include "../../shared/qt/PulseGitHubUpdater.hpp"
+#include "../../shared/qt/PulseStudioControls.hpp"
+#include "../../shared/qt/PulseUiLayoutAudit.hpp"
 #include <obs-output-timing.h>
 /******************************************************************************
     Pulse Weaver native product shell
@@ -1115,6 +1117,10 @@ void OBSBasic::InitPulseWeaverShell()
 {
 	setProperty("pulseWeaverGoLiveSession", false);
 	setObjectName("PulseWeaverStudio");
+	QSettings previewSettings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+	const int savedPreviewFps = previewSettings.value("preview/fps", 60).toInt();
+	qApp->setProperty("pulsePreviewFps", savedPreviewFps == 15 || savedPreviewFps == 30 ? savedPreviewFps : 60);
+	qApp->setProperty("pulseLivePreviews", previewSettings.value("preview/live_while_streaming", true).toBool());
 	setWindowTitle("PULSE WEAVER — Streaming Studio");
 	setWindowIcon(QIcon(":/res/images/pulseweaver.png"));
 	setMinimumSize(1180, 720);
@@ -1463,6 +1469,33 @@ void OBSBasic::InitPulseWeaverShell()
 		detailsButton->setText(details->isHidden() ? "Details" : "Less");
 	});
 	showMainLayout->addWidget(statsCard);
+	auto *previewControls = new PulseStudioControls::PreviewStrip(qApp->property("pulseLivePreviews").toBool(),
+		qApp->property("pulsePreviewFps").toInt(), horizontalCard, true);
+	// Keep the controls in the existing title bar instead of taking canvas height.
+	auto *previewHeading = qobject_cast<QGridLayout *>(horizontalCard->layout()->itemAt(0)->layout());
+	if (auto *badge = previewHeading->itemAtPosition(0, 2)->widget()) {
+		badge->hide(); previewHeading->removeWidget(badge);
+	}
+	previewHeading->addWidget(previewControls, 0, 2);
+	previewHeading->setColumnStretch(0, 0); previewHeading->setColumnStretch(1, 1); previewHeading->setColumnStretch(2, 0);
+	connect(previewControls->live, &QCheckBox::toggled, this, [this](bool enabled) {
+		qApp->setProperty("pulseLivePreviews", enabled);
+		QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+		settings.setValue("preview/live_while_streaming", enabled);
+		UpdatePulseWeaverPreviewVisibility(); RefreshPulseWeaverPlatformPreviews();
+	});
+	connect(previewControls->rate, &QSlider::valueChanged, this, [](int position) {
+		const int fps = PulseStudioControls::PreviewStrip::fps(position);
+		qApp->setProperty("pulsePreviewFps", fps);
+		QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+		settings.setValue("preview/fps", fps);
+		for (QWidget *window : QApplication::topLevelWidgets()) {
+			if (auto *display = qobject_cast<OBSQTDisplay *>(window); display && display->GetDisplay())
+				obs_display_set_draw_fps_limit(display->GetDisplay(), fps);
+			for (OBSQTDisplay *display : window->findChildren<OBSQTDisplay *>())
+				if (display->GetDisplay()) obs_display_set_draw_fps_limit(display->GetDisplay(), fps);
+		}
+	});
 
 	QSettings chatPanelSettings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
 	pulseChatPanelPreferences = PulseChatPanel::load(chatPanelSettings);
@@ -1819,6 +1852,13 @@ void OBSBasic::InitPulseWeaverShell()
 	showBody->setStretchFactor(0, 5);
 	showBody->setStretchFactor(1, 2);
 	showBody->setSizes({1100, 360});
+	QSettings splitSettings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+	const QByteArray chatSplit = splitSettings.value("showControl/previewChatSplit").toByteArray();
+	if (!chatSplit.isEmpty()) showBody->restoreState(chatSplit);
+	connect(showBody, &QSplitter::splitterMoved, showBody, [showBody] {
+		QSettings saved(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
+		saved.setValue("showControl/previewChatSplit", showBody->saveState());
+	});
 	auto *showContent = new QStackedWidget(pulseShowPage);
 	showContent->setObjectName("PulseWeaverShowContentStack");
 	showContent->addWidget(showBody);
@@ -2105,20 +2145,29 @@ void OBSBasic::InitPulseWeaverShell()
 	QTimer::singleShot(7000, this, refreshGameWindows);
 
 	auto *destinations = new QHBoxLayout;
-	auto *destinationLabel = new QLabel("Outputs");
-	destinationLabel->setObjectName("PulseWeaverKicker");
-	destinations->addWidget(destinationLabel);
+	auto *outputPanel = new QFrame(showMain);
+	outputPanel->setObjectName("PulseWeaverOutputRouting");
+	outputPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	outputPanel->setStyleSheet("QFrame#PulseWeaverOutputRouting{background:transparent;border:0;}");
+	auto *outputLayout = new QHBoxLayout(outputPanel);
+	outputLayout->setContentsMargins(0, 0, 0, 0); outputLayout->setSpacing(8);
 	/* Accounts and output routing are one product concept. Keep the provider
 	 * implementations behind one control instead of leaking three unrelated
 	 * setup fragments into Show Control. */
-	auto *platformsButton = new QPushButton("Connections");
-	platformsButton->setObjectName("PulseWeaverControl");
+	auto *platformsButton = new QToolButton(showMain);
+	platformsButton->setObjectName("PulseWeaverConnections");
+	platformsButton->setAutoRaise(true); platformsButton->setFixedSize(34, 34);
 	pulseIcon(platformsButton, "connect");
+	platformsButton->setProperty("pulseConnectionIcon", platformsButton->icon());
+	connect(App(), &OBSApp::StyleChanged, platformsButton, [this, platformsButton] {
+		platformsButton->setProperty("pulseConnectionIcon", platformsButton->icon());
+		platformsButton->setProperty("pulseConnectionAttention", QVariant());
+		UpdatePulseWeaverShell();
+	});
 	platformsButton->setAccessibleName("Manage Connections");
 	platformsButton->setToolTip("Open the single Connections page for Twitch, YouTube and Kick");
-	destinations->addWidget(platformsButton);
 	QSettings destinationSettings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
-	auto makeDestination = [this, &destinations, &destinationSettings](const QString &label, const QString &key,
+	auto makeDestination = [this, showMain, &destinations, &destinationSettings](const QString &label, const QString &key,
 		bool defaultValue, bool dualCapable) {
 		auto *route = new QComboBox;
 		route->setObjectName("PulseWeaverDestination" + label);
@@ -2203,7 +2252,8 @@ void OBSBasic::InitPulseWeaverShell()
 					ApplyPulseWeaverLiveDestinationChange(key, appliedMode, mode);
 			});
 		});
-		destinations->addWidget(route);
+		route->setParent(showMain); route->hide();
+		destinations->addWidget(new PulseStudioControls::RouteChoices(label, route), 1);
 		return route;
 	};
 	pulseTwitchDestination = makeDestination("Twitch", "twitch", true, true);
@@ -2224,7 +2274,7 @@ void OBSBasic::InitPulseWeaverShell()
 		obs_output_release(output);
 		obs_canvas_release(canvas);
 	});
-	connect(platformsButton, &QPushButton::clicked, this, [this] {
+	connect(platformsButton, &QAbstractButton::clicked, this, [this] {
 		SetPulseWeaverWorkspace(3);
 		if (auto *platformTabs = findChild<QTabWidget *>("PulseWeaverPlatformTabs"))
 			platformTabs->setCurrentIndex(0);
@@ -2267,8 +2317,9 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseDestinationStatus->setWordWrap(true);
 	pulseDestinationStatus->setMinimumWidth(0);
 	pulseDestinationStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-	destinations->addWidget(pulseDestinationStatus, 1);
-	showMainLayout->addLayout(destinations);
+	pulseDestinationStatus->setParent(outputPanel); pulseDestinationStatus->hide();
+	outputLayout->addLayout(destinations, 1); outputLayout->addWidget(platformsButton, 0, Qt::AlignBottom);
+	showMainLayout->addWidget(outputPanel);
 	/* Show Control uses the same proven OBS vertical controls as Camera, in a
 	 * compact horizontally scrolling band. */
 	auto *mixerCard = new QFrame;
@@ -2420,9 +2471,13 @@ void OBSBasic::InitPulseWeaverShell()
 				ApplyPulseWeaverStage(pulseStageSelector->currentIndex(), false);
 		});
 	});
-	controls->addWidget(pulseRecordingDestination);
 	pulseRecordingDestination->setMinimumWidth(150);
 	pulseRecordingDestination->setMaximumWidth(240);
+	pulseRecordingDestination->setParent(controls); pulseRecordingDestination->hide();
+	auto *recordingModes = new PulseStudioControls::RouteChoices("Recording", pulseRecordingDestination, controls, false);
+	recordingModes->setAccessibleName("Recording format");
+	recordingModes->setMinimumWidth(150); recordingModes->setMaximumWidth(240); recordingModes->setFixedHeight(32);
+	controls->addWidget(recordingModes);
 	pulseRecordButton = new QPushButton("Record");
 	pulseRecordButton->setObjectName("PulseWeaverRecord");
 	pulseIcon(pulseRecordButton, "record");
@@ -2441,7 +2496,7 @@ void OBSBasic::InitPulseWeaverShell()
 			RecordActionTriggered();
 		} else if (mode == "off") {
 			QMessageBox::information(this, "Recording is Off",
-				"Choose Standard, 16:9, 9:16 or Dual before starting a recording.");
+				"Choose Default, 16:9, 9:16 or Both before starting a recording.");
 		} else {
 			StartPulseWeaverRecordings();
 		}
@@ -3447,6 +3502,13 @@ void OBSBasic::InitPulseWeaverShell()
 		if (loadPulseWeaverStages().isEmpty()) SetPulseWeaverWorkspace(4);
 	});
 	QTimer::singleShot(0, this, &OBSBasic::RefreshPulseWeaverChatComposer);
+	const QString auditDirectory = qEnvironmentVariable("PULSEWEAVER_UI_LAYOUT_AUDIT_DIR");
+	if (!auditDirectory.isEmpty()) QTimer::singleShot(8000, this, [this, auditDirectory] {
+		SetPulseWeaverWorkspace(0);
+		if (auto *show = findChild<QPushButton *>("PulseWeaverShowMode")) show->click();
+		PulseUiLayoutAudit::run(this, pulseHorizontalPreviewCard, pulseVerticalPreviewCard, pulseChatPanelCard,
+			findChild<QCheckBox *>("PulseWeaverLivePreviews"), findChild<QSlider *>("PulseWeaverPreviewRate"), pulseDestinationStatus, auditDirectory);
+	});
 }
 
 void OBSBasic::RestorePulseWeaverYouTubeAccount()
@@ -3486,7 +3548,8 @@ void OBSBasic::UpdatePulseWeaverPreviewVisibility()
 	const int index = pulsePages->currentIndex();
 	const bool visible = isVisible() && !isMinimized();
 	const auto *showContent = findChild<QStackedWidget *>("PulseWeaverShowContentStack");
-	const bool show = visible && index == 0 && (!showContent || showContent->currentIndex() == 0);
+	const bool allowLivePreview = qApp->property("pulseLivePreviews").toBool() || !PulseHasActiveOutputs();
+	const bool show = visible && allowLivePreview && index == 0 && (!showContent || showContent->currentIndex() == 0);
 	const bool camera = visible && index == 2;
 	/* OBS displays continue drawing on Windows after their Qt page is hidden.
 	 * Keep only the visible workspace's preview surfaces active so streaming
@@ -4322,6 +4385,16 @@ void OBSBasic::UpdatePulseWeaverShell()
 	const bool unstableRecording = PulseWeaverRecordingActive();
 	const bool recording = obs_frontend_recording_active() || unstableRecording;
 	setProperty("pulseWeaverRecordingActive", recording);
+	if (auto *connections = findChild<QToolButton *>("PulseWeaverConnections")) {
+		const QString message = pulseDestinationStatus ? pulseDestinationStatus->text() : QString();
+		connections->setToolTip("Connections" + (message.isEmpty() ? QString() : "\n" + message));
+		const bool attention = message.contains("failed", Qt::CaseInsensitive) || message.contains("could not", Qt::CaseInsensitive) ||
+			message.contains("not connected", Qt::CaseInsensitive) || message.startsWith("Stop ", Qt::CaseInsensitive);
+		if (connections->property("pulseConnectionAttention").toBool() != attention) {
+			connections->setProperty("pulseConnectionAttention", attention);
+			connections->setIcon(attention ? style()->standardIcon(QStyle::SP_MessageBoxWarning) : connections->property("pulseConnectionIcon").value<QIcon>());
+		}
+	}
 	const bool replay = obs_frontend_replay_buffer_active();
 	const bool virtualCamera = obs_frontend_virtualcam_active();
 	if (pulseEngineStatus)
@@ -4339,7 +4412,7 @@ void OBSBasic::UpdatePulseWeaverShell()
 	if (pulseStreamButton) {
 		const bool live = streaming || property("pulseWeaverGoLiveSession").toBool();
 		pulseStreamButton->setText(live ? "End stream" : "Go live");
-		pulseStreamButton->setToolTip(live ? "Stop the current live outputs" : "Start streaming to the destinations selected under Outputs");
+		pulseStreamButton->setToolTip(live ? "Stop the current live outputs" : "Start streaming to the selected Twitch, YouTube and Kick formats");
 		reflectActive(pulseStreamButton, live);
 	}
 	if (pulseRecordButton) {
@@ -4653,7 +4726,8 @@ void OBSBasic::RefreshPulseWeaverPlatformPreviews()
 		return;
 	const QJsonObject stage = QJsonDocument::fromJson(
 		pulseStageSelector->currentData().toString().toUtf8()).object();
-	auto refresh = [this, &stage](const QString &route, QString &provider, QLabel *label, OBSQTDisplay *display) {
+	const bool previewsAllowed = qApp->property("pulseLivePreviews").toBool() || !PulseHasActiveOutputs();
+	auto refresh = [this, &stage, previewsAllowed](const QString &route, QString &provider, QLabel *label, OBSQTDisplay *display) {
 		auto modeFor = [this](const QString &candidate) {
 			if (candidate == "twitch") return pulseTwitchDestination ? pulseTwitchDestination->currentData().toString() : QString("off");
 			if (candidate == "youtube") return pulseYouTubeDestination ? pulseYouTubeDestination->currentData().toString() : QString("off");
@@ -4693,7 +4767,9 @@ void OBSBasic::RefreshPulseWeaverPlatformPreviews()
 			const QString state = pulsePlatformOutputState(live, ready);
 			title = provider.toUpper() + " · " + scene + " · " + state;
 		}
+		if (!previewsAllowed) title += " · Preview paused";
 		const QString richTitle = title.toHtmlEscaped();
+		if (label) label->setToolTip(title);
 		if (label && label->text() != richTitle)
 			label->setText(richTitle);
 		QWidget *card = route == "vertical" ? pulseVerticalPreviewCard.data() : pulseHorizontalPreviewCard.data();
@@ -4726,7 +4802,7 @@ void OBSBasic::RefreshPulseWeaverPlatformPreviews()
 			previewSource = obs_transition_get_active_source(previewSource);
 		auto &showing = route == "vertical" ? pulseVerticalProgramShowing : pulseHorizontalProgramShowing;
 		showing.Select(previewSource ? obs_scene_from_source(previewSource) : nullptr);
-		showing.SetShowing(display && display->isVisible() && !isMinimized());
+		showing.SetShowing(previewsAllowed && display && display->isVisible() && !isMinimized());
 	};
 	refresh("horizontal", pulseHorizontalPreviewProvider, pulseHorizontalPreviewTitle, pulseHorizontalDisplay);
 	refresh("vertical", pulseVerticalPreviewProvider, pulseVerticalPreviewTitle, pulseVerticalDisplay);

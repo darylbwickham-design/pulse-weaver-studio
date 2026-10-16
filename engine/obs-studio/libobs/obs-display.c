@@ -18,6 +18,7 @@
 #include "graphics/vec4.h"
 #include "obs.h"
 #include "obs-internal.h"
+#include "util/pulse-display-cadence.h"
 
 bool obs_display_init(struct obs_display *display, const struct gs_init_data *graphics_data)
 {
@@ -125,6 +126,7 @@ void obs_display_resize(obs_display_t *display, uint32_t cx, uint32_t cy)
 
 	display->next_cx = cx;
 	display->next_cy = cy;
+	display->next_draw_ns = 0;
 
 	pthread_mutex_unlock(&display->draw_info_mutex);
 }
@@ -137,6 +139,7 @@ void obs_display_update_color_space(obs_display_t *display)
 	pthread_mutex_lock(&display->draw_info_mutex);
 
 	display->update_color_space = true;
+	display->next_draw_ns = 0;
 
 	pthread_mutex_unlock(&display->draw_info_mutex);
 }
@@ -249,6 +252,10 @@ void render_display(struct obs_display *display)
 	cx = display->next_cx;
 	cy = display->next_cy;
 	update_color_space = display->update_color_space;
+	if (!pulse_display_frame_due(os_gettime_ns(), display->draw_fps_limit, &display->next_draw_ns)) {
+		pthread_mutex_unlock(&display->draw_info_mutex);
+		return;
+	}
 
 	display->update_color_space = false;
 
@@ -287,6 +294,16 @@ void obs_display_set_enabled(obs_display_t *display, bool enable)
 bool obs_display_enabled(obs_display_t *display)
 {
 	return display ? display->enabled : false;
+}
+
+void obs_display_set_draw_fps_limit(obs_display_t *display, uint32_t fps)
+{
+	if (!display)
+		return;
+	pthread_mutex_lock(&display->draw_info_mutex);
+	display->draw_fps_limit = fps > 240 ? 240 : fps;
+	display->next_draw_ns = 0;
+	pthread_mutex_unlock(&display->draw_info_mutex);
 }
 
 void obs_display_set_background_color(obs_display_t *display, uint32_t color)

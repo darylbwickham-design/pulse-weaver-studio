@@ -1021,6 +1021,9 @@ EXPORT void obs_display_remove_draw_callback(obs_display_t *display,
 EXPORT void obs_display_set_enabled(obs_display_t *display, bool enable);
 EXPORT bool obs_display_enabled(obs_display_t *display);
 
+/** Limits only this display's redraws; zero leaves its cadence unrestricted. */
+EXPORT void obs_display_set_draw_fps_limit(obs_display_t *display, uint32_t fps);
+
 EXPORT void obs_display_set_background_color(obs_display_t *display, uint32_t color);
 
 EXPORT void obs_display_size(obs_display_t *display, uint32_t *width, uint32_t *height);
