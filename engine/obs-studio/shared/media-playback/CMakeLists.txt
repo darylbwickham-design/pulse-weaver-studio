@@ -10,6 +10,7 @@ target_sources(
   INTERFACE
     media-playback/cache.c
     media-playback/cache.h
+    media-playback/uniform-alpha-pool.h
     media-playback/closest-format.h
     media-playback/decode.c
     media-playback/decode.h

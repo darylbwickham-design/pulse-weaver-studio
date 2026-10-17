@@ -50,7 +50,8 @@ struct Player {
 
 int main(int argc, char **argv)
 {
-    if (argc != 2) return 2;
+    const bool requireUniformAlpha = argc == 3 && std::strcmp(argv[2], "--require-uniform-alpha") == 0;
+    if (argc != 2 && !requireUniformAlpha) return 2;
     const long allocationsBefore = bnum_allocs();
     auto first = std::make_unique<Player>(argv[1]);
     auto second = std::make_unique<Player>(argv[1]);
@@ -69,15 +70,33 @@ int main(int argc, char **argv)
     uint64_t decodedBytes = 0;
     for (size_t i = 0; i < first->cache.video_frames.num; ++i) {
         const auto &frame = first->cache.video_frames.array[i];
-        size_t last = 0;
-        for (size_t plane = 1; plane < MAX_AV_PLANES; ++plane) if (frame.data[plane]) last = plane;
-        const bool halfHeight = last > 0 && (frame.format == VIDEO_FORMAT_I420 || frame.format == VIDEO_FORMAT_I010 ||
-            frame.format == VIDEO_FORMAT_NV12 || frame.format == VIDEO_FORMAT_P010);
-        const auto height = halfHeight ? (frame.height + 1) / 2 : frame.height;
-        decodedBytes += (frame.data[last] - frame.data[0]) + uint64_t(height) * frame.linesize[last];
+        for (size_t plane = 0; plane < MAX_AV_PLANES; ++plane) {
+            if (!frame.data[plane]) continue;
+            uint32_t height = frame.height;
+            const bool halfChroma = frame.format == VIDEO_FORMAT_I420 || frame.format == VIDEO_FORMAT_I010 ||
+                frame.format == VIDEO_FORMAT_I40A || frame.format == VIDEO_FORMAT_NV12 || frame.format == VIDEO_FORMAT_P010;
+            if (halfChroma && (plane == 1 || (plane == 2 && frame.format != VIDEO_FORMAT_NV12 && frame.format != VIDEO_FORMAT_P010)))
+                height = frame.height / 2 + frame.height % 2;
+            // Cache copies use tightly packed OBS linesizes, not decoder row padding.
+            decodedBytes += uint64_t(frame.linesize[plane]) * height;
+        }
     }
-    std::printf("VIDEO MEMORY: %.1f MiB per decoded copy; five private copies %.1f MiB; shared %.1f MiB; saving %.1f MiB.\n",
-        decodedBytes/1048576.0, decodedBytes*5/1048576.0, decodedBytes/1048576.0, decodedBytes*4/1048576.0);
+    const auto pool = mp_cache_get_uniform_alpha_stats(&first->cache);
+    check(pool.logical_bytes >= pool.unique_bytes && pool.logical_bytes <= decodedBytes, "Alpha payload accounting is bounded");
+    for (auto *p : {second.get(), third.get(), fourth.get(), fifth.get()}) {
+        const auto sharedPool = mp_cache_get_uniform_alpha_stats(&p->cache);
+        check(sharedPool.frames == pool.frames && sharedPool.logical_bytes == pool.logical_bytes &&
+            sharedPool.unique_bytes == pool.unique_bytes && sharedPool.planes == pool.planes,
+            "Independent players retain the same alpha pool owner and accounting");
+    }
+    const uint64_t alphaSaved = pool.logical_bytes - pool.unique_bytes;
+    if (requireUniformAlpha)
+        check(pool.frames > 1 && alphaSaved > 0, "Fixture exercises real shared-entry alpha ownership and savings");
+    const uint64_t storedBytes = decodedBytes - alphaSaved;
+    std::printf("VIDEO PAYLOAD: %.1f MiB decoded; %.1f MiB retained after uniform-alpha pooling; %.1f MiB saved. Excludes alignment/allocator metadata.\n",
+        decodedBytes/1048576.0, storedBytes/1048576.0, alphaSaved/1048576.0);
+    std::printf("ALPHA POOL: %llu uniform frames; %zu unique constant planes; shared by five independent players.\n",
+        static_cast<unsigned long long>(pool.frames), pool.planes);
     const auto originalTimestamp = first->cache.video_frames.array[0].timestamp;
     mp_cache_play(&first->cache, true); mp_cache_play(&second->cache, true);
     check(waitFor([&] { return first->video >= 3 && second->video >= 3; }), "Players deliver video independently");
@@ -98,6 +117,11 @@ int main(int argc, char **argv)
         Player normal(argv[1], false); normal.awaitReady();
         Player shared(argv[1]); shared.awaitReady();
         check(normal.cache.video_frames.array != shared.cache.video_frames.array, "Opt-out player keeps private cache");
+        if (requireUniformAlpha) {
+            const auto privatePool = mp_cache_get_uniform_alpha_stats(&normal.cache);
+            check(privatePool.frames > 1 && privatePool.logical_bytes > privatePool.unique_bytes,
+                "Opt-out player also exercises private alpha pool cleanup");
+        }
         Player differentSpeed(argv[1], true, 80); differentSpeed.awaitReady();
         check(differentSpeed.cache.video_frames.array != shared.cache.video_frames.array, "Different decode settings do not share data");
     }

@@ -44,6 +44,7 @@ struct mp_shared_cache {
 	size_t refs;
 	DARRAY(struct obs_source_frame) video_frames;
 	DARRAY(struct obs_source_audio) audio_segments;
+	struct mp_uniform_alpha_pool uniform_alpha_pool;
 	int64_t final_v_duration, final_a_duration, start_time, media_duration;
 	bool has_video, has_audio;
 };
@@ -96,6 +97,7 @@ static void shared_cache_release(struct mp_shared_cache *shared)
 		*entry = shared->next;
 		for (size_t i = 0; i < shared->video_frames.num; i++)
 			obs_source_frame_free(&shared->video_frames.array[i]);
+		mp_uniform_alpha_pool_free(&shared->uniform_alpha_pool);
 		for (size_t i = 0; i < shared->audio_segments.num; i++)
 			bfree((void *)shared->audio_segments.array[i].data[0]);
 		da_free(shared->video_frames);
@@ -244,6 +246,8 @@ static bool mp_cache_decode_shared(mp_cache_t *c)
 		entry->refs = 1;
 		entry->video_frames.da = c->video_frames.da;
 		entry->audio_segments.da = c->audio_segments.da;
+		entry->uniform_alpha_pool = c->uniform_alpha_pool;
+		memset(&c->uniform_alpha_pool, 0, sizeof(c->uniform_alpha_pool));
 		entry->final_v_duration = c->final_v_duration;
 		entry->final_a_duration = c->final_a_duration;
 		entry->start_time = c->start_time;
@@ -586,10 +590,12 @@ static void *mp_cache_thread_start(void *opaque)
 static void fill_video(void *data, struct obs_source_frame *frame)
 {
 	mp_cache_t *c = data;
-	struct obs_source_frame dup;
+	struct obs_source_frame dup = {0};
 
-	obs_source_frame_init(&dup, frame->format, frame->width, frame->height);
-	obs_source_frame_copy(&dup, frame);
+	if (!mp_uniform_alpha_copy_frame(&c->uniform_alpha_pool, &dup, frame)) {
+		obs_source_frame_init(&dup, frame->format, frame->width, frame->height);
+		obs_source_frame_copy(&dup, frame);
+	}
 
 	dup.timestamp = frame->timestamp;
 
@@ -733,6 +739,7 @@ void mp_cache_free(mp_cache_t *c)
 		struct obs_source_frame *f = &c->video_frames.array[i];
 		obs_source_frame_free(f);
 	}
+	mp_uniform_alpha_pool_free(&c->uniform_alpha_pool);
 	for (size_t i = 0; i < c->audio_segments.num; i++) {
 		struct obs_source_audio *a = &c->audio_segments.array[i];
 		bfree((void *)a->data[0]);
@@ -746,6 +753,15 @@ void mp_cache_free(mp_cache_t *c)
 	pthread_mutex_destroy(&c->mutex);
 	os_sem_destroy(c->sem);
 	memset(c, 0, sizeof(*c));
+}
+
+struct mp_uniform_alpha_stats mp_cache_get_uniform_alpha_stats(const mp_cache_t *c)
+{
+	if (!c) {
+		struct mp_uniform_alpha_stats empty = {0};
+		return empty;
+	}
+	return mp_uniform_alpha_pool_stats(c->shared ? &c->shared->uniform_alpha_pool : &c->uniform_alpha_pool);
 }
 
 void mp_cache_play(mp_cache_t *c, bool loop)

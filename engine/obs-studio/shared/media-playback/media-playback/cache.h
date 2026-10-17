@@ -21,6 +21,7 @@
 #include <obs.h>
 
 #include "media.h"
+#include "uniform-alpha-pool.h"
 
 struct mp_cache {
 	mp_video_cb v_preload_cb;
@@ -53,6 +54,7 @@ struct mp_cache {
 
 	DARRAY(struct obs_source_frame) video_frames;
 	DARRAY(struct obs_source_audio) audio_segments;
+	struct mp_uniform_alpha_pool uniform_alpha_pool;
 	char *shared_key;
 	struct mp_shared_cache *shared;
 
@@ -97,3 +99,6 @@ extern int64_t mp_cache_get_current_time(mp_cache_t *c);
 extern void mp_cache_seek(mp_cache_t *c, int64_t pos);
 extern int64_t mp_cache_get_frames(mp_cache_t *c);
 extern int64_t mp_cache_get_duration(mp_cache_t *c);
+/* Read after preload completes, while the player still owns its cache.
+ * Byte counts describe visible alpha payload, excluding allocator overhead. */
+extern struct mp_uniform_alpha_stats mp_cache_get_uniform_alpha_stats(const mp_cache_t *c);
