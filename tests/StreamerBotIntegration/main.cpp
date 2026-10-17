@@ -1,6 +1,7 @@
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-basic-controls.hpp"
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-basic-controls-page.hpp"
 #include <QApplication>
+#include <QFile>
 #include <QSignalBlocker>
 #include <QScrollBar>
 #include <cstdio>
@@ -24,6 +25,17 @@ static void check(bool ok, const char *message)
 int main(int argc, char **argv)
 {
 	QApplication app(argc, argv);
+	app.setStyle("windowsvista"); // Match OBSApp::InitTheme on Windows.
+	const auto themePath = qEnvironmentVariable("PULSEWEAVER_CONTROL_THEME_QSS");
+	if (!themePath.isEmpty()) {
+		QFile theme(themePath);
+		check(theme.open(QIODevice::ReadOnly), "native audit's resolved theme stylesheet is readable");
+		app.setStyleSheet(QString::fromUtf8(theme.readAll()));
+	} else {
+		// The inherited Yami button cap caused the actual native card clipping.
+		// Exercise that rule even when no complete audit stylesheet is supplied.
+		app.setStyleSheet("QPushButton { height: 22px; max-height: 22px; margin-top: 2px; margin-bottom: 2px; padding: 4px 16px; border: 1px solid #3b485a; }");
+	}
 	using namespace PulseBasicControls;
 	check(defaultApiPort("{\"product\":\"studio2-preview\"}", 18755) == 18775, "2.0 packaged identity has isolated fresh default port");
 	check(defaultApiPort("{\"product\":\"studio2-preview\"}", 18765) == 18775, "preview marker selects isolated default without build flags");
@@ -162,21 +174,44 @@ int main(int argc, char **argv)
 	check(page.findChildren<QComboBox *>().isEmpty(), "Commands page uses click-through categories instead of command lists");
 	const auto categories = page.findChildren<QPushButton *>("PulseWeaverCommandCategory");
 	check(categories.size() == 4, "four clear command category cards");
+	for (auto *card : categories)
+		check(card->sizeHint().height() == card->height() && card->minimumSizeHint().height() == card->height(),
+		      "custom card size hints match its complete fixed-height painted rect");
 	auto *scroll = page.findChild<QScrollArea *>();
 	auto *navigator = page.findChild<QStackedWidget *>("PulseWeaverCommandNavigator");
 	check(navigator && navigator->currentIndex() == 0, "command navigator opens at category cards");
+	check(navigator->layout()->contentsMargins() == QMargins(), "current-page stack explicitly removes internal layout margins");
 	auto landingFits = [&] {
 		app.processEvents(); page.layout()->activate(); app.processEvents();
 		for (auto *card : categories) {
 			const QRect bounds(card->mapTo(scroll->viewport(), QPoint()), card->size());
-			if (!scroll->viewport()->rect().contains(bounds)) return false;
+			if (!scroll->viewport()->rect().contains(bounds)) {
+				std::fprintf(stderr, "Viewport clips %s: card=%d,%d,%d,%d viewport=%d,%d\n", qPrintable(card->text()), bounds.x(), bounds.y(), bounds.width(), bounds.height(), scroll->viewport()->width(), scroll->viewport()->height());
+				return false;
+			}
 			// A card can be inside the scroll viewport while its parent clips it.
-			if (!navigator->contentsRect().contains(QRect(card->mapTo(navigator, QPoint()), card->size()))) return false;
+			if (!navigator->contentsRect().contains(QRect(card->mapTo(navigator, QPoint()), card->size()))) {
+				const auto relative = card->mapTo(navigator, QPoint());
+				std::fprintf(stderr, "Navigator clips %s: card=%d,%d,%d,%d navigator=%d,%d\n", qPrintable(card->text()), relative.x(), relative.y(), card->width(), card->height(), navigator->width(), navigator->height());
+				return false;
+			}
+			for (auto *ancestor = card->parentWidget(); ancestor && ancestor != scroll->viewport(); ancestor = ancestor->parentWidget())
+				if (!ancestor->rect().contains(QRect(card->mapTo(ancestor, QPoint()), card->size()))) return false;
 		}
 		auto *guide = page.findChild<QPushButton *>("PulseWeaverControlGuide");
-		return scroll->viewport()->rect().contains(QRect(guide->mapTo(scroll->viewport(), QPoint()), guide->size()));
+		const QRect guideBounds(guide->mapTo(scroll->viewport(), QPoint()), guide->size());
+		if (!scroll->viewport()->rect().contains(guideBounds))
+			std::fprintf(stderr, "Viewport clips guide: guide=%d,%d,%d,%d viewport=%d,%d\n", guideBounds.x(), guideBounds.y(), guideBounds.width(), guideBounds.height(), scroll->viewport()->width(), scroll->viewport()->height());
+		return scroll->viewport()->rect().contains(guideBounds);
 	};
+	if (argc > 1) page.grab().save(QString::fromLocal8Bit(argv[1]));
 	check(landingFits(), "all four category cards and guide fit above the fold at 1180x720 native content height");
+	if (!themePath.isEmpty()) {
+		for (auto *card : categories) {
+			const auto relative = card->mapTo(navigator, QPoint());
+			std::printf("THEME: %s rect=%d,%d,%d,%d navigator=%d,%d\n", qPrintable(card->text()), relative.x(), relative.y(), card->width(), card->height(), navigator->width(), navigator->height());
+		}
+	}
 	const int landingHeight = navigator->height();
 	categories[2]->click();
 	check(navigator->currentIndex() != 0, "category click opens a focused command grid");

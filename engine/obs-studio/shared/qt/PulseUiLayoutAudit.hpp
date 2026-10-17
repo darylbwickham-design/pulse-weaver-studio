@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLayout>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QPushButton>
@@ -24,6 +25,71 @@
 // Explicit, one-shot development audit. The caller only enables this for a
 // separate inert portable fixture; normal launches allocate no audit timer.
 namespace PulseUiLayoutAudit {
+inline QJsonArray rectValue(const QRect &rect)
+{
+	return {rect.x(), rect.y(), rect.width(), rect.height()};
+}
+inline QJsonArray marginValue(const QMargins &margins)
+{
+	return {margins.left(), margins.top(), margins.right(), margins.bottom()};
+}
+inline QJsonObject widgetGeometry(QWidget *widget, QWidget *window)
+{
+	if(!widget) return {};
+	const auto hint = widget->sizeHint();
+	const auto minimum = widget->minimumSizeHint();
+	QJsonObject result{{"object", widget->objectName()}, {"class", widget->metaObject()->className()},
+		{"rect", rectValue(widget->rect())}, {"contentsRect", rectValue(widget->contentsRect())},
+		{"inWindow", rectValue(QRect(widget->mapTo(window, QPoint()), widget->size()))},
+		{"widgetMargins", marginValue(widget->contentsMargins())},
+		{"sizeHint", QJsonArray{hint.width(), hint.height()}},
+		{"minimumSizeHint", QJsonArray{minimum.width(), minimum.height()}},
+		{"visible", widget->isVisibleTo(window)}};
+	if(auto *layout = widget->layout()) {
+		result.insert("layoutMargins", marginValue(layout->contentsMargins()));
+		result.insert("layoutGeometry", rectValue(layout->geometry()));
+		result.insert("layoutSizeConstraint", int(layout->sizeConstraint()));
+	}
+	return result;
+}
+inline QJsonObject automationGeometry(QWidget *window, QWidget *page)
+{
+	auto *navigator = page->findChild<QStackedWidget *>("PulseWeaverCommandNavigator");
+	QJsonObject report{{"navigator", widgetGeometry(navigator, window)}};
+	if(navigator) report.insert("currentPage", widgetGeometry(navigator->currentWidget(), window));
+	QJsonArray categories;
+	bool allContained = true;
+	const auto cards = page->findChildren<QPushButton *>("PulseWeaverCommandCategory");
+	for(auto *card : cards) {
+		QJsonObject entry = widgetGeometry(card, window);
+		entry.insert("category", card->text().section('\n', 0, 0));
+		const QRect bounds(card->mapTo(window, QPoint()), card->size());
+		QRect intersection = bounds;
+		bool contentsContain = true;
+		QJsonArray ancestors;
+		for(auto *ancestor = card->parentWidget(); ancestor; ancestor = ancestor->parentWidget()) {
+			const QPoint origin = ancestor->mapTo(window, QPoint());
+			const QRect ancestorRect(origin, ancestor->size());
+			const QRect ancestorContents = ancestor->contentsRect().translated(origin);
+			intersection = intersection.intersected(ancestorRect);
+			contentsContain = contentsContain && ancestorContents.contains(bounds);
+			auto details = widgetGeometry(ancestor, window);
+			details.insert("containsCard", ancestorRect.contains(bounds));
+			details.insert("contentsContainCard", ancestorContents.contains(bounds));
+			ancestors.append(details);
+			if(ancestor == window) break;
+		}
+		entry.insert("ancestorIntersection", rectValue(intersection));
+		entry.insert("ancestors", ancestors);
+		entry.insert("fullyContained", intersection == bounds && contentsContain && card->isVisibleTo(window));
+		allContained = allContained && intersection == bounds && contentsContain && card->isVisibleTo(window);
+		categories.append(entry);
+	}
+	report.insert("categories", categories);
+	report.insert("automationCategoryCount", cards.size());
+	report.insert("automationCardsContained", cards.size() == 4 && allContained);
+	return report;
+}
 inline QJsonObject commands(QWidget *window, const QString &directory)
 {
 	auto *button = window->findChild<QPushButton *>("PulseWeaverCommandButton");
@@ -85,6 +151,15 @@ inline QJsonObject commands(QWidget *window, const QString &directory)
 	result->insert("automationCommandsAvailable", tabs && page);
 	if(tabs && page) {
 		tabs->setCurrentWidget(page); QApplication::processEvents();
+		if(page->layout()) page->layout()->activate();
+		if(auto *navigator = page->findChild<QStackedWidget *>("PulseWeaverCommandNavigator")) {
+			if(navigator->layout()) navigator->layout()->activate();
+			if(navigator->currentWidget() && navigator->currentWidget()->layout()) navigator->currentWidget()->layout()->activate();
+		}
+		QApplication::processEvents();
+		const auto geometry = automationGeometry(window, page);
+		result->insert("automationGeometry", geometry);
+		result->insert("automationCardsContained", geometry.value("automationCardsContained"));
 		window->grab().save(directory + "/commands-integration.png");
 		for(auto *category : page->findChildren<QPushButton *>("PulseWeaverCommandCategory")) {
 			if(category->text().startsWith("Audio")) {category->click(); break;}
@@ -120,6 +195,10 @@ inline void run(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget 
 {
 	if(!landscape || !portrait || !chat || !toggle || !rate) return;
 	QDir().mkpath(directory);
+	// The resolved application QSS is static style data. This opt-in fixture
+	// artifact lets focused Qt checks reproduce the actual native theme.
+	QFile theme(directory + "/active-theme.qss");
+	if(theme.open(QIODevice::WriteOnly)) theme.write(qApp->styleSheet().toUtf8());
 	auto clipped = [window](QWidget *widget) {
 		if(!widget) return QRect();
 		QRect visible(widget->mapTo(window, QPoint()), widget->size());

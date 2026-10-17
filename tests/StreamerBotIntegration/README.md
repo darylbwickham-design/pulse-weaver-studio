@@ -14,6 +14,8 @@ ctest --test-dir build/basic-controls -C Release --output-on-failure
 
 CTest uses Qt's minimal platform. For a native-font screenshot, run `PulseBasicControlsTests.exe <output.png>` with `QT_QPA_PLATFORM=windows`; the test window stays hidden. The actual application layout also requires native fixture QA with its theme and surrounding panels.
 
+The default check includes the inherited theme's ordinary-button height cap and checks every card against its ancestor bounds. To reproduce the complete native theme, set `PULSEWEAVER_CONTROL_THEME_QSS` to the native audit's `active-theme.qss` before running the test; it prints the actual card and navigator rectangles and checks full containment with that stylesheet.
+
 The adapter check compiles the unchanged C# example with a small Streamer.bot API stand-in and an inert loopback HTTP server:
 
 ```powershell

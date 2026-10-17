@@ -38,6 +38,7 @@ class CurrentPageStack final : public QStackedWidget {
 public:
 	explicit CurrentPageStack(QWidget *parent) : QStackedWidget(parent)
 	{
+		layout()->setContentsMargins(0, 0, 0, 0);
 		layout()->setSizeConstraint(QLayout::SetNoConstraint);
 		setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 		connect(this, &QStackedWidget::currentChanged, this, [this] { updateGeometry(); });
@@ -66,6 +67,10 @@ public:
 	CategoryCard(const QString &title, const QString &hint, QWidget *parent) : QPushButton(title, parent), detail(hint)
 	{
 		setObjectName("PulseWeaverCommandCategory"); setFixedHeight(68); setMinimumWidth(180);
+		// The inherited theme caps ordinary buttons at a 22px content height.
+		// These custom-painted cards need matching style and widget dimensions:
+		// 66px of content plus the two 1px border edges equals the 68px card.
+		setStyleSheet("QPushButton#PulseWeaverCommandCategory { height: 66px; min-height: 66px; max-height: 66px; margin: 0px; padding: 0px; border-width: 1px; border-style: solid; }");
 		setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed); setCursor(Qt::PointingHandCursor);
 		setAccessibleDescription(hint); setToolTip(hint); setAutoDefault(false);
 	}
