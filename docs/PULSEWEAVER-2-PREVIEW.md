@@ -34,7 +34,7 @@ Open **Commands** to copy the local endpoint, reveal/copy its masked connection 
 
 A fresh preview defaults to local API port **18775**. A copied profile keeps its explicitly saved port, so always use the endpoint displayed by the instance you want to control. Regular Pulse Weaver defaults to 18755; Motion Preview defaults to 18765. Historical Builder Test installations also used 18775, so check availability before running several test editions at once. OBS WebSocket and any local overlay servers have their own ports.
 
-The accompanying [Streamer.bot guide](../integrations/streamerbot/README.md) explains the C# example and private variables. This is a **paste-and-compile scaffold**, not an import-tested Streamer.bot package. Native command tests use inert controllers; actual Streamer.bot compilation and end-to-end operation need separate verification in your installed version. Read the example before attaching it to a live trigger.
+The accompanying [Streamer.bot guide](../integrations/streamerbot/README.md) explains the C# example and private variables. This is a **paste-and-compile scaffold**, not an import-tested Streamer.bot package. Command validation includes an isolated native studio with inert sources; actual Streamer.bot compilation and end-to-end operation need separate verification in your installed version. Read the example before attaching it to a live trigger.
 
 Stage/source responses report observed state. Recording and replay requests can return HTTP 202 while native validation or file writing continues. An accepted request does not prove that recording started or that a finished file exists. Confirm the state in Pulse Weaver. Request IDs correlate replies; they do not provide automatic retries or duplicate suppression.
 
@@ -54,6 +54,7 @@ Preview updates select only the dedicated **2 Preview** installer family. They c
 
 ## Known limits
 
+- At the minimum window height, expanding the compact mixer reduces the preview viewport. Resize its splitter, use a taller window or open Full mixer when you need more room for both.
 - This is an unstable interface preview. Native screenshots, layout checks and controller tests do not replace a real rehearsal with your own game, hardware, sources and connected services.
 - Kick remains landscape-only. Provider restrictions, Twitch VOD track setup, audio monitoring and stage exclusions retain their existing meanings.
 - Routed recording formats remain experimental; Default remains the native recording path. Stop recording before changing its mode.

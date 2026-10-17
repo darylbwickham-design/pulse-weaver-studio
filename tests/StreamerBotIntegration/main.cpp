@@ -163,18 +163,20 @@ int main(int argc, char **argv)
 	const auto categories = page.findChildren<QPushButton *>("PulseWeaverCommandCategory");
 	check(categories.size() == 4, "four clear command category cards");
 	auto *scroll = page.findChild<QScrollArea *>();
+	auto *navigator = page.findChild<QStackedWidget *>("PulseWeaverCommandNavigator");
+	check(navigator && navigator->currentIndex() == 0, "command navigator opens at category cards");
 	auto landingFits = [&] {
 		app.processEvents(); page.layout()->activate(); app.processEvents();
 		for (auto *card : categories) {
 			const QRect bounds(card->mapTo(scroll->viewport(), QPoint()), card->size());
 			if (!scroll->viewport()->rect().contains(bounds)) return false;
+			// A card can be inside the scroll viewport while its parent clips it.
+			if (!navigator->contentsRect().contains(QRect(card->mapTo(navigator, QPoint()), card->size()))) return false;
 		}
 		auto *guide = page.findChild<QPushButton *>("PulseWeaverControlGuide");
 		return scroll->viewport()->rect().contains(QRect(guide->mapTo(scroll->viewport(), QPoint()), guide->size()));
 	};
 	check(landingFits(), "all four category cards and guide fit above the fold at 1180x720 native content height");
-	auto *navigator = page.findChild<QStackedWidget *>("PulseWeaverCommandNavigator");
-	check(navigator && navigator->currentIndex() == 0, "command navigator opens at category cards");
 	const int landingHeight = navigator->height();
 	categories[2]->click();
 	check(navigator->currentIndex() != 0, "category click opens a focused command grid");
@@ -187,6 +189,17 @@ int main(int argc, char **argv)
 	check(landingFits() && navigator->height() == landingHeight, "returning from the larger JSON page restores compact category geometry");
 	check(navigator->height() <= 150, "hidden detail pages cannot inflate the category grid");
 	if (argc > 1) page.grab().save(QString::fromLocal8Bit(argv[1]));
+	navigator->setStyleSheet("QStackedWidget#PulseWeaverCommandNavigator { border: 2px solid #687585; padding: 9px 7px 11px 5px; }");
+	navigator->ensurePolished(); navigator->updateGeometry(); app.processEvents();
+	const auto insets = navigator->contentsMargins();
+	const QSize insetSize(insets.left() + insets.right(), insets.top() + insets.bottom());
+	check(insets.top() > 0 && insets.bottom() > 0 && insets.left() != insets.right(), "themed regression has real asymmetric frame and padding insets");
+	check(navigator->sizeHint() == navigator->currentWidget()->sizeHint() + insetSize &&
+	      navigator->minimumSizeHint() == navigator->currentWidget()->minimumSizeHint() + insetSize,
+	      "current-page hints include the themed stack insets without hidden page sizes");
+	check(landingFits(), "themed padding cannot clip the bottom category cards or push the guide below the fold");
+	categories[0]->click(); navigator->setCurrentIndex(0);
+	check(landingFits() && navigator->height() <= 150 + insetSize.height(), "themed category layout remains compact and fully visible after Back");
 	check(operations == operationsBeforePage && recordClicks == recordingsBeforePage && replaySaves == replayBeforePage,
 	      "browsing command categories and examples never executes operations");
 	auto *reveal = page.findChild<QPushButton *>("PulseWeaverRevealControlToken");

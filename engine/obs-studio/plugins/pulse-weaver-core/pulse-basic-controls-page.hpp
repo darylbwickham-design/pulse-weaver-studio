@@ -28,6 +28,13 @@ namespace PulseBasicControls {
 // QStackedWidget normally reserves the largest hidden page's minimum size.
 // Category cards should use their own footprint, rather than a future editor's.
 class CurrentPageStack final : public QStackedWidget {
+	QSize withFrameInsets(const QSize &pageSize) const
+	{
+		// QFrame includes the active theme's border and padding in these margins.
+		// Hidden pages must not affect the hint, but the stack's own insets must.
+		const auto margins = contentsMargins();
+		return pageSize + QSize(margins.left() + margins.right(), margins.top() + margins.bottom());
+	}
 public:
 	explicit CurrentPageStack(QWidget *parent) : QStackedWidget(parent)
 	{
@@ -35,8 +42,8 @@ public:
 		setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 		connect(this, &QStackedWidget::currentChanged, this, [this] { updateGeometry(); });
 	}
-	QSize sizeHint() const override { return currentWidget() ? currentWidget()->sizeHint() : QSize(); }
-	QSize minimumSizeHint() const override { return currentWidget() ? currentWidget()->minimumSizeHint() : QSize(); }
+	QSize sizeHint() const override { return withFrameInsets(currentWidget() ? currentWidget()->sizeHint() : QSize()); }
+	QSize minimumSizeHint() const override { return withFrameInsets(currentWidget() ? currentWidget()->minimumSizeHint() : QSize()); }
 };
 
 class CategoryCard final : public QPushButton {
