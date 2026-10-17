@@ -1,0 +1,15 @@
+[
+  {"label":"Choose Stage", "request":{"command":"stage.select","name":"Game"}},
+  {"label":"Next Stage", "request":{"command":"stage.next"}},
+  {"label":"Previous Stage", "request":{"command":"stage.previous"}},
+  {"label":"Show item", "request":{"command":"source.show","sceneId":"SCENE-OR-GROUP-UUID","itemId":"1"}},
+  {"label":"Hide item", "request":{"command":"source.hide","sceneId":"SCENE-OR-GROUP-UUID","itemId":"1"}},
+  {"label":"Toggle item", "request":{"command":"source.toggle","sceneId":"SCENE-OR-GROUP-UUID","itemId":"1"}},
+  {"label":"Mute source", "request":{"command":"audio.mute","sourceId":"AUDIO-SOURCE-UUID"}},
+  {"label":"Unmute source", "request":{"command":"audio.unmute","sourceId":"AUDIO-SOURCE-UUID"}},
+  {"label":"Toggle mute", "request":{"command":"audio.toggle","sourceId":"AUDIO-SOURCE-UUID"}},
+  {"label":"Set source volume", "request":{"command":"audio.volume","sourceId":"AUDIO-SOURCE-UUID","volume":75}},
+  {"label":"Start selected recording mode", "request":{"command":"recording.start"}},
+  {"label":"Stop recording", "request":{"command":"recording.stop"}},
+  {"label":"Save running replay buffer", "request":{"command":"replay.save"}}
+]

@@ -9,11 +9,13 @@
     <InstallerSuffix Condition="'$(InstallerSuffix)' == ''">RELEASE</InstallerSuffix>
     <PayloadArchive Condition="'$(PayloadArchive)' == ''">..\..\artifacts\channel-v$(ReleaseVersion)\payload.zip</PayloadArchive>
     <AssemblyName>PulseWeaver-Setup-$(ReleaseVersion)-$(InstallerSuffix)</AssemblyName>
-    <Product Condition="'$(PreviewChannel)' != 'true'">Pulse Weaver Streaming Studio Setup</Product>
+    <Product Condition="'$(PreviewChannel)' != 'true' and '$(ShowcaseChannel)' != 'true'">Pulse Weaver Streaming Studio Setup</Product>
     <Product Condition="'$(PreviewChannel)' == 'true'">Pulse Weaver Motion Preview Setup</Product>
+    <Product Condition="'$(ShowcaseChannel)' == 'true'">Pulse Weaver 2 Preview Setup</Product>
     <DefineConstants Condition="'$(PreviewChannel)' == 'true'">$(DefineConstants);PULSE_MOTION_PREVIEW</DefineConstants>
     <DefineConstants Condition="'$(AlphaChannel)' == 'true'">$(DefineConstants);PULSE_ALPHA</DefineConstants>
     <DefineConstants Condition="'$(UnstableChannel)' == 'true'">$(DefineConstants);PULSE_UNSTABLE</DefineConstants>
+    <DefineConstants Condition="'$(ShowcaseChannel)' == 'true'">$(DefineConstants);PULSE_SHOWCASE_PREVIEW</DefineConstants>
     <AlphaRevision Condition="'$(AlphaRevision)' == ''">1</AlphaRevision>
     <Version>$(ReleaseVersion)</Version>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -27,4 +29,7 @@
                       LogicalName="PulseWeaver.Payload.zip"
                       Condition="'$(SkipPayloadEmbedding)' != 'true'" />
   </ItemGroup>
+  <Target Name="ValidateShowcaseIdentity" BeforeTargets="CoreCompile" Condition="'$(ShowcaseChannel)' == 'true'">
+    <Error Condition="'$(UnstableChannel)' != 'true' or '$(AlphaChannel)' == 'true' or '$(PreviewChannel)' == 'true'" Text="The isolated 2.0 showcase requires only the unstable channel." />
+  </Target>
 </Project>

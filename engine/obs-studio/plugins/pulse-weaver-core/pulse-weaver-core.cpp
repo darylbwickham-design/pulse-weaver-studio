@@ -6,6 +6,8 @@
 #include "../../shared/qt/PulseLumiaOutput.hpp"
 #include "../../shared/qt/PulseOutputBitrates.hpp"
 #include "pulse-lumia-bridge.hpp"
+#include "pulse-basic-controls.hpp"
+#include "pulse-basic-controls-page.hpp"
 #include "pulse-motion-engine.hpp"
 #include "pulse-overlay-runtime.hpp"
 #include "pulse-overlay-alerts.hpp"
@@ -2396,9 +2398,16 @@ private:
 
 class PulseWeaverDock final : public QWidget {
 	PulseLumiaBridge *lumiaBridge = nullptr;
+	PulseBasicControls::Page *basicControlsPage = nullptr;
+	bool studio2Preview = false;
 public:
 	explicit PulseWeaverDock(QWidget *parent = nullptr) : QWidget(parent)
 	{
+		QFile identity(QCoreApplication::applicationDirPath() + "/pulseweaver-update.json");
+		if (identity.open(QIODevice::ReadOnly)) {
+			const quint16 previewDefault = PulseBasicControls::defaultApiPort(identity.read(65536), 0);
+			if (previewDefault) { studio2Preview = true; apiPort = previewDefault; }
+		}
 		QSettings settings(pulseSettingsPath(), QSettings::IniFormat);
 		apiToken = settings.value("api/token").toString();
 		bool validPort = false;
@@ -2477,7 +2486,9 @@ public:
 		auto *comingSoonTitle = new QLabel("ACTION EXPANSION · COMING SOON", comingSoonPage);
 		comingSoonTitle->setObjectName("Kicker");
 		comingSoonLayout->addWidget(comingSoonTitle);
-		auto *comingSoonCopy = new QLabel(
+		auto *comingSoonCopy = new QLabel(studio2Preview ?
+			"Events, alerts, advanced automations and Pulse AI are retained but hidden while they continue development. "
+			"Basic local operating controls are available on the Commands page." :
 			"Events, alerts, automations, Pulse AI and the public plug-in control surface are retained but hidden "
 			"until they are ready for dependable live use.", comingSoonPage);
 		comingSoonCopy->setWordWrap(true);
@@ -2487,7 +2498,8 @@ public:
 		tabs->addTab(comingSoonPage, "COMING SOON");
 		for (int index = 0; index < tabs->count(); ++index) {
 			const QString label = tabs->tabText(index);
-			tabs->setTabVisible(index, label == "CONNECTIONS" || (label == "MOTION" && !motionMount) || label == "COMING SOON");
+			tabs->setTabVisible(index, label == "CONNECTIONS" || (label == "MOTION" && !motionMount) || label == "COMING SOON" ||
+				(studio2Preview && label == "COMMANDS"));
 		}
 		loadRules();
 		lumiaBridge = new PulseLumiaBridge(this, [this] { return lumiaStateJson(); });
@@ -4162,32 +4174,10 @@ private:
 
 	void buildApiTab()
 	{
-		auto *page = new QWidget;
-		auto *layout = new QVBoxLayout(page);
-		auto *title = new QLabel("NATIVE IN-PROCESS CONTROL API");
-		title->setObjectName("Kicker");
-		layout->addWidget(title);
-		auto *body = new QLabel(
-			"Pulse Weaver is the OBS process. These endpoints call the frontend/libobs API directly — no OBS WebSocket hop.\n\n"
-			"GET  /api/v1/health\nGET  /api/v1/scenes\nPOST /api/v1/scene?name=Gameplay\n"
-			"GET  /api/v1/sources  |  GET /api/v1/automations  |  GET /api/v1/overlays  |  GET /api/v1/modules\n"
-			"POST /api/v1/scene/create  |  /source/create  |  /source/transform  |  /source/visibility  |  /automation\n"
-			"POST /api/v1/stream/start  |  /stream/stop\nPOST /api/v1/recording/start  |  /recording/stop\n"
-			"POST /api/v1/event?platform=external&type=custom\nPOST /api/v1/overlay/trigger?name=Follower%20Spotlight\n\n"
-			"Every request requires Authorization: Bearer " + apiToken + "\n\n"
-			"Plugin ABI: proc_handler_call(obs_get_proc_handler(), \"pulseweaver_publish\", ...).\n"
-			"Subscribers receive the global libobs signal pulseweaver_event(platform, type, json).");
-		body->setWordWrap(true);
-		body->setTextInteractionFlags(Qt::TextSelectableByMouse);
-		layout->addWidget(body);
-		layout->addWidget(new QLabel("LOADED PULSE WEAVER MODULE ACTIONS"));
-		moduleTree = new QTreeWidget;
-		moduleTree->setHeaderLabels({"MODULE", "ACTION", "ID", "STATUS"});
-		moduleTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-		moduleTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-		layout->addWidget(moduleTree, 1);
+		basicControlsPage = new PulseBasicControls::Page(apiToken, apiPort, [this] { return basicControlContext(); }, tabs);
+		moduleTree = basicControlsPage->modules;
 		refreshModuleActions();
-		tabs->addTab(page, "API / PLUGINS");
+		tabs->addTab(basicControlsPage, studio2Preview ? "COMMANDS" : "API / PLUGINS");
 	}
 
 	void refreshModuleActions()
@@ -4789,13 +4779,42 @@ private:
 		return state;
 	}
 
+	PulseBasicControls::Context basicControlContext() const
+	{
+		PulseBasicControls::Context context;
+		auto *window = static_cast<QWidget *>(obs_frontend_get_main_window());
+		context.stages = window ? window->findChild<QComboBox *>("PulseWeaverStageSelector") : nullptr;
+		context.recordingMode = window ? window->findChild<QComboBox *>("PulseWeaverRecordingDestination") : nullptr;
+		context.record = window ? window->findChild<QPushButton *>("PulseWeaverRecord") : nullptr;
+		context.sources = [this] { return lumiaBridge ? lumiaBridge->catalogue() : QJsonArray{}; };
+		context.operateSource = [this](const QUrlQuery &query) {
+			return lumiaBridge ? lumiaBridge->operateSource(query) : QJsonObject{{"ok", false}, {"message", "Source controls are unavailable."}};
+		};
+		context.state = [this] {
+			QJsonObject state = lumiaStateJson();
+			auto *window = static_cast<QWidget *>(obs_frontend_get_main_window());
+			state.insert("recording", PulseBasicControls::recordingState(window, obs_frontend_recording_active()).active);
+			state.insert("replayActive", obs_frontend_replay_buffer_active());
+			return state;
+		};
+		if (PulseBasicControls::recordingState(window, obs_frontend_recording_active()).available)
+			context.recordingActive = [window] {
+				return PulseBasicControls::recordingState(window, obs_frontend_recording_active()).active;
+			};
+		context.replayActive = [] { return obs_frontend_replay_buffer_active(); };
+		context.saveReplay = [] { obs_frontend_replay_buffer_save(); };
+		return context;
+	}
+
 	void startApi()
 	{
 		api = new QTcpServer(this);
 		if (!api->listen(QHostAddress::LocalHost, apiPort)) {
+			if (basicControlsPage) basicControlsPage->setConnectionState(false, apiPort, api->errorString());
 			apiPort = 0;
 			return;
 		}
+		if (basicControlsPage) basicControlsPage->setConnectionState(true, api->serverPort());
 		connect(api, &QTcpServer::newConnection, this, [this] {
 			while (QTcpSocket *socket = api->nextPendingConnection()) {
 				connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
@@ -4871,6 +4890,12 @@ private:
 					}
 					if (method == "GET" && path == "/api/v1/health")
 						respond(socket, 200, QJsonObject{{"product", "Pulse Weaver Core"}, {"engine", "libobs in-process"}, {"websocketRequired", false}, {"streaming", obs_frontend_streaming_active()}, {"recording", obs_frontend_recording_active()}});
+					else if (method == "GET" && path == "/api/v1/control")
+						respond(socket, 200, PulseBasicControls::catalogue(basicControlContext()));
+					else if (method == "POST" && path == "/api/v1/control") {
+						const auto result = PulseBasicControls::execute(input, basicControlContext());
+						respond(socket, result.status, result.body);
+					}
 					else if (method == "GET" && path == "/api/v1/scenes")
 						respond(socket, 200, QJsonObject{{"scenes", sceneJson()}});
 					else if (method == "GET" && path == "/api/v1/sources")
@@ -5135,7 +5160,8 @@ private:
 	static void respond(QTcpSocket *socket, int statusCode, const QJsonObject &payload)
 	{
 		const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
-		const QByteArray reason = statusCode < 300 ? "OK" : (statusCode == 401 ? "Unauthorized" : (statusCode == 404 ? "Not Found" : "Bad Request"));
+		const QByteArray reason = statusCode == 202 ? "Accepted" : statusCode < 300 ? "OK" : statusCode == 401 ? "Unauthorized" :
+			statusCode == 403 ? "Forbidden" : statusCode == 404 ? "Not Found" : statusCode == 409 ? "Conflict" : "Bad Request";
 		const QByteArray response = "HTTP/1.1 " + QByteArray::number(statusCode) + " " + reason + "\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body;
 		socket->write(response);
 		socket->disconnectFromHost();

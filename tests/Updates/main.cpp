@@ -89,6 +89,59 @@ int main(int argc, char **argv)
 		"Unstable cannot replace a same-version stable release");
 	check(!selectRelease(QJsonArray{release({"windows-unstable", "v1.14.0-unstable.0"})}, unstable),
 		"Unstable revision cannot downgrade");
+	const Identity preview{"windows-unstable", "v2.0.0-unstable.1", "studio2-preview"};
+	const Identity previewNext{"windows-unstable", "v2.0.0-unstable.2", "studio2-preview"};
+	check(assetName(previewNext) == "PulseWeaver-2-Preview-Setup-2.0.0-unstable.2.exe",
+		"Isolated 2 Preview requires its dedicated installer family");
+	check(maintenanceFileName(preview) == "Uninstall Pulse Weaver 2 Preview.exe" &&
+		maintenanceFileName(alpha) == "Uninstall Pulse Weaver.exe",
+		"Recovery resolves this product's own maintenance executable");
+	const QJsonObject previewIdentity{{"schema", 1}, {"channel", preview.channel},
+		{"tag", preview.tag}, {"product", preview.product}};
+	check(identityFromJson(previewIdentity).product == "studio2-preview", "Parse the isolated product marker");
+	auto legacyIdentity = previewIdentity;
+	legacyIdentity.remove("product");
+	check(identityFromJson(legacyIdentity).product.isEmpty() && version(identityFromJson(legacyIdentity)),
+		"Absent product marker retains the regular installation contract");
+	check(!selectRelease(QJsonArray{release(previewNext)}, identityFromJson(legacyIdentity), true, true),
+		"A missing product marker cannot adopt a dedicated preview installer");
+	for (const QJsonValue &marker : {QJsonValue("unknown-preview"), QJsonValue(""), QJsonValue(true), QJsonValue(QJsonValue::Null)}) {
+		auto invalidIdentity = previewIdentity;
+		invalidIdentity["product"] = marker;
+		check(!version(identityFromJson(invalidIdentity)), "Invalid product markers cannot silently fall back to regular updates");
+	}
+	check(!version({"windows-alpha", "v2.0.0-alpha.1", "studio2-preview"}),
+		"The isolated product only accepts its unstable channel");
+	check(!selectRelease(QJsonArray{release(preview)}, preview), "Preview does not offer its current version");
+	check(!selectRelease(QJsonArray{release(previewNext)}, alpha, true, true),
+		"Regular Alpha with unstable enabled does not select a 2 Preview-only release");
+	const QJsonArray previewCandidates{release(previewNext), release({"windows-unstable", "v2.0.0-unstable.3"}),
+		release({"windows-alpha", "v2.1.0-alpha.1"}), release({"windows-private", "v3.0.0"})};
+	const auto previewUpdate = selectRelease(previewCandidates, preview, true, true);
+	check(previewUpdate && previewUpdate->identity.tag == previewNext.tag &&
+		previewUpdate->identity.product == preview.product && previewUpdate->name == assetName(previewNext),
+		"Preview ignores newer regular unstable, alpha and stable assets and keeps its product marker");
+	check(!selectRelease(QJsonArray{release({"windows-unstable", "v2.0.0-unstable.3"}),
+		release({"windows-private", "v3.0.0"})}, preview, true, true),
+		"Preview never falls back to a generic installer if its dedicated asset is absent");
+	auto pairedRelease = release(previewNext);
+	const auto genericNext = release({"windows-unstable", previewNext.tag});
+	pairedRelease["assets"] = QJsonArray{pairedRelease["assets"].toArray().first(), genericNext["assets"].toArray().first()};
+	check(selectRelease(QJsonArray{pairedRelease}, preview)->name == assetName(previewNext),
+		"Preview selects its own installer when both product assets share a tag");
+	check(selectRelease(QJsonArray{pairedRelease}, {"windows-unstable", preview.tag})->name ==
+		assetName({"windows-unstable", previewNext.tag}),
+		"Regular unstable retains generic installer selection when both assets share a tag");
+	for (const auto &change : QList<QPair<QString, QJsonValue>>{
+		{"digest", ""}, {"digest", "sha256:bad"}, {"state", "new"}, {"size", 0},
+		{"name", "PulseWeaver-Setup-2.0.0-unstable.2.exe"},
+		{"browser_download_url", repository + "/releases/download/" + previewNext.tag + "/PulseWeaver-Setup-2.0.0-unstable.2.exe"}}) {
+		auto modified = release(previewNext);
+		auto asset = modified["assets"].toArray().first().toObject();
+		asset[change.first] = change.second;
+		modified["assets"] = QJsonArray{asset};
+		check(!selectRelease(QJsonArray{modified}, preview), "Preview rejects missing, incomplete or mismatched installer identity and digest");
+	}
 	if (argc > 2) {
 		QFile fixture(QString::fromLocal8Bit(argv[2]));
 		check(fixture.open(QIODevice::ReadOnly), "Open GitHub metadata fixture");
@@ -130,6 +183,6 @@ int main(int argc, char **argv)
 	for (const auto &url : {"http://github.com/file", "https://github.com.evil.test/file", "file:///tmp/setup.exe",
 		"https://user:password@github.com/file", "https://github.com:1234/file"})
 		check(!trustedDownloadUrl(QUrl(url)), "Reject untrusted redirects");
-	std::puts("PASS: update channels, semantic ordering, drafts, downgrade prevention, asset validation and HTTPS redirects");
+	std::puts("PASS: update channels, isolated 2 Preview family, semantic ordering, drafts, downgrade prevention, asset validation and HTTPS redirects");
 	return 0;
 }

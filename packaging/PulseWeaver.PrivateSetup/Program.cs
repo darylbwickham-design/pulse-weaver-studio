@@ -8,7 +8,16 @@ namespace PulseWeaver.Setup;
 
 internal static class Program
 {
-#if PULSE_MOTION_PREVIEW
+#if PULSE_SHOWCASE_PREVIEW
+    internal const string ProductName = "Pulse Weaver 2 Preview";
+    internal const string ProductLabel = "Pulse Weaver 2 Preview";
+    const string InstallFolderName = "Pulse Weaver 2 Preview";
+    const string ShortcutFileName = "Pulse Weaver 2 Preview.lnk";
+    const string RegistryProductKey = "PulseWeaver2Preview";
+    const string UpdateChannel = "windows-unstable";
+    internal const string InstallerSubtitle = "STUDIO 2.0  ·  ISOLATED UNSTABLE PREVIEW";
+    internal const bool IsolatedShowcase = true;
+#elif PULSE_MOTION_PREVIEW
     internal const string ProductName = "Pulse Weaver Motion Preview";
     internal const string ProductLabel = "Pulse Weaver Motion Preview";
     const string InstallFolderName = "Pulse Weaver Motion Preview";
@@ -33,6 +42,9 @@ internal static class Program
     internal const string InstallerSubtitle = "STREAMING STUDIO  ·  RELEASE";
 #endif
 #endif
+#if !PULSE_SHOWCASE_PREVIEW
+    internal const bool IsolatedShowcase = false;
+#endif
     internal static readonly string Version = Assembly.GetExecutingAssembly().GetName().Version!.ToString(3);
 #if PULSE_ALPHA
     internal static readonly string ReleaseTag = "v" + Version + "-alpha." + Assembly.GetExecutingAssembly()
@@ -50,6 +62,30 @@ internal static class Program
     internal static readonly string UninstallerPath = Path.Combine(InstallDirectory, $"Uninstall {ProductLabel}.exe");
     internal static readonly string UninstallRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + RegistryProductKey;
     static bool upgradeSelfTest;
+
+    internal static bool IsInstallRunning(string? directory = null)
+    {
+#if PULSE_SHOWCASE_PREVIEW
+        // An isolated preview may be installed beside a running regular edition.
+        // Only the executable being replaced blocks this operation.
+        var expected = Path.GetFullPath(Path.Combine(directory ?? InstallDirectory, "bin", "64bit", "PulseWeaverCore.exe"));
+        foreach (var process in Process.GetProcessesByName("PulseWeaverCore")) {
+            using (process) {
+                try {
+                    var path = process.MainModule?.FileName;
+                    if (path is null) throw new IOException("Could not verify a running Pulse Weaver instance.");
+                    if (Path.GetFullPath(path).Equals(expected, StringComparison.OrdinalIgnoreCase)) return true;
+                } catch (InvalidOperationException) { /* The process ended during inspection. */ }
+                catch (System.ComponentModel.Win32Exception ex) {
+                    throw new IOException("Could not verify a running Pulse Weaver instance. Close it before installing the preview.", ex);
+                }
+            }
+        }
+        return false;
+#else
+        return Process.GetProcessesByName("PulseWeaverCore").Length > 0;
+#endif
+    }
 
     [STAThread]
     static int Main(string[] args)
@@ -90,7 +126,7 @@ internal static class Program
 
     internal static void Install(bool desktopShortcut, bool launch, string languageCode, Action<int,string> progress)
     {
-        if (Process.GetProcessesByName("PulseWeaverCore").Length > 0) throw new InvalidOperationException("Pulse Weaver is running. Close it, then try the installation again.");
+        if (IsInstallRunning()) throw new InvalidOperationException(ProductLabel + " is running. Close it, then try the installation again.");
         using var operationLock = Recovery.Acquire(InstallDirectory);
         if (Recovery.Pending(InstallDirectory)) throw new IOException("Recover the interrupted operation before installing.");
         if (Recovery.RequiresRestore(InstallDirectory, ReleaseTag))
@@ -119,14 +155,14 @@ internal static class Program
             File.WriteAllLines(Path.Combine(stage,InstallManifestName),payloadFiles.OrderBy(p=>p,StringComparer.OrdinalIgnoreCase));
             if(!File.Exists(Path.Combine(stage,"bin","64bit","PulseWeaverCore.exe"))) throw new IOException("Incomplete runtime payload.");
             if(!ConfiguredLanguage(stage).Equals(languageCode,StringComparison.OrdinalIgnoreCase)) WriteLanguage(languageCode,stage);
-            if(!upgradeSelfTest && Process.GetProcessesByName("PulseWeaverCore").Length>0) throw new IOException("Pulse Weaver started during staging. Close it and retry; the installation has not been changed.");
+            if(!upgradeSelfTest && IsInstallRunning(root)) throw new IOException(ProductLabel + " started during staging. Close it and retry; the installation has not been changed.");
             progress(70,"Committing the verified update with rollback protection…"); Recovery.Replace(root,stage,preserveUnchangedConfig:true);
         } finally { Recovery.DiscardStage(root,stage); }
     }
 
     internal static void Maintain(string operation, string? backup, Action<int,string> progress)
     {
-        if(Process.GetProcessesByName("PulseWeaverCore").Length>0) throw new IOException("Close Pulse Weaver before backup or recovery.");
+        if(IsInstallRunning()) throw new IOException("Close " + ProductLabel + " before backup or recovery.");
         using var operationLock=Recovery.Acquire(InstallDirectory);
         if(operation=="recover") { Recovery.RecoverInterrupted(InstallDirectory); progress(100,"Interrupted operation recovered. Reopen setup to continue."); return; }
         if(Recovery.Pending(InstallDirectory)) throw new IOException("Recover the interrupted operation first.");
@@ -138,14 +174,18 @@ internal static class Program
 
     static void WriteUpdateIdentity(string destination)
     {
+#if PULSE_SHOWCASE_PREVIEW
+        var identity = new { schema = 1, channel = UpdateChannel, tag = ReleaseTag, product = "studio2-preview" };
+#else
         var identity = new { schema = 1, channel = UpdateChannel, tag = ReleaseTag };
+#endif
         File.WriteAllText(Path.Combine(destination, "bin", "64bit", "pulseweaver-update.json"),
             System.Text.Json.JsonSerializer.Serialize(identity));
     }
 
     internal static int Uninstall()
     {
-        if (Process.GetProcessesByName("PulseWeaverCore").Length > 0) { MessageBox.Show("Close Pulse Weaver before uninstalling it.", ProductName, MessageBoxButtons.OK, MessageBoxIcon.Warning); return 1; }
+        if (IsInstallRunning()) { MessageBox.Show("Close " + ProductLabel + " before uninstalling it.", ProductName, MessageBoxButtons.OK, MessageBoxIcon.Warning); return 1; }
         if (MessageBox.Show($"Remove {ProductLabel} {Version} from this PC?\n\nThis removes this portable copy, including its local settings. Back up the config folder first if you want to keep it.", "Uninstall " + ProductLabel, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return 0;
         TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", ShortcutFileName)); TryDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), ShortcutFileName)); Registry.CurrentUser.DeleteSubKeyTree(UninstallRegistryPath, false);
         var command = $"/c ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"{InstallDirectory}\""; Process.Start(new ProcessStartInfo("cmd.exe", command) { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden }); MessageBox.Show(ProductLabel + " was uninstalled. Its isolated local config folder was removed with the application.", ProductName, MessageBoxButtons.OK, MessageBoxIcon.Information); return 0;
@@ -159,6 +199,11 @@ internal static class Program
             Directory.CreateDirectory(Path.Combine(root, "bin"));
             Directory.CreateDirectory(Path.Combine(root, "data"));
             Directory.CreateDirectory(Path.Combine(root, "config"));
+#if PULSE_SHOWCASE_PREVIEW
+            var regularRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Pulse Weaver");
+            if (Path.GetFullPath(InstallDirectory).Equals(Path.GetFullPath(regularRoot), StringComparison.OrdinalIgnoreCase) ||
+                RegistryProductKey == "PulseWeaver" || ShortcutFileName == "Pulse Weaver.lnk") return 12;
+#endif
             var staleBinary = Path.Combine(root, "bin", "obsolete-test.dll");
             var savedConfig = Path.Combine(root, "config", "preserved-test.ini");
             File.WriteAllText(staleBinary, "old");
@@ -186,9 +231,11 @@ internal static class Program
             }
             if (File.ReadAllText(savedScene) != sceneJson || File.ReadAllText(savedConfig) != "keep") return 9;
             WriteUpdateIdentity(root);
-            using (var identity = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "bin", "64bit", "pulseweaver-update.json"))))
+            using (var identity = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "bin", "64bit", "pulseweaver-update.json")))) {
                 if (identity.RootElement.GetProperty("channel").GetString() != UpdateChannel ||
                     identity.RootElement.GetProperty("tag").GetString() != ReleaseTag) return 7;
+                if (IsolatedShowcase != (identity.RootElement.TryGetProperty("product", out var product) && product.GetString() == "studio2-preview")) return 13;
+            }
             var app = Path.Combine(root, "bin", "64bit", "PulseWeaverCore.exe");
             using (var stream = File.OpenRead(app))
                 if (stream.Length <= 1_000_000 || stream.ReadByte() != 'M' || stream.ReadByte() != 'Z') return 2;
@@ -307,7 +354,17 @@ internal static class Program
     {
         using var input = Assembly.GetExecutingAssembly().GetManifestResourceStream("PulseWeaver.Payload.zip") ?? throw new InvalidOperationException("Installer payload is incomplete.");
         using var archive = new ZipArchive(input, ZipArchiveMode.Read);
-        return PayloadPolicy.Validate(archive, InstallDirectory);
+        var files = PayloadPolicy.Validate(archive, InstallDirectory);
+        var entry = archive.GetEntry("bin/64bit/pulseweaver-update.json") ?? throw new IOException("Payload update identity is missing.");
+        using var identity = System.Text.Json.JsonDocument.Parse(entry.Open());
+        var value = identity.RootElement;
+        var hasProduct = value.TryGetProperty("product", out var marker);
+        var product = hasProduct ? marker.GetString() : null;
+        if (value.GetProperty("schema").GetInt32() != 1 || value.GetProperty("channel").GetString() != UpdateChannel ||
+            value.GetProperty("tag").GetString() != ReleaseTag ||
+            (IsolatedShowcase ? product != "studio2-preview" : hasProduct))
+            throw new IOException("This payload belongs to another Pulse Weaver edition or release.");
+        return files;
     }
     static void CleanInstalledPayload(string installDirectory, HashSet<string> newPayloadFiles)
     {
@@ -454,7 +511,7 @@ internal sealed class SetupForm : Form
     readonly Button cancel = new() { Text = "CANCEL", Width = 110, Height = 44, BackColor = Color.FromArgb(30, 38, 58), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
     readonly Button uninstall = new() { Text = "UNINSTALL", Width = 125, Height = 44, BackColor = Color.FromArgb(69, 25, 35), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Visible = false };
     readonly CheckBox desktop = new() { Text = "Create a desktop shortcut", Checked = true, AutoSize = true, ForeColor = Color.FromArgb(220, 226, 240) };
-    readonly CheckBox launch = new() { Text = "Launch " + Program.ProductLabel + " after installation", Checked = true, AutoSize = true, ForeColor = Color.FromArgb(220, 226, 240) };
+    readonly CheckBox launch = new() { Text = "Launch " + Program.ProductLabel + " after installation", Checked = !Program.IsolatedShowcase, AutoSize = true, ForeColor = Color.FromArgb(220, 226, 240) };
     readonly ComboBox language = new() { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.White, ForeColor = Color.FromArgb(25, 32, 45) };
     readonly CheckBox agreement = new() { Text = "I agree to the Terms of Service and acknowledge the Privacy Policy.", Checked = false, AutoSize = true };
     readonly LinkLabel policies = new() { Text = "Terms of Service    Privacy Policy", AutoSize = true, LinkColor = Color.FromArgb(103, 215, 238), ActiveLinkColor = Color.White, VisitedLinkColor = Color.FromArgb(103, 215, 238) };

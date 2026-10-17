@@ -4,9 +4,13 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
     [ValidateRange(1,999999)][int]$AlphaRevision = 1,
     [Parameter(Mandatory)][string]$RuntimeRoot,
-    [Parameter(Mandatory)][string]$YouTubeDesktopClientJson
+    [Parameter(Mandatory)][string]$YouTubeDesktopClientJson,
+    [switch]$IsolatedShowcase
 )
 $ErrorActionPreference = 'Stop'
+if ($IsolatedShowcase -and ($Channel -ne 'unstable' -or -not $Version.StartsWith('2.'))) {
+    throw 'The isolated 2.0 showcase must use a 2.x unstable version.'
+}
 . (Join-Path $PSScriptRoot 'YouTubeDesktopRegistration.ps1')
 . (Join-Path $PSScriptRoot 'RuntimePayloadPolicy.ps1')
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -36,12 +40,18 @@ $regDir = Join-Path $payload 'data/pulse-weaver'
 New-Item -ItemType Directory -Path $regDir -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $regDir 'youtube-desktop-client.json'),$registration)
 $identity = @{schema=1;channel=$(if($Channel -eq 'alpha'){'windows-alpha'}elseif($Channel -eq 'unstable'){'windows-unstable'}else{'windows-private'});tag=$tag}
+if ($IsolatedShowcase) { $identity.product = 'studio2-preview' }
 $identity | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $payload 'bin/64bit/pulseweaver-update.json') -Encoding utf8
 New-Item -ItemType File -Path (Join-Path $payload 'portable_mode.txt') | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $payload 'docs') | Out-Null
 foreach ($doc in @('PRIVACY.md','TERMS.md')) { Copy-Item -LiteralPath (Join-Path $projectRoot $doc) -Destination (Join-Path $payload 'docs') }
 foreach ($doc in @('ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md','SETUP-WIZARD-GUIDE.md','LUMIA-GAME-CHALLENGES-2026-10-14.md','LUMIA-IMPORT-LINKS.txt')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$doc") -Destination (Join-Path $payload 'docs')
+}
+if ($IsolatedShowcase) {
+    foreach ($doc in @('PULSEWEAVER-2-DESIGN-RESEARCH.md','PULSEWEAVER-2-PREVIEW.md')) {
+        Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$doc") -Destination (Join-Path $payload 'docs')
+    }
 }
 # Publish the isolated gRPC chat transport into every channel's clean payload.
 & dotnet publish (Join-Path $projectRoot 'integrations/youtube-chat-stream/PulseWeaver.YouTubeChat.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o (Join-Path $payload 'bin/64bit/youtube-chat')
@@ -72,6 +82,9 @@ $bundledPluginDirectory = Join-Path $payload 'integrations/lumia'
 New-Item -ItemType Directory -Path $bundledPluginDirectory -Force | Out-Null
 Copy-Item -LiteralPath $plugin -Destination $bundledPluginDirectory
 Copy-Item -LiteralPath (Join-Path $pluginStage 'README.md') -Destination $bundledPluginDirectory
+if ($IsolatedShowcase) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/streamerbot') -Destination (Join-Path $payload 'integrations/streamerbot') -Recurse
+}
 Assert-PulseWeaverRuntimeTree -Root $payload
 $archive = Join-Path $output 'payload.zip'
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive -CompressionLevel Optimal
@@ -79,9 +92,9 @@ $suffix = if ($Channel -eq 'alpha') {'ALPHA'} elseif ($Channel -eq 'unstable') {
 $publish = Join-Path $output 'setup'
 & dotnet publish (Join-Path $PSScriptRoot 'PulseWeaver.PrivateSetup/PulseWeaver.PrivateSetup.csproj') -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true "-p:ReleaseVersion=$Version" "-p:InstallerSuffix=$suffix" "-p:AlphaChannel=$($Channel -eq 'alpha')" "-p:UnstableChannel=$($Channel -eq 'unstable')" `
-    "-p:AlphaRevision=$AlphaRevision" "-p:PayloadArchive=$archive" -o $publish
+    "-p:AlphaRevision=$AlphaRevision" "-p:ShowcaseChannel=$($IsolatedShowcase.IsPresent)" "-p:PayloadArchive=$archive" -o $publish
 if ($LASTEXITCODE -ne 0) { throw 'Installer publish failed.' }
-$name = if ($Channel -eq 'alpha') { "PulseWeaver-Setup-$Version-alpha.$AlphaRevision.exe" } elseif ($Channel -eq 'unstable') { "PulseWeaver-Setup-$Version-unstable.$AlphaRevision.exe" } else { "PulseWeaver-Setup-$Version.exe" }
+$name = if ($IsolatedShowcase) { "PulseWeaver-2-Preview-Setup-$Version-unstable.$AlphaRevision.exe" } elseif ($Channel -eq 'alpha') { "PulseWeaver-Setup-$Version-alpha.$AlphaRevision.exe" } elseif ($Channel -eq 'unstable') { "PulseWeaver-Setup-$Version-unstable.$AlphaRevision.exe" } else { "PulseWeaver-Setup-$Version.exe" }
 $installer = Join-Path $output $name
 Copy-Item -LiteralPath (Join-Path $publish "PulseWeaver-Setup-$Version-$suffix.exe") -Destination $installer
 @($installer,$plugin) | ForEach-Object { $h=Get-FileHash -LiteralPath $_ -Algorithm SHA256; "$($h.Hash)  $([IO.Path]::GetFileName($_))" } |

@@ -14,7 +14,12 @@ inline const QString api = "https://api.github.com/repos/darylbwickham-design/pu
 struct Identity {
 	QString channel;
 	QString tag;
+	QString product; // Empty preserves the published regular-installation contract.
 };
+inline bool studio2Preview(const Identity &identity)
+{
+	return identity.product == "studio2-preview";
+}
 struct Version {
 	QVersionNumber base;
 	int alpha = -1;
@@ -22,6 +27,9 @@ struct Version {
 };
 inline std::optional<Version> version(const Identity &identity)
 {
+	if ((!identity.product.isEmpty() && !studio2Preview(identity)) ||
+	    (studio2Preview(identity) && identity.channel != "windows-unstable"))
+		return {};
 	const bool mac = identity.channel == "mac-arm64-preview";
 	const bool alphaChannel = identity.channel == "windows-alpha";
 	const bool unstableChannel = identity.channel == "windows-unstable";
@@ -41,6 +49,19 @@ inline std::optional<Version> version(const Identity &identity)
 		return {};
 	return Version{base, alphaChannel || mac ? revision : -1, unstableChannel ? revision : -1};
 }
+inline Identity identityFromJson(const QJsonObject &object)
+{
+	if (object.value("schema").toInt() != 1 ||
+	    (object.contains("product") && (!object.value("product").isString() || object.value("product").toString().isEmpty())))
+		return {};
+	Identity identity{object.value("channel").toString(), object.value("tag").toString(),
+		object.value("product").toString()};
+	return version(identity) ? identity : Identity{};
+}
+inline QString maintenanceFileName(const Identity &identity)
+{
+	return studio2Preview(identity) ? "Uninstall Pulse Weaver 2 Preview.exe" : "Uninstall Pulse Weaver.exe";
+}
 inline bool newer(const Version &left, const Version &right)
 {
 	const int comparison = QVersionNumber::compare(left.base, right.base);
@@ -51,6 +72,8 @@ inline bool newer(const Version &left, const Version &right)
 }
 inline QString assetName(const Identity &identity)
 {
+	if (studio2Preview(identity))
+		return "PulseWeaver-2-Preview-Setup-" + identity.tag.mid(1) + ".exe";
 	if (identity.channel == "mac-arm64-preview")
 		return "PulseWeaver-Mac-" + identity.tag + "-AppleSilicon.dmg";
 	if (identity.channel == "windows-public")
@@ -83,7 +106,12 @@ inline std::optional<Release> selectRelease(const QJsonArray &releases, const Id
 			continue;
 		const QString tag = release.value("tag_name").toString();
 		QString channel = installed.channel;
-		if (installed.channel == "mac-arm64-preview") {
+		if (studio2Preview(installed)) {
+			// The dedicated filename is the release-family boundary. Never fall
+			// back to a regular/alpha/final installer, even when opted in.
+			if (!tag.contains("-unstable.")) continue;
+			channel = "windows-unstable";
+		} else if (installed.channel == "mac-arm64-preview") {
 			channel = installed.channel;
 		} else if (tag.contains("-unstable.")) {
 			if (installed.channel == "windows-public" ||
@@ -96,7 +124,7 @@ inline std::optional<Release> selectRelease(const QJsonArray &releases, const Id
 		} else if (installed.channel == "windows-alpha" || installed.channel == "windows-unstable") {
 			channel = "windows-private";
 		}
-		Identity candidate{channel, tag};
+		Identity candidate{channel, tag, installed.product};
 		const auto candidateVersion = version(candidate);
 		if (!candidateVersion || !newer(*candidateVersion, *bestVersion))
 			continue;

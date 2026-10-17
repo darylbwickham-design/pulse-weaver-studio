@@ -138,7 +138,10 @@ class Updater : public QObject {
 		pending.reset();
 		if (QMessageBox::question(window, "Pulse Weaver update available",
 			"Installed: " + installed.tag + "\nAvailable: " + candidate.identity.tag +
-			(candidate.identity.channel == "windows-unstable" ?
+			(studio2Preview(candidate.identity) ?
+			 "\n\nThis updates only Pulse Weaver 2 Preview. Your regular Pulse Weaver installation is separate. "
+			 "Setup backs up this preview and its settings before updating.\n\nDownload preview update?" :
+			 candidate.identity.channel == "windows-unstable" ?
 			 "\n\nThis is an opt-in unstable showcase. Setup will verify a full backup before upgrading. "
 			 "Your settings and Lumia connection remain in place. Restore a backup to return to your previous version.\n\nDownload unstable?" :
 			 candidate.identity.channel == "windows-alpha" ?
@@ -271,8 +274,7 @@ public:
 		QFile identityFile(QCoreApplication::applicationDirPath() + "/pulseweaver-update.json");
 		if (identityFile.open(QIODevice::ReadOnly) && identityFile.size() < 4096) {
 			const auto identity = QJsonDocument::fromJson(identityFile.readAll()).object();
-			if (identity.value("schema").toInt() == 1)
-				installed = {identity.value("channel").toString(), identity.value("tag").toString()};
+			installed = identityFromJson(identity);
 		}
 #ifdef Q_OS_MACOS
 		if (installed.channel != "mac-arm64-preview")
@@ -290,33 +292,36 @@ public:
 		connect(check, &QAction::triggered, this, [this] { checkNow(true); });
 #ifdef Q_OS_WIN
 		if (installed.channel == "windows-private" || installed.channel == "windows-alpha" || installed.channel == "windows-unstable") {
-			auto *alpha = updates->addAction("Include experimental alpha builds");
-			alpha->setCheckable(true);
-			alpha->setChecked(installed.channel == "windows-alpha" || settings->value("includeAlpha", false).toBool());
-			alpha->setEnabled(installed.channel != "windows-alpha");
-			connect(alpha, &QAction::toggled, this, [this](bool enabled) {
-				settings->setValue("includeAlpha", enabled);
-				settings->sync();
-				pending.reset();
-				if (enabled) checkNow(true);
-			});
-			auto *unstable = updates->addAction("Include unstable showcase builds");
-			unstable->setCheckable(true);
-			unstable->setChecked(installed.channel == "windows-unstable" || settings->value("includeUnstable", false).toBool());
-			unstable->setEnabled(installed.channel != "windows-unstable");
-			connect(unstable, &QAction::toggled, this, [this](bool enabled) {
-				settings->setValue("includeUnstable", enabled);
-				settings->sync();
-				pending.reset();
-				if (enabled) checkNow(true);
-			});
-			auto *restore = updates->addAction("Restore a backup / leave preview channel…");
+			if (!studio2Preview(installed)) {
+				auto *alpha = updates->addAction("Include experimental alpha builds");
+				alpha->setCheckable(true);
+				alpha->setChecked(installed.channel == "windows-alpha" || settings->value("includeAlpha", false).toBool());
+				alpha->setEnabled(installed.channel != "windows-alpha");
+				connect(alpha, &QAction::toggled, this, [this](bool enabled) {
+					settings->setValue("includeAlpha", enabled);
+					settings->sync();
+					pending.reset();
+					if (enabled) checkNow(true);
+				});
+				auto *unstable = updates->addAction("Include unstable showcase builds");
+				unstable->setCheckable(true);
+				unstable->setChecked(installed.channel == "windows-unstable" || settings->value("includeUnstable", false).toBool());
+				unstable->setEnabled(installed.channel != "windows-unstable");
+				connect(unstable, &QAction::toggled, this, [this](bool enabled) {
+					settings->setValue("includeUnstable", enabled);
+					settings->sync();
+					pending.reset();
+					if (enabled) checkNow(true);
+				});
+			}
+			auto *restore = updates->addAction(studio2Preview(installed) ? "Restore a preview backup…" :
+				"Restore a backup / leave preview channel…");
 			connect(restore, &QAction::triggered, this, [this] {
 				if (outputsActive()) {
 					message("Stop all outputs before restoring a backup.");
 					return;
 				}
-				const QString maintenance = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../Uninstall Pulse Weaver.exe");
+				const QString maintenance = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../" + maintenanceFileName(installed));
 				if (!QFile::exists(maintenance)) {
 					message("Open a Pulse Weaver installer and choose Restore backup to recover your previous app and settings.");
 					return;

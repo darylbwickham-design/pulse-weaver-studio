@@ -464,7 +464,7 @@ private:
 	void StopPulseWeaverSecondaryOutputs();
 	void StartPulseWeaverRecordings();
 	void StopPulseWeaverRecordings();
-	bool PulseWeaverRecordingActive() const;
+	Q_INVOKABLE bool PulseWeaverRecordingActive() const;
 	Q_INVOKABLE void RefreshPulseWeaverChatComposer();
 	bool PulseWeaverYouTubeChatsReady() const;
 	bool PulseWeaverYouTubeChatAvailable() const;
