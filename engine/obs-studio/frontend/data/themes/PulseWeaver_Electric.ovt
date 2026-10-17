@@ -14,5 +14,5 @@
     --pw_selection: #18333D;
 }
 
-/* The 2.0 workspaces share one quiet surface and control system.
- * Appearance changes accent cues without changing control geometry. */
+/* The 2.0 workspaces share raised controls and recessed production surfaces.
+ * Appearance changes selected caps and focus cues without changing geometry. */

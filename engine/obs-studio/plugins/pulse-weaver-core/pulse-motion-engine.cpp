@@ -937,6 +937,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 			{"GO TO STAGE\nthen move", "switch"}, {"STAGE ONLY\notherwise stop", "only"},
 			{"CURRENT STAGE\nmove here", "current"}}) {
 		auto *choice = new QToolButton;
+		choice->setObjectName("PulseWeaverMotionPolicyChoice");
 		choice->setText(label);
 		choice->setCheckable(true);
 		choice->setProperty("motionPolicy", value);
@@ -944,8 +945,6 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 		choice->setMinimumHeight(54);
 		choice->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 		choice->setChecked(value == "switch");
-		choice->setStyleSheet("QToolButton{border:1px solid #334155;border-radius:8px;padding:7px;background:#101827;color:#cbd5e1;}"
-			"QToolButton:checked{border:2px solid #22d3ee;background:#172033;color:white;}");
 		policyGroup->addButton(choice);
 		policyLayout->addWidget(choice);
 		connect(choice, &QToolButton::clicked, this, [this, value] {
@@ -1130,8 +1129,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 		painter.end();
 		button->setIcon(QIcon(diagram));
 		button->setIconSize(QSize(70, 38));
-		button->setStyleSheet("QToolButton{background:#111d2e;border:1px solid #365069;border-radius:7px;color:#dceefa;padding:3px;}"
-			"QToolButton:hover{background:#1b364b;border-color:#66cff1;}");
+		button->setObjectName("PulseWeaverMotionPlacement");
 		const int index = quickPlaces->count();
 		quickPlaces->addWidget(button, index / 2, index % 2);
 		connect(button, &QToolButton::clicked, this, [this, operation] { editDraft(operation); });
@@ -1638,13 +1636,10 @@ void PulseMotionEngine::refreshNavigation()
 		}
 		for (int index = 0; index < picker->count(); ++index) {
 			auto *choice = new QPushButton(picker->itemText(index), cards);
-			choice->setFlat(true);
+			choice->setObjectName("PulseWeaverMotionStageChoice");
 			choice->setCheckable(true);
 			choice->setChecked(index == picker->currentIndex());
 			choice->setAccessibleName("Choose " + picker->itemText(index));
-			choice->setStyleSheet("QPushButton { background:transparent; border:0; color:#aebdd0; padding:5px 9px; }"
-				"QPushButton:checked { color:#60c8ff; font-weight:700; }"
-				"QPushButton:hover { color:#b8e8ff; }");
 			row->addWidget(choice);
 			connect(choice, &QPushButton::clicked, this, [picker, index] { picker->setCurrentIndex(index); });
 		}
@@ -2784,14 +2779,13 @@ void PulseMotionEngine::refreshSourceChips()
 		select->setText(QFontMetrics(select->font()).elidedText(sourceName, Qt::ElideRight, 154));
 		select->setToolTip("Select and arrange " + entry->text(1));
 		select->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-		select->setStyleSheet(itemId == visualSelectedItem ?
-			"QToolButton{background:#17344a;border:0;border-left:3px solid #46c5f1;border-radius:3px;color:white;padding:7px;text-align:left;}" :
-			"QToolButton{background:transparent;border:0;border-left:3px solid transparent;border-radius:3px;color:#c8d7e6;padding:7px;text-align:left;}QToolButton:hover{background:#1a2838;}");
+		select->setObjectName("PulseWeaverMotionSourceChoice");
+		select->setProperty("pulseSelected", itemId == visualSelectedItem);
 		chipRow->addWidget(select, 1);
 		auto *eye = new QToolButton(chip);
 		eye->setText(visible ? "◉" : "○");
 		eye->setToolTip(visible ? "Hide this source in this look" : "Show this source in this look");
-		eye->setStyleSheet("QToolButton{background:transparent;border:0;color:#67cffa;padding:7px;}");
+		eye->setObjectName("PulseWeaverMotionVisibility");
 		chipRow->addWidget(eye);
 		layout->addWidget(chip);
 		connect(select, &QToolButton::clicked, this, [this, itemId] {

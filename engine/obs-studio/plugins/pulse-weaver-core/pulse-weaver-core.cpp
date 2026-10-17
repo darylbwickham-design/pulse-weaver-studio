@@ -8,6 +8,8 @@
 #include "pulse-lumia-bridge.hpp"
 #include "pulse-basic-controls.hpp"
 #include "pulse-basic-controls-page.hpp"
+#include "pulse-lights-navigation.hpp"
+#include "pulse-light-request.hpp"
 #include "pulse-motion-engine.hpp"
 #include "pulse-overlay-runtime.hpp"
 #include "pulse-overlay-alerts.hpp"
@@ -23,6 +25,7 @@
 #include <util/platform.h>
 
 #include <QAbstractSocket>
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -2399,6 +2402,7 @@ private:
 class PulseWeaverDock final : public QWidget {
 	PulseLumiaBridge *lumiaBridge = nullptr;
 	PulseBasicControls::Page *basicControlsPage = nullptr;
+	QPointer<QWidget> lightsSurface;
 	bool studio2Preview = false;
 public:
 	explicit PulseWeaverDock(QWidget *parent = nullptr) : QWidget(parent)
@@ -2514,7 +2518,7 @@ public:
 		}
 	}
 
-	~PulseWeaverDock() override { delete lumiaBridge; lumiaBridge = nullptr; saveRules(); }
+	~PulseWeaverDock() override { delete lightsSurface.data(); delete lumiaBridge; lumiaBridge = nullptr; saveRules(); }
 
 	void refreshAll()
 	{
@@ -2737,27 +2741,41 @@ private:
 public:
 	void mountLights(QWidget *host)
 	{
-		if (!host || !host->layout())
-			return;
-		/* The full implementation below is deliberately retained. The shell marks
-		 * this mount as deferred so unfinished controls consume no runtime/UI work. */
-		if (host->property("pulseWeaverComingSoon").toBool())
+		if (!host || !host->layout() || lightsSurface)
 			return;
 		auto *surface = new QWidget(host);
+		surface->setObjectName("PulseWeaverLightsControls");
+		lightsSurface = surface;
 		auto *layout = new QVBoxLayout(surface);
 		layout->setContentsMargins(0, 8, 0, 0);
 		layout->setSpacing(8);
 
 		auto *tabs = new QTabWidget;
-		layout->addWidget(tabs, 1);
+		tabs->setObjectName("PulseWeaverLightingTabs");
 		auto *devicesPage = new QWidget;
+		devicesPage->setObjectName("PulseWeaverLightingDevicesPage");
 		auto *devicesLayout = new QVBoxLayout(devicesPage);
 		auto *form = new QHBoxLayout;
 		auto *provider = new QComboBox;
+		provider->setObjectName("PulseWeaverLightProvider");
 		provider->addItems({"WLED", "Philips Hue", "Home Assistant", "HTTP / DIY", "Display / Pixel device"});
+		provider->hide();
+		auto *providerChoices = new QGridLayout;
+		auto *providerGroup = new QButtonGroup(surface);
+		for (int index = 0; index < provider->count(); ++index) {
+			auto *choice = new QPushButton(provider->itemText(index)); choice->setCheckable(true); choice->setChecked(index == 0);
+			providerGroup->addButton(choice, index);
+			providerChoices->addWidget(choice, index / 3, index % 3);
+			connect(choice, &QPushButton::clicked, surface, [provider, index] { provider->setCurrentIndex(index); });
+			connect(provider, &QComboBox::currentIndexChanged, choice, [choice, index](int selected) { choice->setChecked(selected == index); });
+		}
+		devicesLayout->addWidget(new QLabel("Choose the device provider, then add its known address."));
+		devicesLayout->addLayout(providerChoices);
 		auto *address = new QLineEdit;
+		address->setObjectName("PulseWeaverLightAddress");
 		address->setPlaceholderText("Device IP or hostname — for example 192.168.1.50");
-		auto *add = new QPushButton("ADD / TEST DEVICE");
+		auto *add = new QPushButton("Add & test device");
+		add->setProperty("pulseWeaverLightAction", "test-device");
 		add->setObjectName("Primary");
 		form->addWidget(provider);
 		form->addWidget(address, 1);
@@ -2776,7 +2794,8 @@ public:
 				subnet->addItem(prefix);
 		}
 		subnet->setPlaceholderText("Local /24 prefix, e.g. 192.168.1");
-		auto *discover = new QPushButton("DISCOVER DEVICES ON LOCAL /24");
+		auto *discover = new QPushButton("Discover this subnet");
+		discover->setObjectName("PulseWeaverLightDiscover");
 		auto *scanProgress = new QProgressBar;
 		scanProgress->setRange(0, 254);
 		scanProgress->setValue(0);
@@ -2787,6 +2806,7 @@ public:
 		devicesLayout->addLayout(discovery);
 
 		auto *devices = new QTreeWidget;
+		devices->setObjectName("PulseWeaverLightDevices");
 		devices->setHeaderLabels({"DEVICE / DISPLAY", "PROVIDER", "ADDRESS", "STATUS"});
 		devices->header()->setSectionResizeMode(0, QHeaderView::Stretch);
 		devices->header()->setSectionResizeMode(2, QHeaderView::Stretch);
@@ -2795,37 +2815,58 @@ public:
 		statusLabel->setObjectName("Muted");
 		statusLabel->setWordWrap(true);
 		devicesLayout->addWidget(statusLabel);
+		connect(provider, &QComboBox::currentIndexChanged, statusLabel, [statusLabel](int selected) {
+			statusLabel->setText(selected >= 3 ? "HTTP / DIY and Display / Pixel device send a generic JSON look to your configured HTTP endpoint."
+				: "Add a known address or scan one selected local /24. Discovery uses at most 12 short TCP probes at once.");
+		});
 
-		auto *removeDevice = new QPushButton("REMOVE SELECTED DEVICE");
+		auto *removeDevice = new QPushButton("Remove device");
 		devicesLayout->addWidget(removeDevice, 0, Qt::AlignRight);
 		tabs->addTab(devicesPage, "DEVICES + DISPLAYS");
 
 		auto *controlPage = new QWidget;
+		controlPage->setObjectName("PulseWeaverLightingControlPage");
 		auto *controlLayout = new QVBoxLayout(controlPage);
-		auto *selectedDevice = new QLabel("Select a device in Devices + Displays.");
+		auto *selectedDevice = new QLabel("Choose a saved device.");
 		selectedDevice->setObjectName("Kicker");
 		controlLayout->addWidget(selectedDevice);
-		auto *controlForm = new QFormLayout;
+		auto *connectionDetails = new QWidget;
+		auto *connectionForm = new QFormLayout(connectionDetails);
 		auto *authToken = new QLineEdit;
+		authToken->setObjectName("PulseWeaverLightCredential");
 		authToken->setEchoMode(QLineEdit::Password);
 		authToken->setPlaceholderText("Hue bridge username or Home Assistant long-lived token");
 		auto *entity = new QLineEdit;
+		entity->setObjectName("PulseWeaverLightEntity");
 		entity->setPlaceholderText("Hue light ID, Home Assistant entity_id or DIY path");
 		auto *brightness = new QSlider(Qt::Horizontal);
+		brightness->setObjectName("PulseWeaverLightBrightness");
+		brightness->setAccessibleName("Selected light brightness");
 		brightness->setRange(1, 255);
 		brightness->setValue(180);
-		auto *power = new QPushButton("●  OUTPUT ON");
+		auto *power = new QPushButton("Power on");
+		power->setObjectName("PulseWeaverLightPower");
 		power->setCheckable(true);
 		power->setChecked(true);
-		auto *colour = new QPushButton("COLOUR  #D946EF");
+		auto *colour = new QPushButton("Colour  #D946EF");
+		colour->setObjectName("PulseWeaverLightColour");
 		auto selectedColour = std::make_shared<QColor>("#D946EF");
-		controlForm->addRow("Provider credential", authToken);
-		controlForm->addRow("Entity / path", entity);
-		controlForm->addRow("Brightness", brightness);
+		connectionForm->addRow("Provider credential", authToken);
+		connectionForm->addRow("Entity / path", entity);
+		auto *connectionHint = new QLabel("Hue uses HTTPS and needs a trusted bridge certificate. Home Assistant needs a token and light entity."); connectionHint->setWordWrap(true); connectionHint->setObjectName("Muted"); connectionForm->addRow(connectionHint);
+		auto *connectionToggle = new QPushButton("Connection details"); connectionToggle->setCheckable(true);
+		controlLayout->addWidget(connectionToggle, 0, Qt::AlignLeft); controlLayout->addWidget(connectionDetails); connectionDetails->hide();
+		connect(connectionToggle, &QPushButton::toggled, connectionDetails, &QWidget::setVisible);
+		auto *controlForm = new QFormLayout;
+		auto *brightnessRow = new QHBoxLayout; brightnessRow->addWidget(brightness, 1);
+		auto *brightnessValue = new QLabel(QString::number(qRound(brightness->value() * 100.0 / 255)) + "%"); brightnessValue->setMinimumWidth(42); brightnessRow->addWidget(brightnessValue);
+		connect(brightness, &QSlider::valueChanged, brightnessValue, [brightnessValue](int value) { brightnessValue->setText(QString::number(qRound(value * 100.0 / 255)) + "%"); });
+		controlForm->addRow("Brightness", brightnessRow);
 		controlForm->addRow("Power", power);
 		controlForm->addRow("Colour", colour);
 		controlLayout->addLayout(controlForm);
-		auto *apply = new QPushButton("APPLY LOOK TO SELECTED DEVICE");
+		auto *apply = new QPushButton("Apply look");
+		apply->setProperty("pulseWeaverLightAction", "apply-look");
 		apply->setObjectName("Primary");
 		controlLayout->addWidget(apply);
 		auto *controlStatus = new QLabel("Pulse Weaver sends provider-native local requests. Credentials remain in this isolated portable profile.");
@@ -2836,15 +2877,17 @@ public:
 		tabs->addTab(controlPage, "LIVE CONTROL");
 
 		auto *looksPage = new QWidget;
+		looksPage->setObjectName("PulseWeaverLightingLooksPage");
 		auto *looksLayout = new QVBoxLayout(looksPage);
 		auto *lookName = new QLineEdit;
 		lookName->setPlaceholderText("Look name, e.g. Raid Warning");
-		auto *saveLook = new QPushButton("SAVE CURRENT COLOUR / LEVEL AS LOOK");
+		auto *saveLook = new QPushButton("Save current look");
 		auto *looks = new QListWidget;
+		looks->setObjectName("PulseWeaverLightLooks");
 		looksLayout->addWidget(lookName);
 		looksLayout->addWidget(saveLook);
 		looksLayout->addWidget(looks, 1);
-		looksLayout->addWidget(new QLabel("Double-click a look to load it, then apply it to any selected device or display."));
+		looksLayout->addWidget(new QLabel("Choose a saved look to load its colour, brightness and power. Apply look sends it to your selected device."));
 		tabs->addTab(looksPage, "SHOW LOOKS");
 
 		QSettings settings(pulseSettingsPath(), QSettings::IniFormat);
@@ -2883,28 +2926,28 @@ public:
 		};
 
 		connect(add, &QPushButton::clicked, surface, [provider, address, statusLabel, addDevice] {
-			QString hostName = address->text().trimmed();
-			if (hostName.isEmpty()) {
+			const QString input = address->text().trimmed();
+			if (input.isEmpty()) {
 				statusLabel->setText("Enter an IP address or hostname first.");
 				return;
 			}
-			hostName.remove("http://", Qt::CaseInsensitive);
-			hostName.remove("https://", Qt::CaseInsensitive);
-			hostName = hostName.section('/', 0, 0);
-			quint16 port = provider->currentText() == "Home Assistant" ? 8123 : 80;
-			if (hostName.contains(':')) {
-				bool ok = false;
-				const quint16 explicitPort = hostName.section(':', 1, 1).toUShort(&ok);
-				if (ok)
-					port = explicitPort;
-				hostName = hostName.section(':', 0, 0);
+			const QString providerName = provider->currentText();
+			const bool explicitScheme = input.contains("://");
+			QUrl target(explicitScheme ? input : (providerName == "Philips Hue" ? "https://" : "http://") + input);
+			if (!target.isValid() || target.host().isEmpty() || !target.userInfo().isEmpty() || (target.scheme() != "http" && target.scheme() != "https")) {
+				statusLabel->setText("Enter a valid HTTP(S) device address."); return;
 			}
+			const int defaultPort = target.scheme() == "https" ? 443 : (providerName == "Home Assistant" && !explicitScheme ? 8123 : 80);
+			const quint16 port = quint16(target.port(defaultPort));
+			const QString hostName = target.host();
+			QString endpoint = hostName.contains(':') ? "[" + hostName + "]" : hostName;
+			if (port != (target.scheme() == "https" ? 443 : 80)) endpoint += ":" + QString::number(port);
+			if (target.scheme() == "https") endpoint.prepend("https://");
 			auto *socket = new QTcpSocket(statusLabel);
 			statusLabel->setText("Testing " + hostName + "…");
 			QObject::connect(socket, &QTcpSocket::connected, statusLabel,
-					 [socket, provider, hostName, statusLabel, port, addDevice] {
-						 const QString endpoint = hostName + (port == 80 ? "" : ":" + QString::number(port));
-						 addDevice(provider->currentText(), endpoint, "Online");
+					 [socket, providerName, endpoint, statusLabel, addDevice] {
+						 addDevice(providerName, endpoint, "Online");
 						 statusLabel->setText("Device is reachable and saved inside Pulse Weaver.");
 						 socket->disconnectFromHost();
 						 socket->deleteLater();
@@ -2924,12 +2967,13 @@ public:
 				statusLabel->setText("Enter a three-part local prefix such as 192.168.1.");
 				return;
 			}
-			const quint16 port = provider->currentText() == "Home Assistant" ? 8123 : 80;
+			const QString providerName = provider->currentText();
+			const quint16 port = providerName == "Home Assistant" ? 8123 : (providerName == "Philips Hue" ? 443 : 80);
 			scanProgress->setValue(0);
 			statusLabel->setText("Scanning " + prefix + ".1–254 on port " + QString::number(port) + "…");
 			scanner->start(prefix, port,
-				[provider, addDevice, port](const QString &hostName) {
-					addDevice(provider->currentText(), hostName + (port == 80 ? "" : ":" + QString::number(port)), "Discovered");
+				[providerName, addDevice, port](const QString &hostName) {
+					addDevice(providerName, hostName + (port == 80 ? "" : ":" + QString::number(port)), "Discovered");
 				},
 				[scanProgress, statusLabel](int complete, int total) {
 					scanProgress->setMaximum(total);
@@ -2951,12 +2995,12 @@ public:
 			authToken->setText(unprotectCredential(settings.value("lights/auth/" + item->text(2)).toString()));
 			entity->setText(settings.value("lights/entity/" + item->text(2)).toString());
 		});
-		connect(power, &QPushButton::toggled, surface, [power](bool on) { power->setText(on ? "●  OUTPUT ON" : "○  OUTPUT OFF"); });
+		connect(power, &QPushButton::toggled, surface, [power](bool on) { power->setText(on ? "Power on" : "Power off"); });
 		connect(colour, &QPushButton::clicked, surface, [surface, colour, selectedColour] {
 			const QColor chosen = QColorDialog::getColor(*selectedColour, surface, "Choose show colour");
 			if (chosen.isValid()) {
 				*selectedColour = chosen;
-				colour->setText("COLOUR  " + chosen.name().toUpper());
+				colour->setText("Colour  " + chosen.name().toUpper());
 				colour->setStyleSheet("border-color:" + chosen.name());
 			}
 		});
@@ -2968,41 +3012,17 @@ public:
 			}
 			const QString providerName = item->text(1);
 			const QString endpoint = item->text(2);
-			QUrl url("http://" + endpoint);
-			QJsonObject body{{"on", power->isChecked()}, {"bri", brightness->value()},
-					 {"rgb", QJsonArray{selectedColour->red(), selectedColour->green(), selectedColour->blue()}}};
-			QNetworkRequest request;
-			if (providerName == "WLED") {
-				url.setPath("/json/state");
-				body.remove("rgb");
-				body.insert("seg", QJsonArray{QJsonObject{{"col", QJsonArray{QJsonArray{selectedColour->red(), selectedColour->green(), selectedColour->blue()}}}}});
-			} else if (providerName == "Home Assistant") {
-				url.setPath(power->isChecked() ? "/api/services/light/turn_on" : "/api/services/light/turn_off");
-				body.insert("entity_id", entity->text().trimmed());
-				body.insert("brightness", brightness->value());
-				body.insert("rgb_color", body.take("rgb"));
-			} else if (providerName == "Philips Hue") {
-				url.setPath("/api/" + authToken->text().trimmed() + "/lights/" + entity->text().trimmed() + "/state");
-				body.remove("rgb");
-				body.insert("hue", int(std::max(0.0f, selectedColour->hsvHueF()) * 65535));
-				body.insert("sat", int(selectedColour->hsvSaturationF() * 254));
-			} else {
-				QString path = entity->text().trimmed();
-				url.setPath(path.startsWith('/') ? path : "/" + (path.isEmpty() ? QString("pulseweaver") : path));
-			}
-			request.setUrl(url);
-			request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-			if (providerName == "Home Assistant" && !authToken->text().isEmpty())
-				request.setRawHeader("Authorization", "Bearer " + authToken->text().toUtf8());
+			const auto request = PulseLightRequest::make(providerName, endpoint, authToken->text(), entity->text(), *selectedColour, brightness->value(), power->isChecked());
+			if (!request.valid()) { controlStatus->setText(request.error); return; }
 			QSettings saved(pulseSettingsPath(), QSettings::IniFormat);
 			saved.setValue("lights/auth/" + endpoint, protectCredential(authToken->text()));
 			saved.setValue("lights/entity/" + endpoint, entity->text().trimmed());
-			QNetworkReply *reply = actionNetwork->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+			QNetworkReply *reply = actionNetwork->sendCustomRequest(request.network, request.method, QJsonDocument(request.body).toJson(QJsonDocument::Compact));
 			controlStatus->setText("Sending look to " + endpoint + "…");
 			const QPersistentModelIndex statusIndex(devices->model()->index(devices->indexOfTopLevelItem(item), 3));
-			connect(reply, &QNetworkReply::finished, surface, [reply, controlStatus, devices, statusIndex] {
+			connect(reply, &QNetworkReply::finished, surface, [reply, controlStatus, devices, statusIndex, providerName] {
 				const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-				const bool ok = reply->error() == QNetworkReply::NoError && code >= 200 && code < 300;
+				const bool ok = PulseLightRequest::accepted(providerName, code, reply->error() == QNetworkReply::NoError, reply->readAll());
 				controlStatus->setText(ok ? "Device accepted the show look." : "Device control failed: HTTP " + QString::number(code) + " — " + reply->errorString());
 				if (statusIndex.isValid()) devices->model()->setData(statusIndex, ok ? "Controlled" : "Error");
 				reply->deleteLater();
@@ -3019,6 +3039,9 @@ public:
 			saved.removeIf([&name](const QString &entry) { return entry.section('|', 0, 0).compare(name, Qt::CaseInsensitive) == 0; });
 			saved.append(value);
 			settings.setValue("lights/looks", saved);
+			for (int row = looks->count() - 1; row >= 0; --row)
+				if (looks->item(row)->data(Qt::UserRole).toString().section('|', 0, 0).compare(name, Qt::CaseInsensitive) == 0)
+					delete looks->takeItem(row);
 			auto *item = new QListWidgetItem(name + "  •  " + selectedColour->name() + "  •  " + QString::number(brightness->value()), looks);
 			item->setData(Qt::UserRole, value);
 			lookName->clear();
@@ -3030,9 +3053,12 @@ public:
 			*selectedColour = QColor(fields[1]);
 			brightness->setValue(fields[2].toInt());
 			power->setChecked(fields[3] == "1");
-			colour->setText("COLOUR  " + selectedColour->name().toUpper());
+			colour->setText("Colour  " + selectedColour->name().toUpper());
 			colour->setStyleSheet("border-color:" + selectedColour->name());
 		});
+		auto *navigation = new PulseLightsNavigation::Page({devicesPage, controlPage, looksPage, devices, looks, removeDevice}, surface);
+		layout->addWidget(navigation, 1);
+		delete tabs; // The navigator now owns the three reparented page widgets.
 		host->layout()->addWidget(surface);
 	}
 
@@ -4390,34 +4416,12 @@ private:
 		const bool on = look[3] == "1";
 		const QString credential = unprotectCredential(settings.value("lights/auth/" + endpoint).toString());
 		const QString entity = settings.value("lights/entity/" + endpoint).toString();
-		QUrl url("http://" + endpoint);
-		QJsonObject body{{"on", on}, {"bri", brightness}, {"rgb", QJsonArray{colour.red(), colour.green(), colour.blue()}}};
-		QNetworkRequest request;
-		if (provider == "WLED") {
-			url.setPath("/json/state");
-			body.remove("rgb");
-			body.insert("seg", QJsonArray{QJsonObject{{"col", QJsonArray{QJsonArray{colour.red(), colour.green(), colour.blue()}}}}});
-		} else if (provider == "Home Assistant") {
-			url.setPath(on ? "/api/services/light/turn_on" : "/api/services/light/turn_off");
-			body.insert("entity_id", entity);
-			body.insert("brightness", brightness);
-			body.insert("rgb_color", body.take("rgb"));
-		} else if (provider == "Philips Hue") {
-			url.setPath("/api/" + credential + "/lights/" + entity + "/state");
-			body.remove("rgb");
-			body.insert("hue", int(std::max(0.0f, colour.hsvHueF()) * 65535));
-			body.insert("sat", int(colour.hsvSaturationF() * 254));
-		} else {
-			url.setPath(entity.startsWith('/') ? entity : "/" + (entity.isEmpty() ? QString("pulseweaver") : entity));
-		}
-		request.setUrl(url);
-		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-		if (provider == "Home Assistant" && !credential.isEmpty())
-			request.setRawHeader("Authorization", "Bearer " + credential.toUtf8());
-		QNetworkReply *reply = actionNetwork->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-		connect(reply, &QNetworkReply::finished, this, [this, reply, target, lookName] {
+		const auto request = PulseLightRequest::make(provider, endpoint, credential, entity, colour, brightness, on);
+		if (!request.valid()) return false;
+		QNetworkReply *reply = actionNetwork->sendCustomRequest(request.network, request.method, QJsonDocument(request.body).toJson(QJsonDocument::Compact));
+		connect(reply, &QNetworkReply::finished, this, [this, reply, target, lookName, provider] {
 			const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-			const bool ok = reply->error() == QNetworkReply::NoError && code >= 200 && code < 300;
+			const bool ok = PulseLightRequest::accepted(provider, code, reply->error() == QNetworkReply::NoError, reply->readAll());
 			eventLog->append(QString("LIGHT %1 → %2 %3").arg(lookName.toHtmlEscaped(), target.toHtmlEscaped(), ok ? "✓" : "FAILED"));
 			reply->deleteLater();
 		});
@@ -5227,7 +5231,6 @@ bool obs_module_load(void)
 	if (actionMount && actionMount->layout()) {
 		actionMount->layout()->setContentsMargins(0, 0, 0, 0);
 		actionMount->layout()->addWidget(dock);
-		dock->mountLights(lightsMount);
 		blog(LOG_INFO, "[Pulse Weaver] Mounted Lights and Action directly into the native product shell.");
 	} else {
 		fallbackDockRegistered = obs_frontend_add_dock_by_id("pulseWeaverNativeCore", "Pulse Weaver", dock);
@@ -5238,6 +5241,7 @@ bool obs_module_load(void)
 		}
 		blog(LOG_WARNING, "[Pulse Weaver] Native shell mount was unavailable; using compatibility dock.");
 	}
+	dock->mountLights(lightsMount);
 	obs_frontend_add_event_callback(frontendEvent, nullptr);
 	return true;
 }

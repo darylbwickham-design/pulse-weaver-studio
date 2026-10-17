@@ -780,26 +780,9 @@ QFrame *pulseBanner(const QString &title, const QString &copy, const QString &ic
 
 void pulsePlainCardHeading(QToolButton *heading)
 {
-	auto update = [heading] {
-		/* Resolve the original label's typography from the active theme instead
-		 * of inheriting the native tool button's smaller font and boxed chrome. */
-		QLabel originalTitle(heading->parentWidget());
-		originalTitle.setObjectName("PulseWeaverCardTitle");
-		originalTitle.ensurePolished();
-		const QFont font = originalTitle.font();
-		const QString size = font.pixelSize() > 0 ? QString("%1px").arg(font.pixelSize()) :
-			QString("%1pt").arg(font.pointSizeF());
-		const QString color = originalTitle.palette().color(QPalette::WindowText).name();
-		heading->setFont(font);
-		heading->setStyleSheet(QString(
-			"QToolButton,QToolButton:hover,QToolButton:pressed,QToolButton:checked{"
-			"background:transparent;border:0;border-bottom:1px solid transparent;"
-			"border-radius:0;padding:0;margin:0;color:%1;font-size:%2;font-weight:%3;}"
-			"QToolButton:focus{border-bottom-color:%1;}")
-			.arg(color, size).arg(int(font.weight())));
-	};
-	QObject::connect(App(), &OBSApp::StyleChanged, heading, update);
-	update();
+	// Theme-owned tactile title controls keep typography and interaction
+	// states consistent across Chat and the native workspaces.
+	heading->setToolButtonStyle(Qt::ToolButtonTextOnly);
 }
 
 QFrame *card(const QString &title, const QString &copy, const QString &accent, QWidget *parent = nullptr,
@@ -822,12 +805,6 @@ QFrame *card(const QString &title, const QString &copy, const QString &accent, Q
 		options->setPopupMode(QToolButton::InstantPopup);
 		options->setFocusPolicy(Qt::StrongFocus);
 		options->setCursor(Qt::PointingHandCursor);
-		options->setStyleSheet(
-			"QToolButton,QToolButton:hover,QToolButton:pressed,QToolButton:checked{"
-			"background:transparent;border:0;border-bottom:1px solid transparent;"
-			"border-radius:0;padding:0;margin:0;}"
-			"QToolButton:focus{border-bottom-color:white;}"
-			"QToolButton::menu-indicator{image:none;}");
 		titleRow->addWidget(options);
 		*optionsButton = options;
 	} else {
@@ -921,6 +898,7 @@ public:
 	QSize minimumSizeHint() const override {return QSize(180, 94);}
 	PulseCommandCard(const QString &title, const QString &detail, QWidget *parent) : QPushButton(title, parent), summary(detail) {
 		setObjectName("PulseWeaverChoiceCard"); setMinimumHeight(94);
+		setAttribute(Qt::WA_LayoutUsesWidgetRect);
 		setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 		setAutoDefault(false); setDefault(false); setCursor(Qt::PointingHandCursor);
 		setAccessibleName(title); setAccessibleDescription(detail); setToolTip(detail);
@@ -1089,7 +1067,7 @@ private:
 	{
 		if (controls.size() != 11)
 			return;
-		const bool compact = width() < 440;
+		const bool compact = false;
 		if (!force && arranged && compact == compactLayout)
 			return;
 		while (QLayoutItem *item = grid->takeAt(0))
@@ -1097,16 +1075,16 @@ private:
 		for (int column = 0; column < 11; ++column)
 			grid->setColumnStretch(column, 0);
 		grid->addWidget(controls[0], 0, 0, Qt::AlignLeft);
-		grid->addWidget(controls[10], 0, 1, Qt::AlignRight);
-		grid->addWidget(controls[1], 1, 0);
-		grid->addWidget(controls[9], compact ? 2 : 1, compact ? 0 : 1);
+		grid->addWidget(controls[1], 0, 1);
+		grid->addWidget(controls[9], 0, 2);
+		grid->addWidget(controls[10], 0, 3);
 		// Transition controllers remain owned and synchronised; Manage stages
 		// exposes their editing surface without crowding the production toolbar.
 		for (int index = 2; index <= 8; ++index) {
 			controls[index]->setParent(this);
 			controls[index]->hide();
 		}
-		grid->setColumnStretch(0, 1);
+		grid->setColumnStretch(1, 1);
 		compactLayout = compact;
 		arranged = true;
 	}
@@ -1148,8 +1126,8 @@ protected:
 public:
     explicit PulseTransportBar(QWidget *parent = nullptr) : QWidget(parent), grid(new QGridLayout(this)) {
         setObjectName("PulseWeaverTransport");
-        grid->setContentsMargins(0, 10, 0, 0);
-        grid->setHorizontalSpacing(10);
+        grid->setContentsMargins(0, 4, 0, 0);
+		grid->setHorizontalSpacing(8);
         grid->setVerticalSpacing(6);
     }
     void addWidget(QWidget *widget) { controls.append(widget); arrange(); }
@@ -1163,8 +1141,8 @@ QWidget *displayCard(const QString &kicker, const QString &title, OBSQTDisplay *
 	frame->setObjectName("PulseWeaverStage");
 	Q_UNUSED(accent);
 	auto *layout = new QVBoxLayout(frame);
-	layout->setContentsMargins(12, 10, 12, 10);
-	layout->setSpacing(8);
+	layout->setContentsMargins(10, 8, 10, 8);
+	layout->setSpacing(6);
 	auto *head = new QGridLayout;
 	auto *ratio = new QLabel(kicker);
 	ratio->setObjectName("PulseWeaverKicker");
@@ -1277,8 +1255,9 @@ void OBSBasic::InitPulseWeaverShell()
 
 	auto *header = new QFrame(root);
 	header->setObjectName("PulseWeaverHeader");
+	header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 	auto *headerLayout = new QHBoxLayout(header);
-	headerLayout->setContentsMargins(16, 8, 16, 8);
+	headerLayout->setContentsMargins(12, 8, 12, 8);
 	headerLayout->setSpacing(6);
 	auto *brandMark = new QLabel(header);
 	brandMark->setPixmap(QPixmap(":/res/images/pulseweaver.png")
@@ -1289,38 +1268,48 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *brand = new QLabel("Pulse Weaver", header);
 	brand->setObjectName("PulseWeaverBrand");
 	brand->setTextFormat(Qt::PlainText);
-	headerLayout->addWidget(brand);
+	auto *brandStack = new QVBoxLayout;
+	brandStack->setContentsMargins(0, 0, 0, 0);
+	brandStack->setSpacing(2);
+	brandStack->addWidget(brand);
 	auto *previewVersion = new QLabel("2.0  UNSTABLE", header);
 	previewVersion->setObjectName("PulseWeaverPreviewVersion");
 	previewVersion->setToolTip("An isolated preview of Pulse Weaver 2.0");
-	headerLayout->addWidget(previewVersion);
-	headerLayout->addSpacing(14);
-	auto *home = new QPushButton("Show Control", header);
+	brandStack->addWidget(previewVersion, 0, Qt::AlignLeft);
+	headerLayout->addLayout(brandStack);
+	headerLayout->addSpacing(8);
+	auto *home = new QPushButton("Show", header);
 	home->setObjectName("PulseWeaverHome");
+	home->setAttribute(Qt::WA_LayoutUsesWidgetRect);
 	home->setProperty("pulseWorkspaceIndex", 0);
 	home->setToolTip("Run your show and outputs, or open Control to design and rehearse Looks");
-	pulseIcon(home, "show", 18);
+	home->setFixedSize(120, 44);
+	pulseIcon(home, "show", 22);
 	headerLayout->addWidget(home);
 
 	auto addWorkspace = [this, header, headerLayout](const QString &text, const char *name, int index) {
 		auto *button = new QPushButton(text, header);
 		button->setObjectName("PulseWeaverNav");
+		button->setAttribute(Qt::WA_LayoutUsesWidgetRect);
 		button->setProperty("workspace", name);
 		button->setProperty("pulseWorkspaceIndex", index);
-		button->setToolTip(index == 1 ? "Lighting controls are not available in this release" :
+		button->setFixedSize(120, 44);
+		button->setToolTip(index == 1 ? "Devices, live lighting control and saved show looks" :
 			index == 2 ? "Add and configure sources; edit landscape and portrait scenes" :
 			"Connect streaming accounts, set titles and destinations, or open automation commands");
-		pulseIcon(button, name, 18);
+		pulseIcon(button, name, 22);
 		button->setCursor(Qt::PointingHandCursor);
 		connect(button, &QPushButton::clicked, this, [this, index] { SetPulseWeaverWorkspace(index); });
 		headerLayout->addWidget(button);
 	};
-	addWorkspace("Lights · soon", "lights", 1);
+	addWorkspace("Lights", "lights", 1);
 	addWorkspace("Camera", "camera", 2);
 	addWorkspace("Action", "action", 3);
 	headerLayout->addStretch();
 	auto *commandsButton = new QPushButton("Commands  Ctrl+K", header);
+	commandsButton->setFixedSize(124, 34);
 	commandsButton->setObjectName("PulseWeaverCommandButton");
+	commandsButton->setAttribute(Qt::WA_LayoutUsesWidgetRect);
 	commandsButton->setToolTip("Find a workspace, stage or studio control · Ctrl+K");
 	headerLayout->addWidget(commandsButton);
 	auto *pulseAi = new QPushButton("PULSE AI", header);
@@ -1330,7 +1319,9 @@ void OBSBasic::InitPulseWeaverShell()
 	headerLayout->addWidget(pulseAi);
 	auto *studioMenuButton = new QPushButton("Studio", header);
 	studioMenuButton->setObjectName("PulseWeaverUtility");
-	pulseIcon(studioMenuButton, "studio");
+	studioMenuButton->setAttribute(Qt::WA_LayoutUsesWidgetRect);
+	studioMenuButton->setFixedSize(78, 34);
+	pulseIcon(studioMenuButton, "studio", 16);
 	auto *studioMenu = new QMenu(studioMenuButton);
 	new PulseUpdates::Updater(this, studioMenu, [this] {
 		return pulseStreamStart.pending() || PulseHasActiveOutputs();
@@ -1399,18 +1390,32 @@ void OBSBasic::InitPulseWeaverShell()
 	headerLayout->addWidget(studioMenuButton);
 	auto *plugins = new QPushButton("Plugins", header);
 	plugins->setObjectName("PulseWeaverUtility");
+	plugins->setAttribute(Qt::WA_LayoutUsesWidgetRect);
+	plugins->setFixedSize(78, 34);
 	plugins->setToolTip("Manage installed Pulse Weaver plugins");
-	pulseIcon(plugins, "plugins");
+	pulseIcon(plugins, "plugins", 16);
 	connect(plugins, &QPushButton::clicked, this, [this] { ui->actionOpenPluginManager->trigger(); });
 	headerLayout->addWidget(plugins);
 	auto *settings = new QPushButton("Settings", header);
 	settings->setObjectName("PulseWeaverUtility");
+	settings->setAttribute(Qt::WA_LayoutUsesWidgetRect);
+	settings->setFixedSize(88, 34);
 	settings->setProperty("pulseWorkspaceIndex", 4);
 	settings->setToolTip("Start the setup guide or change audio, video, recording and app settings");
-	pulseIcon(settings, "settings");
+	pulseIcon(settings, "settings", 16);
 	connect(settings, &QPushButton::clicked, this, [this] { SetPulseWeaverWorkspace(4); });
 	headerLayout->addWidget(settings);
 	connect(home, &QPushButton::clicked, this, [this] { SetPulseWeaverWorkspace(0); });
+	auto syncHeaderGeometry = [header, headerLayout] {
+		// Resolve role dimensions before deriving the header's minimum. The
+		// matching stylesheet explicitly replaces inherited button heights.
+		header->ensurePolished();
+		for (auto *button : header->findChildren<QPushButton *>()) button->ensurePolished();
+		headerLayout->invalidate();
+		header->setMinimumHeight(headerLayout->totalMinimumSize().height());
+	};
+	connect(App(), &OBSApp::StyleChanged, header, syncHeaderGeometry);
+	syncHeaderGeometry();
 	ui->verticalLayout->insertWidget(0, header);
 
 	pulsePages = new QStackedWidget(root);
@@ -1421,9 +1426,9 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseShowPage = new QWidget(pulsePages);
 	pulseShowPage->setObjectName("PulseWeaverPage");
 	auto *showLayout = new QVBoxLayout(pulseShowPage);
-	showLayout->setContentsMargins(16, 10, 16, 12);
-	showLayout->setSpacing(12);
-	auto *showBanner = new QFrame;
+	showLayout->setContentsMargins(12, 8, 12, 10);
+	showLayout->setSpacing(8);
+	auto *showBanner = new QFrame(pulseShowPage);
     showBanner->setObjectName("PulseWeaverShowHeading");
     auto *showHead = new QHBoxLayout(showBanner);
     showHead->setContentsMargins(0, 0, 0, 0);
@@ -1446,6 +1451,7 @@ void OBSBasic::InitPulseWeaverShell()
 		choice->setCheckable(true);
 		choice->setCursor(Qt::PointingHandCursor);
 		choice->setMinimumHeight(32);
+		choice->setFixedSize(64, 34);
 		showModeGroup->addButton(choice);
 		showHead->addWidget(choice);
 	}
@@ -1466,20 +1472,20 @@ void OBSBasic::InitPulseWeaverShell()
 	lumiaGuideLogo.loadFromData(QByteArray(pulseLumiaLogo), "SVG");
 	// Show only the bulb from the official logo; keep the wordmark in the wizard.
 	lumiaGuide->setIcon(QIcon(lumiaGuideLogo.copy(0, 0, 25, 40)));
-	lumiaGuide->setIconSize(QSize(23, 36));
-	lumiaGuide->setFixedSize(42, 38);
+	lumiaGuide->setIconSize(QSize(17, 27));
+	lumiaGuide->setFixedSize(32, 34);
 	lumiaGuide->setAccessibleName("Lumia Stream setup guide");
 	lumiaGuide->setToolTip("Lumia Stream · overlay setup and command instructions");
 	lumiaGuide->setCursor(Qt::PointingHandCursor);
-	lumiaGuide->setStyleSheet("QToolButton{background:transparent;border:1px solid transparent;border-radius:6px;padding:0;}"
-		"QToolButton:hover,QToolButton:focus{background:#242036;border-color:#FF4076;}");
 	connect(lumiaGuide, &QToolButton::clicked, this, [this] { PulseInstructions::openDialog(this); });
 	guideButtons->addWidget(lumiaGuide);
 	showHead->addWidget(contributorGuides);
 	pulseEngineStatus = new QLabel("Preparing studio…");
 	pulseEngineStatus->setObjectName("PulseWeaverStatus");
 	showHead->addWidget(pulseEngineStatus);
-	showLayout->addWidget(showBanner);
+	// The mode controls move into the production toolbar. Keep the hidden
+	// heading as an adapter for existing workspace-state callbacks.
+	showBanner->hide();
 
 	/* Programme surfaces and operating controls form the main workspace. Chat
 	 * is a genuine full-height, horizontally resizable operator rail. */
@@ -1546,7 +1552,7 @@ void OBSBasic::InitPulseWeaverShell()
 	statsCard->clicked = [this] { CyclePulseWeaverStreamStats(1); };
 	pulseStreamStatsCard = statsCard;
 	auto *statsLayout = new QVBoxLayout(statsCard);
-	statsLayout->setContentsMargins(12, 8, 12, 8);
+	statsLayout->setContentsMargins(10, 4, 10, 4);
 	statsLayout->setSpacing(8);
 	auto *statsHeader = new QHBoxLayout;
 	statsHeader->setSpacing(12);
@@ -1590,6 +1596,7 @@ void OBSBasic::InitPulseWeaverShell()
 	addMetric("Dropped frames", pulseStreamStatsDropped);
 	statsHeader->addLayout(metrics, 1);
 	auto *detailsButton = new QPushButton("Details", statsCard);
+	detailsButton->setObjectName("PulseWeaverStatsDetails");
 	detailsButton->setFixedWidth(76);
 	detailsButton->setMinimumHeight(32);
 	statsHeader->addWidget(detailsButton);
@@ -1961,7 +1968,7 @@ void OBSBasic::InitPulseWeaverShell()
 	browserLayout->addWidget(browserStatus, 1);
 	chatPanelStack->addWidget(browserPage);
 	activityCard->layout()->addWidget(chatPanelStack);
-	activityCard->setMinimumWidth(270);
+	activityCard->setMinimumWidth(280);
 	activityCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 	showMainLayout->addLayout(showGrid, 1);
 	auto *showBody = new QSplitter(Qt::Horizontal, pulseShowPage);
@@ -1970,13 +1977,23 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *operatingPanel = new QWidget(showBody);
 	auto *operatingLayout = new QVBoxLayout(operatingPanel);
 	operatingLayout->setContentsMargins(0, 0, 0, 0);
-	operatingLayout->setSpacing(10);
+	operatingLayout->setSpacing(6);
 	auto *productionControls = new QFrame(operatingPanel);
 	productionControls->setObjectName("PulseWeaverProductionControls");
 	auto *productionLayout = new QHBoxLayout(productionControls);
-	productionLayout->setContentsMargins(14, 10, 14, 12);
-	productionLayout->setSpacing(20);
-	operatingLayout->addWidget(productionControls);
+	productionLayout->setContentsMargins(8, 4, 8, 4);
+	productionLayout->setSpacing(12);
+	auto *modeSwitch = new QFrame(productionControls);
+	modeSwitch->setObjectName("PulseWeaverModeSwitch");
+	auto *modeLayout = new QHBoxLayout(modeSwitch);
+	modeLayout->setContentsMargins(1, 1, 1, 1);
+	modeLayout->setSpacing(2);
+	modeLayout->addWidget(showMode);
+	modeLayout->addWidget(controlMode);
+	productionLayout->addWidget(modeSwitch);
+	// A single toolbar serves Show and Control. Its position outside the
+	// content stack keeps the mode switch reachable in either mode.
+	showLayout->addWidget(productionControls);
 	auto *workScroll = new QScrollArea(operatingPanel);
 	workScroll->setObjectName("PulseWeaverWorkSurface");
 	workScroll->setFrameShape(QFrame::NoFrame);
@@ -2034,7 +2051,7 @@ void OBSBasic::InitPulseWeaverShell()
 	});
 
 	auto *stageBar = new PulseResponsiveStageBar(showMain);
-	auto *stageLabel = new QLabel("STAGE");
+	auto *stageLabel = new QLabel("Stage");
 	stageLabel->setObjectName("PulseWeaverKicker");
 	stageBar->addWidget(stageLabel);
 	pulseStageSelector = new QComboBox(stageBar);
@@ -2048,7 +2065,7 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseStageSelector->hide();
 	auto *stageChoice = new QPushButton("Choose a stage", stageBar);
 	stageChoice->setObjectName("PulseWeaverStageChoice");
-	stageChoice->setMinimumSize(250, 38);
+	stageChoice->setMinimumSize(180, 34);
 	stageChoice->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
 	stageChoice->setAccessibleName("Choose current stage");
 	stageChoice->setToolTip("Open saved stage cards");
@@ -2154,13 +2171,15 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseIcon(captureStage, "save");
 	connect(captureStage, &QPushButton::clicked, this, &OBSBasic::CapturePulseWeaverStage);
 	stageBar->addWidget(captureStage);
-	auto *manageStages = new QPushButton("Manage stages");
+	auto *manageStages = new QPushButton("Manage");
 	manageStages->setObjectName("PulseWeaverControl");
 	manageStages->setToolTip("Choose each Stage's scenes, output destinations, transitions and source exclusions");
-	pulseIcon(manageStages, "stages");
+	pulseIcon(manageStages, "stages", 18);
+	manageStages->setFixedHeight(34);
 	connect(manageStages, &QPushButton::clicked, this, &OBSBasic::ManagePulseWeaverStages);
 	stageBar->addWidget(manageStages);
-	auto *firstShow = new QPushButton("Build my show…", showMain);
+	auto *firstShow = new QPushButton("Build show", showMain);
+	firstShow->setFixedHeight(34);
 	firstShow->setObjectName("PulseWeaverControl");
 	firstShow->setToolTip("Choose Starting, Chat, Game, Projects, Celebration and Intermission Looks; reuse or create their sources.");
 	auto needsShowBuilder = [] {
@@ -2199,24 +2218,25 @@ void OBSBasic::InitPulseWeaverShell()
 	// capture if the selected source is removed.
 	auto *captureControls = new QWidget(productionControls);
 	captureControls->setObjectName("PulseWeaverCaptureControls");
-	auto *captureLayout = new QVBoxLayout(captureControls);
+	auto *captureLayout = new QHBoxLayout(captureControls);
 	captureLayout->setContentsMargins(0, 0, 0, 0);
 	captureLayout->setSpacing(6);
 	auto *gameRow = new QHBoxLayout;
 	gameRow->setSpacing(7);
-	auto *gameLabel = new QLabel("GAME CAPTURE", captureControls);
+	auto *gameLabel = new QLabel("Game", captureControls);
 	gameLabel->setObjectName("PulseWeaverKicker");
 	captureLayout->addWidget(gameLabel);
 	auto *gameWindow = new QComboBox(showMain);
 	gameWindow->setObjectName("PulseWeaverGameWindow");
 	gameWindow->setAccessibleName("Game Capture window");
-	gameWindow->setMinimumWidth(230);
-	gameWindow->setMinimumHeight(38);
+	gameWindow->setMinimumWidth(180);
+	gameWindow->setFixedHeight(34);
 	gameWindow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 	gameRow->addWidget(gameWindow, 1);
 	auto *gameSettings = new QToolButton(showMain);
 	gameSettings->setText("⚙");
-	gameSettings->setFixedSize(32, 38);
+	gameSettings->setObjectName("PulseWeaverGameSettings");
+	gameSettings->setFixedSize(30, 34);
 	gameSettings->setAccessibleName("Choose Game Capture source and refresh windows");
 	gameSettings->setToolTip("Choose the Game Capture source used by this window picker");
 	gameSettings->setAutoRaise(true);
@@ -2514,7 +2534,10 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseDestinationStatus->setMinimumWidth(0);
 	pulseDestinationStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 	pulseDestinationStatus->setParent(outputPanel); pulseDestinationStatus->hide();
-	outputLayout->addLayout(destinations, 1); outputLayout->addWidget(platformsButton, 0, Qt::AlignBottom);
+	outputLayout->addLayout(destinations, 1);
+	outputLayout->addWidget(pulseEngineStatus, 0, Qt::AlignBottom);
+	outputLayout->addWidget(contributorGuides, 0, Qt::AlignBottom);
+	outputLayout->addWidget(platformsButton, 0, Qt::AlignBottom);
 	operatingLayout->addWidget(outputPanel);
 	/* Show Control uses the same proven OBS vertical controls as Camera, in a
 	 * compact horizontally scrolling band. */
@@ -2525,9 +2548,9 @@ void OBSBasic::InitPulseWeaverShell()
 	/* 58 px strips plus the native horizontal scrollbar need more than the old
 	 * 65 px viewport. That mismatch was the persistent 5–10 px vertical scroll
 	 * and clipped control row reported in Show Control. */
-	mixerCard->setMinimumHeight(54);
+	mixerCard->setMinimumHeight(44);
 	auto *mixerLayout = new QVBoxLayout(mixerCard);
-	mixerLayout->setContentsMargins(14, 8, 14, 8);
+	mixerLayout->setContentsMargins(10, 4, 10, 4);
 	mixerLayout->setSpacing(4);
 	auto *mixerHeader = new QHBoxLayout;
 	mixerHeader->setSpacing(8);
@@ -2864,22 +2887,19 @@ void OBSBasic::InitPulseWeaverShell()
 	operatingLayout->addWidget(controls);
 	pulsePages->addWidget(pulseShowPage);
 
-	/* LIGHTS is retained as an expansion surface without presenting unfinished
-	 * device controls as if they were ready for live use. */
+	/* LIGHTS — the existing device, live control and saved-look workspace. */
 	pulseLightsHost = new QWidget(pulsePages);
 	pulseLightsHost->setObjectName("PulseWeaverLightsHost");
 	auto *lightsLayout = new QVBoxLayout(pulseLightsHost);
 	lightsLayout->setContentsMargins(12, 12, 12, 8);
 	lightsLayout->setSpacing(10);
     lightsLayout->addWidget(pulseBanner("Lights", "Lighting and atmosphere", "lights"));
-    lightsLayout->addWidget(card("Lighting control", "Lighting controls are not available in this release.", "#D946EF"));
-	lightsLayout->addStretch(1);
 	auto *lightsMount = new QWidget;
 	lightsMount->setObjectName("PulseWeaverLightsPluginMount");
-	lightsMount->setProperty("pulseWeaverComingSoon", true);
-	lightsMount->setLayout(new QVBoxLayout);
-	lightsMount->hide();
-	lightsLayout->addWidget(lightsMount);
+	auto *lightsMountLayout = new QVBoxLayout(lightsMount);
+	lightsMountLayout->setContentsMargins(0, 0, 0, 0);
+	lightsMountLayout->setSpacing(0);
+	lightsLayout->addWidget(lightsMount, 1);
 	pulsePages->addWidget(pulseLightsHost);
 
 	/* CAMERA — the untouched native OBS horizontal editor plus an equally
@@ -3083,6 +3103,7 @@ void OBSBasic::InitPulseWeaverShell()
 									 const QString &description) -> QVBoxLayout * {
 		auto *nav = new PulseCommandCard(name, description, setupPage);
 		nav->setMinimumHeight(110);
+		nav->setProperty("pulseSetupCategoryCard", true);
 		nav->setProperty("pulseSetupCategory", name);
 		nav->setAccessibleName(name + " settings");
 		const int categoryIndex = setupCategories->count();
@@ -3721,7 +3742,7 @@ void OBSBasic::InitPulseWeaverShell()
 		for (const auto &entry : QList<QPair<QString, int>>{{"Show Control", 0}, {"Lights", 1},
 			{"Camera", 2}, {"Action", 3}, {"Settings", 4}}) {
 			const QString detail = entry.second == 0 ? "Run the show, programmes, chat and outputs" :
-				entry.second == 1 ? "Open the lighting workspace · currently unavailable" :
+				entry.second == 1 ? "Devices, live lighting control and saved show looks" :
 				entry.second == 2 ? "Edit scenes, sources and camera layouts" :
 				entry.second == 3 ? "Accounts, stream titles and destination setup" : "Audio, video, recording and setup guide";
 			commands.append({"Open " + entry.first, detail, "workspace navigation", [this, index = entry.second] {

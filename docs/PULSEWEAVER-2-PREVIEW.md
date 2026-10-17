@@ -1,14 +1,16 @@
 # Pulse Weaver 2.0 preview
 
-Version: **2.0.0-unstable.1**. Windows native interface and local-controls preview.
+Version: **2.0.0-unstable.2**. Windows native interface and local-controls preview.
 
-This build explores a clearer way to operate the existing studio: choose a category, open the task you need, and use Back to return. It retains the native Qt/OBS engine, Stage/Look system, landscape and portrait outputs, native Move, stingers, audio mixer and account connections. It is an unstable preview for testing before using it for an important broadcast.
+This build brings the main workspaces forward, gives programme previews more room and uses a consistent tactile style for operating controls. Within each task, choose a category, open its focused page and use Back to return. It retains the native Qt/OBS engine, Stage/Look system, landscape and portrait outputs, native Move, stingers, audio mixer and account connections. It is an unstable preview for testing before using it for an important broadcast.
 
 ## What changes
 
-The Show workspace keeps programme previews and chat central, with Stage, destination and transport controls close to the work they affect. Provider choices retain their platform colors, neutral unselected choices and sliding selected state. Recording keeps its orange selected state and the separate **Default**, Off, 16:9, 9:16 and Both modes. Default continues using your native recording settings; it is not the same as routed 16:9 recording.
+The four main workspace controls—**Show**, **Lights**, **Camera** and **Action**—stay visible as large buttons. The Show operating row combines Stage, capture and Show/Control choices; it removes the separate heading/control block so programme previews get more of a small display. Buttons share the sliders' raised cap, highlight and pressed feedback instead of mixing flat navigation with tactile sliders.
 
-Primary navigation uses category cards and focused pages. Stages use a grid picker; commands use categories and action cards instead of one long command list. The existing native controllers remain behind these controls, including live-change restrictions. Advanced native tools remain reachable without filling the main operating surface.
+Provider choices retain their platform colors, neutral unselected choices and sliding selected state. Recording keeps its orange selected state and the separate **Default**, Off, 16:9, 9:16 and Both modes. Default continues using your native recording settings; it is not the same as routed 16:9 recording.
+
+Setup, Stages, Commands and Lights use category/device cards and focused pages instead of long default pickers. The existing native controllers remain behind these controls, including live-change restrictions. Advanced native tools remain reachable without filling the main operating surface.
 
 Live-preview enablement and refresh rate remain local preview settings. They do not lower the broadcast frame rate. The compact mixer can be expanded when needed. This release does not promise a particular CPU or RAM reduction: compare it using the same show, sources, outputs and game as your regular build.
 
@@ -18,6 +20,7 @@ Live-preview enablement and refresh rate remain local preview settings. They do 
 |---|---|
 | Monitor the programme, choose a Stage, route destinations, record or go live | Show |
 | Design and rehearse Looks and native movement | Control |
+| Choose a lighting device, adjust its local controls or load a saved Look | Lights |
 | Edit scenes, capture devices, sources and their properties | Camera |
 | Connect accounts and edit stream details | Connections / Action |
 | Configure sound, recording, canvas and application options | Settings category → task |
@@ -25,6 +28,14 @@ Live-preview enablement and refresh rate remain local preview settings. They do 
 | Open advanced OBS tools, docks, profiles, collections, updates and recovery | Studio |
 
 Use visible Back controls to return without losing your configured values. Choosing a command card reveals its example; browsing examples does not run that command. Tables in these notes describe coverage, not a proposed long list in the application.
+
+## Lights
+
+Lights exposes the retained device setup, power, brightness, color and saved-Look controls. Choose a device card to open its controls; use Back to return. Saved-Look cards load values into the local controls. Sending those values to a device is a separate explicit action. Device setup retains the provider and connection settings used by the existing implementation.
+
+The provider paths cover WLED, Home Assistant, legacy Philips Hue light state and compatible HTTP/DIY endpoints. Request-format checks and synthetic navigation tests do not prove compatibility with your physical devices. A connection test that reaches a port is not proof that credentials, the provider API or the light itself work.
+
+Hue requests use HTTPS and normal certificate validation. This preview does not automatically pair a bridge, provision its trust certificate or silently accept a failed certificate/name check. A bridge addressed by raw IP may require appropriate trusted endpoint/certificate setup before requests work. No real light discovery, test or Apply action is performed by the layout audit; hardware validation remains a separate step.
 
 ## Basic commands and Streamer.bot
 
@@ -42,7 +53,7 @@ Existing Lumia routes and plugin command identities remain in place. To test Lum
 
 ## Install and test separately
 
-The preview installer is named `PulseWeaver-2-Preview-Setup-2.0.0-unstable.1.exe`. Its product is **Pulse Weaver 2 Preview** and its default directory is `%LOCALAPPDATA%\Programs\Pulse Weaver 2 Preview`. It has its own shortcut, uninstall registration, configuration, recovery backups and updater product identity. Installing this dedicated installer does not upgrade the regular Alpha installation. The ordinary unstable installer family does not provide this isolation.
+The preview installer is named `PulseWeaver-2-Preview-Setup-2.0.0-unstable.2.exe`. Its product is **Pulse Weaver 2 Preview** and its default directory is `%LOCALAPPDATA%\Programs\Pulse Weaver 2 Preview`. It has its own shortcut, uninstall registration, configuration, recovery backups and updater product identity. Installing this dedicated installer does not upgrade the regular Alpha installation. The ordinary unstable installer family does not provide this isolation. Installing this revision updates an existing **2 Preview** instance and preserves that instance's configuration.
 
 Keep a fresh profile for the first check. The installer leaves automatic launch unchecked for the preview. Close other instances for a simple first run; if you deliberately run them together, ensure API, OBS WebSocket and overlay ports do not collide and verify which window each external client controls. Avoid streaming from both while comparing the interface.
 
@@ -58,6 +69,7 @@ Preview updates select only the dedicated **2 Preview** installer family. They c
 - This is an unstable interface preview. Native screenshots, layout checks and controller tests do not replace a real rehearsal with your own game, hardware, sources and connected services.
 - Kick remains landscape-only. Provider restrictions, Twitch VOD track setup, audio monitoring and stage exclusions retain their existing meanings.
 - Routed recording formats remain experimental; Default remains the native recording path. Stop recording before changing its mode.
+- Lighting controls are restored, but physical-device behavior, Hue bridge trust and provider-specific capabilities still require a separate check with your hardware. Selecting a saved Look loads local controls; it does not send an Apply command automatically.
 - The basic command surface does not implement stream start/end, arbitrary code, source creation/deletion, source file/URL replacement or a new platform-event client. Advanced automation/Pulse AI availability is unchanged; a category or placeholder is not a completed integration.
 - Recording/replay acceptance is asynchronous. Commands do not wait for completed files, and the example does not retry failed requests automatically.
 - Imported settings can preserve old API/OBS WebSocket ports and browser sources. Running several editions can therefore create resource or port conflicts despite their separate configuration folders.

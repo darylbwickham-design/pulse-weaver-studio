@@ -5,6 +5,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QFontInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -20,7 +21,12 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QWidget>
+#include <QWizard>
 #include <memory>
+#if __has_include("PulseLightsUiAudit.hpp")
+#include "PulseLightsUiAudit.hpp"
+#define PULSEWEAVER_LIGHTS_UI_AUDIT_AVAILABLE 1
+#endif
 
 // Explicit, one-shot development audit. The caller only enables this for a
 // separate inert portable fixture; normal launches allocate no audit timer.
@@ -50,6 +56,213 @@ inline QJsonObject widgetGeometry(QWidget *widget, QWidget *window)
 		result.insert("layoutGeometry", rectValue(layout->geometry()));
 		result.insert("layoutSizeConstraint", int(layout->sizeConstraint()));
 	}
+	return result;
+}
+inline QRect visibleRect(QWidget *widget, QWidget *window)
+{
+	if(!widget || !widget->isVisibleTo(window)) return {};
+	QRect visible(widget->mapTo(window, QPoint()), widget->size());
+	for(auto *parent = widget->parentWidget(); parent; parent = parent->parentWidget()) {
+		visible = visible.intersected(parent->contentsRect().translated(parent->mapTo(window, QPoint())));
+		if(parent == window) break;
+	}
+	return visible;
+}
+inline bool fullyVisible(QWidget *widget, QWidget *window)
+{
+	return widget && widget->isVisibleTo(window) && !widget->size().isEmpty() &&
+		visibleRect(widget, window) == QRect(widget->mapTo(window, QPoint()), widget->size());
+}
+inline QList<QPushButton *> workspaceButtons(QWidget *window)
+{
+	QList<QPushButton *> result{nullptr, nullptr, nullptr, nullptr, nullptr};
+	auto *header = window->findChild<QWidget *>("PulseWeaverHeader");
+	if(!header) return result;
+	for(auto *button : header->findChildren<QPushButton *>()) {
+		const auto value = button->property("pulseWorkspaceIndex");
+		if(!value.isValid()) continue;
+		const int index = value.toInt();
+		if(index >= 0 && index < result.size()) result[index] = button;
+	}
+	return result;
+}
+inline QJsonObject navigationGeometry(QWidget *window)
+{
+	QJsonArray entries;
+	QList<QRect> occupied;
+	bool obvious = true;
+	const auto buttons = workspaceButtons(window);
+	auto *header = window->findChild<QWidget *>("PulseWeaverHeader");
+	for(int index = 0; index < 4; ++index) {
+		auto *button = buttons[index];
+		if(!button) {obvious = false; continue;}
+		button->ensurePolished();
+		const int pixels = QFontInfo(button->font()).pixelSize();
+		const QSize icon = button->icon().actualSize(button->iconSize());
+		QString title = button->text(); title.remove('&');
+		const int textWidth = button->fontMetrics().horizontalAdvance(title);
+		const bool textFits = button->contentsRect().width() >= textWidth + icon.width() + 8;
+		const QRect bounds(button->mapTo(window, QPoint()), button->size());
+		bool overlap = false;
+		for(const QRect &previous : occupied) overlap = overlap || previous.intersects(bounds);
+		occupied.append(bounds);
+		const bool adequate = !overlap && fullyVisible(button, window) && button->width() >= 120 && button->height() >= 42 &&
+			pixels >= 14 && int(button->font().weight()) >= int(QFont::DemiBold) &&
+			!button->icon().isNull() && icon.width() >= 22 && icon.height() >= 22 && textFits &&
+			(index != 1 || !title.contains("soon", Qt::CaseInsensitive));
+		auto entry = widgetGeometry(button, window);
+		entry.insert("workspaceIndex", index); entry.insert("label", title);
+		entry.insert("fontPixels", pixels); entry.insert("fontWeight", int(button->font().weight()));
+		entry.insert("iconSize", QJsonArray{icon.width(), icon.height()});
+		entry.insert("ancestorVisibleRect", rectValue(visibleRect(button, window)));
+		entry.insert("minimumHeight", button->minimumHeight()); entry.insert("maximumHeight", button->maximumHeight());
+		entry.insert("layoutUsesWidgetRect", button->testAttribute(Qt::WA_LayoutUsesWidgetRect));
+		if(header && header->layout()) {
+			const int item = header->layout()->indexOf(button);
+			if(item >= 0) entry.insert("headerLayoutItemGeometry", rectValue(header->layout()->itemAt(item)->geometry()));
+		}
+		QJsonArray ancestors;
+		for(auto *parent = button->parentWidget(); parent; parent = parent->parentWidget()) {
+			ancestors.append(widgetGeometry(parent, window));
+			if(parent == window) break;
+		}
+		entry.insert("ancestors", ancestors);
+		entry.insert("textFits", textFits); entry.insert("obvious", adequate);
+		entries.append(entry); obvious = obvious && adequate;
+	}
+	return {{"workspaces", entries}, {"header", widgetGeometry(header, window)},
+		{"primaryNavigationObvious", obvious && entries.size() == 4}};
+}
+inline QJsonObject choiceCardGeometry(QWidget *owner, QWidget *window, int expectedHeight)
+{
+	QJsonArray cards;
+	bool contained = true;
+	for(auto *card : owner->findChildren<QPushButton *>("PulseWeaverChoiceCard")) {
+		if(!card->isVisibleTo(window)) continue;
+		const bool adequate = card->height() == expectedHeight && fullyVisible(card, window);
+		auto entry = widgetGeometry(card, window);
+		entry.insert("label", card->text()); entry.insert("expectedPaintedHeight", expectedHeight);
+		entry.insert("ancestorVisibleRect", rectValue(visibleRect(card, window)));
+		entry.insert("paintedContentContained", adequate); cards.append(entry);
+		contained = contained && adequate;
+	}
+	return {{"cards", cards}, {"paintedContentContained", contained && !cards.isEmpty()}};
+}
+inline QJsonObject operatingGeometry(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget *chat)
+{
+	const QRect horizontal = visibleRect(landscape, window), vertical = visibleRect(portrait, window);
+	const bool compact = fullyVisible(landscape, window) && fullyVisible(portrait, window) &&
+		horizontal.top() <= 160 && vertical.top() <= 160;
+	const bool programmes = compact && horizontal.height() >= 280 && vertical.height() >= 280;
+	auto *health = window->findChild<QWidget *>("PulseWeaverStreamStats");
+	auto *transport = window->findChild<QWidget *>("PulseWeaverTransport");
+	auto *recording = window->findChild<QWidget *>("PulseWeaverRouteChoicesRecording");
+	QJsonArray tracks;
+	bool constrained = true;
+	for(auto *track : window->findChildren<QWidget *>("PulseWeaverRouteTrack")) {
+		if(!track->isVisibleTo(window)) continue;
+		tracks.append(widgetGeometry(track, window));
+		constrained = constrained && fullyVisible(track, window) && track->height() == 32;
+	}
+	constrained = constrained && tracks.size() == 4 && recording && fullyVisible(recording, window) &&
+		recording->width() >= 150 && recording->width() <= 240 && recording->height() == 32;
+	return {{"landscapeVisible", rectValue(horizontal)}, {"portraitVisible", rectValue(vertical)},
+		{"mainChromeCompact", compact}, {"smallProgrammeSpaceEfficient", programmes},
+		{"smallChatWidthPreserved", fullyVisible(chat, window) && chat->width() >= 280},
+		{"smallHealthVisible", fullyVisible(health, window)}, {"smallTransportVisible", fullyVisible(transport, window)},
+		{"routeTracks", tracks}, {"routeTracksConstrained", constrained}};
+}
+inline QJsonObject controlGeometry(QWidget *window, const QString &directory)
+{
+	auto *control = window->findChild<QPushButton *>("PulseWeaverControlMode");
+	auto *show = window->findChild<QPushButton *>("PulseWeaverShowMode");
+	auto *stack = window->findChild<QStackedWidget *>("PulseWeaverShowContentStack");
+	auto *mount = window->findChild<QWidget *>("PulseWeaverMotionPluginMount");
+	QJsonObject result{{"controlModeAvailable", control && show && stack && mount}};
+	if(!control || !show || !stack || !mount) return result;
+	// Navigation only: never select, save, run, delete or preview a Look.
+	control->click(); QApplication::processEvents();
+	QJsonArray toggles;
+	for(auto *button : {show, control}) {
+		auto entry = widgetGeometry(button, window);
+		entry.insert("minimumHeight", button->minimumHeight()); entry.insert("maximumHeight", button->maximumHeight());
+		entry.insert("ancestorVisibleRect", rectValue(visibleRect(button, window)));
+		QJsonArray ancestors;
+		for(auto *parent = button->parentWidget(); parent; parent = parent->parentWidget()) {
+			ancestors.append(widgetGeometry(parent, window));
+			if(parent == window) break;
+		}
+		entry.insert("ancestors", ancestors); toggles.append(entry);
+	}
+	result.insert("controlModeToggles", toggles);
+	result.insert("controlMount", widgetGeometry(mount, window));
+	const bool mounted = stack->currentIndex() == 1 && fullyVisible(control, window) &&
+		fullyVisible(show, window) && mount->isVisibleTo(window) && mount->layout() && !mount->findChildren<QPushButton *>().isEmpty();
+	QJsonArray strips;
+	bool contained = true;
+	int choices = 0;
+	for(auto *strip : mount->findChildren<QScrollArea *>()) {
+		if(strip->minimumHeight() != 44 || strip->maximumHeight() != 44) continue;
+		auto entry = widgetGeometry(strip, window);
+		bool stripContained = fullyVisible(strip, window) && strip->height() == 44;
+		QJsonArray buttons;
+		for(auto *choice : strip->findChildren<QPushButton *>("PulseWeaverMotionStageChoice")) {
+			const bool choiceContained = choice->height() == 36 && fullyVisible(choice, window);
+			auto button = widgetGeometry(choice, window);
+			button.insert("label", choice->text()); button.insert("ancestorVisibleRect", rectValue(visibleRect(choice, window)));
+			button.insert("fullyContained", choiceContained); buttons.append(button);
+			stripContained = stripContained && choiceContained; ++choices;
+		}
+		entry.insert("choices", buttons); entry.insert("fullyContained", stripContained); strips.append(entry);
+		contained = contained && stripContained;
+	}
+	result.insert("controlModeAvailable", mounted);
+	result.insert("motionNavigation", strips);
+	result.insert("motionNavigationChoiceCount", choices);
+	result.insert("motionNavigationContained", mounted && strips.size() == 2 && choices > 0 && contained);
+	window->grab().save(directory + "/workspace-control.png");
+	QPushButton *builder = nullptr;
+	for(auto *button : mount->findChildren<QPushButton *>())
+		if(button->property("motionShowBuilder").toBool()) {builder = button; break;}
+	if(builder) {
+		auto options = std::make_shared<QJsonObject>();
+		QTimer::singleShot(150, window, [window, directory, options] {
+			auto *wizard = window->findChild<QWizard *>();
+			options->insert("setupOptionGridAvailable", wizard && wizard->isVisible());
+			if(!wizard || !wizard->isVisible()) return;
+			// The second wizard page only edits its local draft. Never reach
+			// source previews, external links or the final Create action.
+			wizard->next(); QApplication::processEvents();
+			QJsonArray cards;
+			QList<QRect> occupied;
+			bool contained = true;
+			for(auto *card : wizard->findChildren<QPushButton *>("PulseWeaverSetupChoiceCard")) {
+				if(!card->isVisibleTo(wizard)) continue;
+				const QRect bounds(card->mapTo(wizard, QPoint()), card->size());
+				bool overlap = false;
+				for(const QRect &previous : occupied) overlap = overlap || previous.intersects(bounds);
+				occupied.append(bounds);
+				const bool adequate = !overlap && fullyVisible(card, wizard) && card->height() >= 64 && card->height() >= card->minimumHeight();
+				auto entry = widgetGeometry(card, wizard);
+				entry.insert("label", card->text()); entry.insert("minimumHeight", card->minimumHeight());
+				entry.insert("maximumHeight", card->maximumHeight()); entry.insert("overlap", overlap);
+				entry.insert("ancestorVisibleRect", rectValue(visibleRect(card, wizard)));
+				entry.insert("fullyContained", adequate); cards.append(entry);
+				contained = contained && adequate;
+			}
+			options->insert("setupOptionCards", cards);
+			options->insert("setupOptionCardsContained", cards.size() == 6 && contained);
+			wizard->grab().save(directory + "/setup-option-cards.png");
+			wizard->reject();
+			options->insert("setupOptionGridCancelled", !wizard->isVisible());
+		});
+		builder->click();
+		for(auto it = options->begin(); it != options->end(); ++it) result.insert(it.key(), it.value());
+	} else {
+		result.insert("setupOptionGridAvailable", false);
+	}
+	show->click(); QApplication::processEvents();
+	result.insert("controlReturnsToShow", stack->currentIndex() == 0 && show->isChecked());
 	return result;
 }
 inline QJsonObject automationGeometry(QWidget *window, QWidget *page)
@@ -100,6 +313,9 @@ inline QJsonObject commands(QWidget *window, const QString &directory)
 		result->insert("paletteAvailable", dialog != nullptr);
 		if(!dialog) return;
 		dialog->grab().save(directory + "/commands-palette.png");
+		const auto cardGeometry = choiceCardGeometry(dialog, dialog, 94);
+		result->insert("commandsCardGeometry", cardGeometry);
+		result->insert("commandsCardsSized", cardGeometry.value("paintedContentContained"));
 		if(auto *viewport = dialog->findChild<QScrollArea *>()) {
 			bool reachable = true;
 			for(auto *card : dialog->findChildren<QPushButton *>("PulseWeaverChoiceCard"))
@@ -141,12 +357,15 @@ inline QJsonObject commands(QWidget *window, const QString &directory)
 		});
 		stage->click();
 	}
-	QPushButton *showButton = nullptr;
-	for(auto *nav : window->findChildren<QPushButton *>()) {
-		if(nav->property("pulseWorkspaceIndex").isValid() && nav->property("pulseWorkspaceIndex").toInt() == 0) showButton = nav;
-		if(nav->property("pulseWorkspaceIndex").isValid() && nav->property("pulseWorkspaceIndex").toInt() == 3) nav->click();
-	}
+	const auto navigation = workspaceButtons(window);
+	auto *showButton = navigation[0];
+	if(showButton) {showButton->click(); QApplication::processEvents();}
+	const auto motion = controlGeometry(window, directory);
+	for(auto it = motion.begin(); it != motion.end(); ++it) result->insert(it.key(), it.value());
+	if(navigation[3]) {navigation[3]->click(); QApplication::processEvents();}
 	auto *tabs = window->findChild<QTabWidget *>("PulseWeaverPlatformTabs");
+	if(tabs && tabs->count()) {tabs->setCurrentIndex(0); QApplication::processEvents();}
+	window->grab().save(directory + "/workspace-action.png");
 	auto *page = window->findChild<QWidget *>("PulseWeaverBasicCommandsPage");
 	result->insert("automationCommandsAvailable", tabs && page);
 	if(tabs && page) {
@@ -169,12 +388,14 @@ inline QJsonObject commands(QWidget *window, const QString &directory)
 		}
 		QApplication::processEvents(); window->grab().save(directory + "/commands-example.png");
 	}
-	for(auto *nav : window->findChildren<QPushButton *>()) {
-		if(nav->property("pulseWorkspaceIndex").isValid() && nav->property("pulseWorkspaceIndex").toInt() == 4) {nav->click(); break;}
-	}
+	if(navigation[4]) {navigation[4]->click(); QApplication::processEvents();}
 	if(auto *sections = window->findChild<QStackedWidget *>("PulseWeaverSetupSections")) {
 		sections->setCurrentIndex(0); QApplication::processEvents();
 		window->grab().save(directory + "/setup-categories.png");
+		window->grab().save(directory + "/workspace-settings.png");
+		const auto cardGeometry = choiceCardGeometry(sections, window, 110);
+		result->insert("setupCardGeometry", cardGeometry);
+		result->insert("setupCardsSized", cardGeometry.value("paintedContentContained"));
 		int categoryCount = 0;
 		QPushButton *sound = nullptr;
 		for(auto *card : sections->findChildren<QPushButton *>("PulseWeaverChoiceCard")) {
@@ -186,6 +407,22 @@ inline QJsonObject commands(QWidget *window, const QString &directory)
 		if(sound) {sound->click(); QApplication::processEvents(); window->grab().save(directory + "/setup-sound-detail.png");}
 		if(auto *back = window->findChild<QPushButton *>("PulseWeaverSetupBack")) back->click();
 		result->insert("setupBackToCategories", sections->currentIndex() == 0);
+	}
+	if(navigation[2]) {
+		navigation[2]->click(); QApplication::processEvents();
+		window->grab().save(directory + "/workspace-camera.png");
+		result->insert("cameraWorkspaceVisible", navigation[2]->property("pulseWorkspaceActive").toBool());
+	}
+	if(navigation[1]) {
+		navigation[1]->click(); QApplication::processEvents();
+		#ifdef PULSEWEAVER_LIGHTS_UI_AUDIT_AVAILABLE
+		const auto lights = PulseLightsUiAudit::inspect(window, directory);
+		#else
+		const QJsonObject lights{{"lightsMounted", false}, {"auditPending", true}};
+		#endif
+		result->insert("lightsAudit", lights);
+		result->insert("lightsMounted", lights.value("lightsMounted").toBool());
+		window->grab().save(directory + "/workspace-lights.png");
 	}
 	if(showButton) showButton->click();
 	return *result;
@@ -229,6 +466,7 @@ inline void run(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget 
 	window->setAttribute(Qt::WA_DontShowOnScreen); window->showNormal(); window->resize(1280, 1000);
 	QTimer::singleShot(500, window, [=] {
 		const auto before = rectangles();
+		const auto largeNavigation = navigationGeometry(window);
 		window->grab().save(directory + "/main-1280x1000.png");
 		const bool wasChecked = toggle->isChecked(); const int previousRate = rate->value();
 		const QString previousStatus = status ? status->text() : QString();
@@ -237,6 +475,7 @@ inline void run(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget 
 		QTimer::singleShot(250, window, [=] {
 			const auto after = rectangles();
 			QJsonObject report{{"largeBefore", before}, {"largeAfter", after}, {"largeStable", before == after}};
+			report.insert("largeNavigation", largeNavigation);
 			toggle->setChecked(wasChecked); rate->setValue(previousRate); if(status) status->setText(previousStatus);
 			window->resize(1180, 720);
 			QTimer::singleShot(500, window, [=]() mutable {
@@ -248,6 +487,15 @@ inline void run(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget 
 					report.insert("smallStable", smallBefore == smallAfter);
 					report.insert("smallProgrammeUsable", clipped(landscape).height() >= 160 && clipped(portrait).height() >= 160);
 					report.insert("smallHealthVisible", healthVisible());
+					const auto smallNavigation = navigationGeometry(window);
+					report.insert("smallNavigation", smallNavigation);
+					report.insert("primaryNavigationObvious", largeNavigation.value("primaryNavigationObvious").toBool() &&
+						smallNavigation.value("primaryNavigationObvious").toBool());
+					const auto operating = operatingGeometry(window, landscape, portrait, chat);
+					report.insert("smallOperatingGeometry", operating);
+					for(const char *key : {"mainChromeCompact", "smallProgrammeSpaceEfficient", "smallChatWidthPreserved",
+							"smallHealthVisible", "smallTransportVisible", "routeTracksConstrained"})
+						report.insert(key, operating.value(key));
 					toggle->setChecked(wasChecked); rate->setValue(previousRate);
 					for(auto *audio : window->findChildren<QPushButton *>()) {
 						if(audio->text() != "Expand audio") continue;

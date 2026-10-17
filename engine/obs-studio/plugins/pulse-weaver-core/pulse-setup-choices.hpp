@@ -17,14 +17,11 @@ namespace PulseSetupChoices {
 inline QPushButton *card(QWidget *parent, const QString &title, const QString &detail = {})
 {
 	auto *button = new QPushButton(parent);
+	button->setObjectName("PulseWeaverSetupChoiceCard");
 	button->setCheckable(true); button->setAccessibleName(title);
 	button->setAccessibleDescription(detail);
 	button->setToolTip(detail.isEmpty() ? title : title + "\n" + detail);
 	auto policy = button->sizePolicy(); policy.setHorizontalPolicy(QSizePolicy::Expanding); policy.setVerticalPolicy(QSizePolicy::Preferred); button->setSizePolicy(policy);
-	button->setStyleSheet("QPushButton { text-align:left; padding:8px; max-height:16777215px; border:1px solid #465267; border-radius:6px; }"
-		"QPushButton:checked { border:2px solid #52daef; background:#173544; }"
-		"QPushButton:focus { border:2px solid #bceef5; }"
-		"QPushButton:hover { background:#223345; }");
 	auto font = button->font(); font.setBold(true); button->setFont(font);
 	QString wrapped, line; const QFontMetrics metrics(font);
 	for (const auto &word : title.split(' ', Qt::SkipEmptyParts)) {
