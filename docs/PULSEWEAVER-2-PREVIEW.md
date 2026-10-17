@@ -1,6 +1,6 @@
 # Pulse Weaver 2.0 preview
 
-Version: **2.0.0-unstable.2**. Windows native interface and local-controls preview.
+Version: **2.0.0-unstable.3**. Windows native interface and local-controls preview.
 
 This build brings the main workspaces forward, gives programme previews more room and uses a consistent tactile style for operating controls. Within each task, choose a category, open its focused page and use Back to return. It retains the native Qt/OBS engine, Stage/Look system, landscape and portrait outputs, native Move, stingers, audio mixer and account connections. It is an unstable preview for testing before using it for an important broadcast.
 
@@ -12,7 +12,7 @@ Provider choices retain their platform colors, neutral unselected choices and sl
 
 Setup, Stages, Commands and Lights use category/device cards and focused pages instead of long default pickers. The existing native controllers remain behind these controls, including live-change restrictions. Advanced native tools remain reachable without filling the main operating surface.
 
-Live-preview enablement and refresh rate remain local preview settings. They do not lower the broadcast frame rate. The compact mixer can be expanded when needed. This release does not promise a particular CPU or RAM reduction: compare it using the same show, sources, outputs and game as your regular build.
+Live-preview enablement and refresh rate remain local preview settings. They do not lower the broadcast frame rate. The compact mixer expands to fit its native channel controls and reserves space for horizontal scrolling. Oversized saved splitter layouts are clamped so unused height returns to the programme previews. This release does not promise a particular CPU or RAM reduction: compare it using the same show, sources, outputs and game as your regular build.
 
 ## Find the task
 
@@ -53,7 +53,7 @@ Existing Lumia routes and plugin command identities remain in place. To test Lum
 
 ## Install and test separately
 
-The preview installer is named `PulseWeaver-2-Preview-Setup-2.0.0-unstable.2.exe`. Its product is **Pulse Weaver 2 Preview** and its default directory is `%LOCALAPPDATA%\Programs\Pulse Weaver 2 Preview`. It has its own shortcut, uninstall registration, configuration, recovery backups and updater product identity. Installing this dedicated installer does not upgrade the regular Alpha installation. The ordinary unstable installer family does not provide this isolation. Installing this revision updates an existing **2 Preview** instance and preserves that instance's configuration.
+The preview installer is named `PulseWeaver-2-Preview-Setup-2.0.0-unstable.3.exe`. Its product is **Pulse Weaver 2 Preview** and its default directory is `%LOCALAPPDATA%\Programs\Pulse Weaver 2 Preview`. It has its own shortcut, uninstall registration, configuration, recovery backups and updater product identity. Installing this dedicated installer does not upgrade the regular Alpha installation. The ordinary unstable installer family does not provide this isolation. Installing this revision updates an existing **2 Preview** instance and preserves that instance's configuration.
 
 Keep a fresh profile for the first check. The installer leaves automatic launch unchecked for the preview. Close other instances for a simple first run; if you deliberately run them together, ensure API, OBS WebSocket and overlay ports do not collide and verify which window each external client controls. Avoid streaming from both while comparing the interface.
 
@@ -65,7 +65,7 @@ Preview updates select only the dedicated **2 Preview** installer family. They c
 
 ## Known limits
 
-- At the minimum window height, expanding the compact mixer reduces the preview viewport. Resize its splitter, use a taller window or open Full mixer when you need more room for both.
+- At the minimum window height, expanding the compact mixer reduces the preview viewport by the height required for its channel controls. Use a taller window or open Full mixer when you need more room for both.
 - This is an unstable interface preview. Native screenshots, layout checks and controller tests do not replace a real rehearsal with your own game, hardware, sources and connected services.
 - Kick remains landscape-only. Provider restrictions, Twitch VOD track setup, audio monitoring and stage exclusions retain their existing meanings.
 - Routed recording formats remain experimental; Default remains the native recording path. Stop recording before changing its mode.

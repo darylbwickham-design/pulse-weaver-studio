@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFontInfo>
 #include <QJsonArray>
@@ -16,13 +17,19 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSettings>
 #include <QSlider>
+#include <QSplitter>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QTabWidget>
 #include <QTimer>
 #include <QWidget>
 #include <QWizard>
 #include <memory>
+#include <algorithm>
+#include <obs.h>
+#include <obs-source.h>
 #if __has_include("PulseLightsUiAudit.hpp")
 #include "PulseLightsUiAudit.hpp"
 #define PULSEWEAVER_LIGHTS_UI_AUDIT_AVAILABLE 1
@@ -31,6 +38,51 @@
 // Explicit, one-shot development audit. The caller only enables this for a
 // separate inert portable fixture; normal launches allocate no audit timer.
 namespace PulseUiLayoutAudit {
+struct MixerAudioFixture {
+	QList<obs_source_t *> sources;
+	MixerAudioFixture()
+	{
+		// This source produces no buffers and has no device, media, tick or
+		// playback callback. It exists only in an explicitly inert UI fixture.
+		static bool registered = false;
+		if(!registered) {
+			obs_source_info info{};
+			info.id = "pulseweaver_audit_inert_audio_v1";
+			info.type = OBS_SOURCE_TYPE_INPUT; info.output_flags = OBS_SOURCE_AUDIO;
+			info.get_name = [](void *) {return "Pulse Weaver inert mixer audit input";};
+			info.create = [](obs_data_t *, obs_source_t *source) -> void * {return source;};
+			info.destroy = [](void *) {};
+			obs_register_source(&info); registered = true;
+		}
+		for(int index = 0; index < 8; ++index) {
+			const auto name = QString("Fixture silent audio channel %1").arg(index + 1, 2, 10, QLatin1Char('0')).toUtf8();
+			auto *source = obs_source_create("pulseweaver_audit_inert_audio_v1", name.constData(), nullptr, nullptr);
+			if(!source) continue;
+			obs_source_set_muted(source, true); obs_source_set_volume(source, 0.0f);
+			obs_source_set_audio_mixers(source, 0);
+			obs_source_set_monitoring_type(source, OBS_MONITORING_TYPE_NONE);
+			obs_source_inc_active(source); obs_source_set_audio_active(source, true);
+			sources.append(source);
+		}
+	}
+	~MixerAudioFixture()
+	{
+		for(auto *source : sources) {obs_source_dec_active(source); obs_source_remove(source); obs_source_release(source);}
+	}
+	bool safe() const
+	{
+		if(sources.size() != 8) return false;
+		for(auto *source : sources)
+			if(!obs_source_muted(source) || obs_source_get_volume(source) != 0.0f || obs_source_get_audio_mixers(source) != 0 ||
+			   obs_source_get_monitoring_type(source) != OBS_MONITORING_TYPE_NONE || !obs_source_active(source) || !obs_source_audio_active(source)) return false;
+		return true;
+	}
+};
+inline void settleUi(int milliseconds = 70)
+{
+	QApplication::processEvents();
+	QEventLoop loop; QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit); loop.exec();
+}
 inline QJsonArray rectValue(const QRect &rect)
 {
 	return {rect.x(), rect.y(), rect.width(), rect.height()};
@@ -171,6 +223,130 @@ inline QJsonObject operatingGeometry(QWidget *window, QWidget *landscape, QWidge
 		{"smallChatWidthPreserved", fullyVisible(chat, window) && chat->width() >= 280},
 		{"smallHealthVisible", fullyVisible(health, window)}, {"smallTransportVisible", fullyVisible(transport, window)},
 		{"routeTracks", tracks}, {"routeTracksConstrained", constrained}};
+}
+inline QJsonObject expandedMixerGeometry(QWidget *window, QWidget *landscape, QWidget *portrait)
+{
+	auto *scroll = window->findChild<QScrollArea *>("PulseWeaverCompactMixer");
+	auto *card = scroll ? scroll->parentWidget() : nullptr;
+	auto *body = scroll ? scroll->widget() : nullptr;
+	QJsonObject report{{"available", scroll && card && body}};
+	if(!scroll || !card || !body) return report;
+	auto strips = body->findChildren<QWidget *>("PulseWeaverNativeMixerStrip");
+	std::sort(strips.begin(), strips.end(), [body](QWidget *left, QWidget *right) {return left->mapTo(body, QPoint()).x() < right->mapTo(body, QPoint()).x();});
+	QJsonArray entries;
+	bool native = strips.size() == 8, contained = native;
+	for(auto *strip : strips) {
+		const QRect bounds(strip->mapTo(window, QPoint()), strip->size());
+		int top = bounds.top(), bottom = bounds.bottom();
+		for(auto *parent = strip->parentWidget(); parent; parent = parent->parentWidget()) {
+			const auto available = parent->contentsRect().translated(parent->mapTo(window, QPoint()));
+			top = qMax(top, available.top()); bottom = qMin(bottom, available.bottom());
+			if(parent == window) break;
+		}
+		const bool genuine = QByteArray(strip->metaObject()->className()) == "VolumeControl";
+		const bool vertical = strip->isVisibleTo(window) && strip->height() == 180 && bottom - top + 1 == 180;
+		auto entry = widgetGeometry(strip, window); entry.insert("nativeVolumeControl", genuine); entry.insert("verticallyContained", vertical);
+		entries.append(entry); native = native && genuine; contained = contained && vertical;
+	}
+	auto *horizontal = scroll->horizontalScrollBar();
+	const int previous = horizontal->value();
+	bool reachable = !strips.isEmpty();
+	if(!strips.isEmpty()) {
+		horizontal->setValue(horizontal->minimum()); QApplication::processEvents();
+		reachable = reachable && fullyVisible(strips.front(), window);
+		horizontal->setValue(horizontal->maximum()); QApplication::processEvents();
+		reachable = reachable && fullyVisible(strips.back(), window);
+		horizontal->setValue(previous); QApplication::processEvents();
+	}
+	const int extent = scroll->style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+	const int viewport = scroll->viewport()->height();
+	const int top = scroll->mapTo(card, QPoint()).y();
+	const int bottom = card->layout() ? card->layout()->contentsMargins().bottom() : 0;
+	const int naturalLimit = top + 180 + extent + 2 * scroll->frameWidth() + bottom + 12;
+	const bool bounded = !scroll->isHidden() && fullyVisible(card, window) && body->height() == 180 &&
+		viewport >= 180 && viewport <= 180 + extent + 8 && top <= 70 &&
+		card->height() <= naturalLimit && card->height() <= 270 && scroll->verticalScrollBar()->maximum() == 0;
+	const bool programme = fullyVisible(landscape, window) && fullyVisible(portrait, window) && landscape->height() >= 160 && portrait->height() >= 160;
+	report.insert("card", widgetGeometry(card, window)); report.insert("scroll", widgetGeometry(scroll, window));
+	report.insert("body", widgetGeometry(body, window)); report.insert("viewportHeight", viewport);
+	report.insert("nativeScrollbarExtent", extent); report.insert("naturalHeightLimit", naturalLimit);
+	report.insert("strips", entries); report.insert("nativeEightChannels", native); report.insert("controlsContained", contained);
+	report.insert("horizontalControlsReachable", reachable); report.insert("boundedHeight", bounded);
+	report.insert("programmeUsable", programme);
+	report.insert("healthVisible", fullyVisible(window->findChild<QWidget *>("PulseWeaverStreamStats"), window));
+	report.insert("transportVisible", fullyVisible(window->findChild<QWidget *>("PulseWeaverTransport"), window));
+	return report;
+}
+inline QJsonObject mixerGeometryAudit(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget *chat,
+				      const QString &directory, const QJsonObject &startup)
+{
+	auto *scroll = window->findChild<QScrollArea *>("PulseWeaverCompactMixer");
+	auto *split = window->findChild<QSplitter *>("PulseWeaverPreviewMixerSplit");
+	auto *card = scroll ? scroll->parentWidget() : nullptr;
+	QPushButton *toggle = nullptr;
+	if(card) for(auto *button : card->findChildren<QPushButton *>()) if(button->text().endsWith("audio")) {toggle = button; break;}
+	QJsonObject result{{"mixerPopulatedFixture", false}};
+	if(!scroll || !split || !card || !toggle) return result;
+	if(!scroll->isHidden()) {toggle->click(); settleUi();}
+	QJsonArray profiles;
+	bool populated = true, bounded = true, controls = true, reachable = true, previews = true, health = true, transport = true, restored = true, chatStable = true, exactSizes = true;
+	int smallest = 10000, largest = 0;
+	for(const auto &size : {QSize(1180, 720), QSize(1240, 930), QSize(1280, 1000)}) {
+		window->resize(size); settleUi();
+		const QRect baselineLandscape(landscape->mapTo(window, QPoint()), landscape->size());
+		const QRect baselinePortrait(portrait->mapTo(window, QPoint()), portrait->size());
+		const QRect baselineChat(chat->mapTo(window, QPoint()), chat->size());
+		for(int cycle = 0; cycle < 2; ++cycle) {
+			toggle->click(); settleUi();
+			auto state = expandedMixerGeometry(window, landscape, portrait);
+			state.insert("windowSize", QJsonArray{size.width(), size.height()}); state.insert("cycle", cycle + 1);
+			state.insert("actualWindowSize", QJsonArray{window->width(), window->height()}); exactSizes = exactSizes && window->size() == size;
+			profiles.append(state);
+			populated = populated && state.value("nativeEightChannels").toBool();
+			bounded = bounded && state.value("boundedHeight").toBool(); controls = controls && state.value("controlsContained").toBool();
+			reachable = reachable && state.value("horizontalControlsReachable").toBool(); previews = previews && state.value("programmeUsable").toBool();
+			health = health && state.value("healthVisible").toBool(); transport = transport && state.value("transportVisible").toBool();
+			chatStable = chatStable && QRect(chat->mapTo(window, QPoint()), chat->size()) == baselineChat;
+			smallest = qMin(smallest, card->height()); largest = qMax(largest, card->height());
+			const QString stem = QString("main-%1x%2-audio-expanded-%3.png").arg(size.width()).arg(size.height()).arg(cycle + 1);
+			window->grab().save(directory + "/" + stem);
+			if(size == QSize(1180, 720) && cycle == 0) window->grab().save(directory + "/main-1180x720-audio-expanded.png");
+			toggle->click(); settleUi();
+			restored = restored && QRect(landscape->mapTo(window, QPoint()), landscape->size()) == baselineLandscape &&
+				QRect(portrait->mapTo(window, QPoint()), portrait->size()) == baselinePortrait && QRect(chat->mapTo(window, QPoint()), chat->size()) == baselineChat;
+		}
+	}
+	// Obtain a real legacy splitter allocation for the next fresh startup.
+	// Only this explicit fixture temporarily lifts the card's allocation cap;
+	// all behavioural assertions above and below retain their natural limits.
+	toggle->click(); settleUi();
+	const int minimum = card->minimumHeight(), maximum = card->maximumHeight();
+	const auto policy = card->sizePolicy(); card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	card->setMinimumHeight(0); card->setMaximumHeight(QWIDGETSIZE_MAX);
+	split->setSizes({1, 2000}); settleUi();
+	const int legacyHeight = card->height();
+	const QByteArray legacy = split->saveState();
+	QSettings stateFile(directory + "/mixer-oversized-state.ini", QSettings::IniFormat);
+	stateFile.setValue("showControl2/previewMixerSplit", legacy); stateFile.sync();
+	card->setMinimumHeight(minimum); card->setMaximumHeight(maximum); card->setSizePolicy(policy);
+	toggle->click(); settleUi(); toggle->click(); settleUi();
+	const auto recovered = expandedMixerGeometry(window, landscape, portrait);
+	const bool legacyRecovered = legacyHeight > largest + 80 && recovered.value("boundedHeight").toBool() && recovered.value("programmeUsable").toBool();
+	window->grab().save(directory + "/main-1280x1000-audio-oversize-recovered.png");
+	toggle->click(); settleUi(); window->resize(1180, 720); settleUi();
+	window->grab().save(directory + "/main-1180x720-audio-restored.png");
+	const QString mode = qEnvironmentVariable("PULSEWEAVER_MIXER_FIXTURE_AUDIT");
+	const bool startupPass = mode == "saved-oversize" ? startup.value("boundedHeight").toBool() && startup.value("nativeEightChannels").toBool() && startup.value("controlsContained").toBool() : startup.value("initiallyCollapsed").toBool();
+	result.insert("mixerProfiles", profiles); result.insert("mixerStartup", startup);
+	result.insert("mixerPopulatedFixture", populated); result.insert("mixerExpandedHeightBounded", bounded && largest - smallest <= 2);
+	result.insert("mixerNativeControlsContained", controls); result.insert("mixerHorizontalControlsReachable", reachable);
+	result.insert("mixerExpandedProgrammeUsable", previews); result.insert("mixerExpandedTransportVisible", transport);
+	result.insert("expandedAudioHealthVisible", health); result.insert("audioCollapseRestoresGeometry", restored);
+	result.insert("mixerChatGeometryStable", chatStable); result.insert("mixerLegacyOversizeRecovered", legacyRecovered);
+	result.insert("mixerRequestedSizesHonoured", exactSizes);
+	result.insert("mixerStartupStatePassed", startupPass); result.insert("mixerLegacyHeight", legacyHeight);
+	result.insert("mixerSavedOversizeStateBase64", QString::fromLatin1(legacy.toBase64()));
+	return result;
 }
 inline QJsonObject controlGeometry(QWidget *window, const QString &directory)
 {
@@ -432,6 +608,20 @@ inline void run(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget 
 {
 	if(!landscape || !portrait || !chat || !toggle || !rate) return;
 	QDir().mkpath(directory);
+	const auto arguments = QCoreApplication::arguments();
+	const QString mixerMode = qEnvironmentVariable("PULSEWEAVER_MIXER_FIXTURE_AUDIT");
+	bool inertProfile = true;
+	if(!mixerMode.isEmpty()) obs_enum_sources([](void *data, obs_source_t *source) {
+		if(obs_source_get_type(source) == OBS_SOURCE_TYPE_INPUT) *static_cast<bool *>(data) = false;
+		return true;
+	}, &inertProfile);
+	std::shared_ptr<MixerAudioFixture> audioFixture;
+	if((mixerMode == "collapsed" || mixerMode == "saved-oversize") && inertProfile &&
+	   arguments.contains("--portable") && arguments.contains("--multi") && arguments.contains("--disable-updater") &&
+	   qEnvironmentVariable("PULSEWEAVER_UI_LAYOUT_AUDIT_DIR") == directory)
+		audioFixture = std::make_shared<MixerAudioFixture>();
+	auto *initialMixer = window->findChild<QScrollArea *>("PulseWeaverCompactMixer");
+	const bool mixerInitiallyCollapsed = initialMixer && initialMixer->isHidden();
 	// The resolved application QSS is static style data. This opt-in fixture
 	// artifact lets focused Qt checks reproduce the actual native theme.
 	QFile theme(directory + "/active-theme.qss");
@@ -464,7 +654,18 @@ inline void run(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget 
 		return result;
 	};
 	window->setAttribute(Qt::WA_DontShowOnScreen); window->showNormal(); window->resize(1280, 1000);
-	QTimer::singleShot(500, window, [=] {
+	QTimer::singleShot(audioFixture ? 1300 : 500, window, [=] {
+		QJsonObject mixerStartup;
+		if(audioFixture) {
+			if(initialMixer && !initialMixer->isHidden()) {
+				mixerStartup = expandedMixerGeometry(window, landscape, portrait);
+				window->grab().save(directory + "/mixer-startup-saved-oversize.png");
+				for(auto *button : initialMixer->parentWidget()->findChildren<QPushButton *>())
+					if(button->text() == "Collapse audio") {button->click(); settleUi(); break;}
+			}
+			mixerStartup.insert("initiallyCollapsed", mixerInitiallyCollapsed);
+			mixerStartup.insert("mode", mixerMode); mixerStartup.insert("sourcesInert", audioFixture->safe());
+		}
 		const auto before = rectangles();
 		const auto largeNavigation = navigationGeometry(window);
 		window->grab().save(directory + "/main-1280x1000.png");
@@ -475,6 +676,7 @@ inline void run(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget 
 		QTimer::singleShot(250, window, [=] {
 			const auto after = rectangles();
 			QJsonObject report{{"largeBefore", before}, {"largeAfter", after}, {"largeStable", before == after}};
+			report.insert("mixerFixtureRequested", !mixerMode.isEmpty());
 			report.insert("largeNavigation", largeNavigation);
 			toggle->setChecked(wasChecked); rate->setValue(previousRate); if(status) status->setText(previousStatus);
 			window->resize(1180, 720);
@@ -497,7 +699,11 @@ inline void run(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget 
 							"smallHealthVisible", "smallTransportVisible", "routeTracksConstrained"})
 						report.insert(key, operating.value(key));
 					toggle->setChecked(wasChecked); rate->setValue(previousRate);
-					for(auto *audio : window->findChildren<QPushButton *>()) {
+					if(audioFixture) {
+						const auto mixer = mixerGeometryAudit(window, landscape, portrait, chat, directory, mixerStartup);
+						for(auto it = mixer.begin(); it != mixer.end(); ++it) report.insert(it.key(), it.value());
+						report.insert("mixerSourcesInert", audioFixture->safe());
+					} else for(auto *audio : window->findChildren<QPushButton *>()) {
 						if(audio->text() != "Expand audio") continue;
 						audio->click(); QApplication::processEvents();
 						report.insert("expandedAudioHealthVisible", healthVisible());

@@ -1134,6 +1134,30 @@ public:
     void addStretch() {}
 };
 
+int pulseBoundCompactMixer(QScrollArea *scroll)
+{
+	if (!scroll || !scroll->widget() || !scroll->parentWidget() || !scroll->parentWidget()->layout())
+		return 0;
+	auto *card = scroll->parentWidget();
+	auto *bodyLayout = scroll->widget()->layout();
+	if (bodyLayout)
+		bodyLayout->invalidate();
+	const int stripHeight = bodyLayout ? bodyLayout->sizeHint().height() : scroll->widget()->sizeHint().height();
+	scroll->ensurePolished();
+	// Reserve the native horizontal scrollbar even when all channels fit.
+	// A narrower window can then expose it without clipping the fixed strips.
+	const int scrollHeight = qMax(1, stripHeight) + scroll->style()->pixelMetric(QStyle::PM_ScrollBarExtent)
+		+ 2 * scroll->frameWidth() + 4;
+	scroll->setFixedHeight(scrollHeight);
+	card->layout()->invalidate();
+	const int naturalHeight = card->layout()->totalSizeHint().height();
+	// Quick Mix is a content-sized band. Saved splitter allocations and the
+	// pre-layout QWidget default must never turn its viewport into blank space.
+	card->setFixedHeight(naturalHeight);
+	card->updateGeometry();
+	return naturalHeight;
+}
+
 QWidget *displayCard(const QString &kicker, const QString &title, OBSQTDisplay *display, const QString &accent,
 		     int aspectWidth, int aspectHeight, QLabel **titleLabel = nullptr)
 {
@@ -2544,7 +2568,7 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *mixerCard = new QFrame;
 	mixerCard->setObjectName("PulseWeaverCard");
 	// Mixer strips share one continuous surface.
-	mixerCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	mixerCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 	/* 58 px strips plus the native horizontal scrollbar need more than the old
 	 * 65 px viewport. That mismatch was the persistent 5–10 px vertical scroll
 	 * and clipped control row reported in Show Control. */
@@ -2589,8 +2613,7 @@ void OBSBasic::InitPulseWeaverShell()
 	mixerScroll->setWidgetResizable(true);
 	mixerScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 	mixerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-	mixerScroll->setMinimumHeight(204);
-	mixerScroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	mixerScroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 	pulseCompactMixerBody = new QWidget(mixerScroll);
 	pulseCompactMixerBody->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
 	pulseCompactMixerBody->setLayout(new QHBoxLayout);
@@ -2599,24 +2622,11 @@ void OBSBasic::InitPulseWeaverShell()
 	mixerScroll->setWidget(pulseCompactMixerBody);
 	mixerLayout->addWidget(mixerScroll);
 	previewMixerSplit->addWidget(mixerCard);
-	auto setMixerCollapsed = [mixerCard, mixerLayout, mixerScroll, collapseMixer, previewMixerSplit, operatingPanel, operatingLayout, statsCard](bool collapsed) {
-		if (collapsed && !mixerScroll->isHidden())
-			mixerCard->setProperty("expandedHeight", mixerCard->height());
+	auto setMixerCollapsed = [mixerCard, mixerScroll, collapseMixer, previewMixerSplit, operatingPanel, operatingLayout, statsCard](bool collapsed) {
 		mixerScroll->setVisible(!collapsed);
 		collapseMixer->setText(collapsed ? "Expand audio" : "Collapse audio");
 		collapseMixer->setToolTip(collapsed ? "Expand audio mixer" : "Collapse audio mixer");
-		mixerScroll->ensurePolished();
-		mixerScroll->setMinimumHeight(180 + mixerScroll->style()->pixelMetric(QStyle::PM_ScrollBarExtent)
-			+ 2 * mixerScroll->frameWidth() + 4);
-		// Include the themed frame and header controls instead of clipping them
-		// inside the old 58px collapsed height.
-		mixerLayout->invalidate();
-		const int requiredHeight = mixerLayout->totalSizeHint().height();
-		const QMargins margins = mixerLayout->contentsMargins();
-		const int expandedMinimum = mixerScroll->minimumHeight() + qMax(42, collapseMixer->sizeHint().height())
-			+ margins.top() + margins.bottom() + mixerLayout->spacing() + 2 * mixerCard->frameWidth();
-		mixerCard->setMinimumHeight(collapsed ? requiredHeight : expandedMinimum);
-		mixerCard->setMaximumHeight(collapsed ? requiredHeight : QWIDGETSIZE_MAX);
+		const int requiredHeight = pulseBoundCompactMixer(mixerScroll);
 		// A fixed-height collapsed child can leave its old splitter allocation
 		// empty. Mount only the compact header in the outer layout instead;
 		// expanded audio returns to the same resizable native splitter.
@@ -2629,9 +2639,8 @@ void OBSBasic::InitPulseWeaverShell()
 			previewMixerSplit->addWidget(mixerCard); mixerCard->show();
 		}
 		if (previewMixerSplit->count() == 2) {
-			const int mixerHeight = collapsed ? requiredHeight : qMax(expandedMinimum, mixerCard->property("expandedHeight").toInt());
 			previewMixerSplit->refresh();
-			previewMixerSplit->setSizes({qMax(1, previewMixerSplit->height() - mixerHeight - 8), mixerHeight});
+			previewMixerSplit->setSizes({qMax(1, previewMixerSplit->height() - requiredHeight - previewMixerSplit->handleWidth()), requiredHeight});
 		}
 		QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
 		settings.setValue("showControl2/quickMixCollapsed", collapsed);
@@ -2643,11 +2652,14 @@ void OBSBasic::InitPulseWeaverShell()
 	connect(App(), &OBSApp::StyleChanged, mixerCard, [mixerScroll, setMixerCollapsed] {
 		setMixerCollapsed(mixerScroll->isHidden());
 	});
-	previewMixerSplit->setStretchFactor(0, 1);
-	previewMixerSplit->setStretchFactor(1, 0);
-	previewMixerSplit->setSizes({600, 220});
 	const QByteArray savedSplit = destinationSettings.value("showControl2/previewMixerSplit").toByteArray();
 	if (!savedSplit.isEmpty() && !mixerScroll->isHidden()) previewMixerSplit->restoreState(savedSplit);
+	previewMixerSplit->setStretchFactor(0, 1);
+	previewMixerSplit->setStretchFactor(1, 0);
+	if (previewMixerSplit->count() == 2) {
+		const int mixerHeight = pulseBoundCompactMixer(mixerScroll);
+		previewMixerSplit->setSizes({qMax(1, previewMixerSplit->height() - mixerHeight - previewMixerSplit->handleWidth()), mixerHeight});
+	}
 	connect(previewMixerSplit, &QSplitter::splitterMoved, previewMixerSplit, [previewMixerSplit] {
 		QSettings settings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
 		settings.setValue("showControl2/previewMixerSplit", previewMixerSplit->saveState());
@@ -4790,10 +4802,26 @@ void OBSBasic::RefreshPulseWeaverCompactMixer()
 		control->setFixedHeight(180);
 		control->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 		layout->addWidget(control);
+		// Measure this rebuild before Qt's deferred child-show pass. Showing a
+		// child does not reveal a collapsed scroll area or hidden workspace.
+		control->show();
 		obs_source_release(source);
 	}
-	if (sources.empty())
-		layout->addWidget(new QLabel("No active audio sources. Add one in Camera → Sources."));
+	if (sources.empty()) {
+		auto *empty = new QLabel("No active audio sources. Add one in Camera → Sources.");
+		layout->addWidget(empty);
+		empty->show();
+	}
+	layout->activate();
+	pulseCompactMixerBody->updateGeometry();
+	// A changed source list changes the band's intrinsic height. Recompute
+	// once here, rather than polling or retaining its previous allocation.
+	for (auto *parent = pulseCompactMixerBody->parentWidget(); parent; parent = parent->parentWidget()) {
+		if (parent->objectName() != "PulseWeaverCompactMixer")
+			continue;
+		pulseBoundCompactMixer(qobject_cast<QScrollArea *>(parent));
+		break;
+	}
 }
 
 void OBSBasic::RefreshPulseWeaverSceneSelectors()
