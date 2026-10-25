@@ -1,3 +1,18 @@
+# Pulse Weaver 2.0.0-unstable.5 — Task-first show setup
+
+Build my show follows Activity, Inputs, Views, Screens, Alerts and Review.
+Assign inputs once, choose views with different visible subjects, use editable
+built-in holding artwork, and add up to three paired landscape/portrait alert
+layers. Detailed setup remains available for saved layouts and specialist work.
+
+Creating alongside an existing Stage catalogue now completes on Windows.
+The real Finish regression reproduces the earlier file-lock failure and verifies
+that the fixed wrapper preserves the existing show. Native build, 8,349 full
+regression checks, 204 readable Windows UI checks and 39 Windows font checks
+passed. See [the revision 5 notes](docs/RELEASE-2.0.0-unstable.5.md) for scope
+and live-rehearsal limits. Both installer families advance to revision 5.
+
+---
 # Pulse Weaver 2.0.0-unstable.4 — Click-through show setup
 
 Build my show now follows Start, Sections, Looks, Sources and Review. Focused

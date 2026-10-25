@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QMessageBox>
 #include <QImage>
 #include <QPainter>
 #include <QFileInfo>
@@ -2519,6 +2520,7 @@ static void guidedWizardInteractionTests()
 
 static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
 {
+	const bool finishOnly=qEnvironmentVariableIsSet("PULSE_GUIDED_FINISH_ONLY");
 	obs_video_info video = initialVideo; video.base_width = video.output_width = 1920; video.base_height = video.output_height = 1080;
 	check(obs_reset_video(&video) == OBS_VIDEO_SUCCESS, "quality fixtures use a real 1920 by 1080 programme canvas");
 	obs_video_info verticalVideo = video; verticalVideo.base_width = verticalVideo.output_width = 1080; verticalVideo.base_height = verticalVideo.output_height = 1920;
@@ -2551,7 +2553,7 @@ static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
 	for (const auto &source : auditSources()) if (!obs_scene_from_source(source)) preserved.insert(obs_source_get_uuid(source), preservedInputState(source));
 	const QString evidence = qEnvironmentVariable("PULSE_GUIDED_OUTPUT_EVIDENCE_DIR");
 	if (!evidence.isEmpty()) check(QDir().mkpath(evidence), "quality evidence directory is available");
-	staticSetupCardPixelTests();
+	if(!finishOnly)staticSetupCardPixelTests();
 	QVector<PulseSetupPlan::Options> cases;
 	auto add = [&](const QString &name, const QString &activity, const PulseSetupPlan::Sources &sources, const QSet<QString> &views) -> PulseSetupPlan::Options & {
 		PulseSetupPlan::Options options; options.name = name; options.activity = activity; options.sources = sources; options.views = views;
@@ -2588,7 +2590,7 @@ static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
 	add("QA 14 explicit detail crop", "creative", {{}, wideId, detailId}, {"content", "content-detail", "detail"}).cropDetail = true;
 	auto &browser = add("QA 15 reusable browser content", "talk", {cameraId,"new:shared-browser",{}},{"content","content-camera","camera"});
 	browser.newSources.insert("shared-browser",QJsonObject{{"kind","browser_source"},{"name","Quality browser content"},{"url","https://example.invalid/shared-content"}});
-	for (const auto &options : cases) {
+	if(!finishOnly)for (const auto &options : cases) {
 		QTemporaryDir directory; check(QDir().mkpath(directory.filePath("plugin_config/pulse-weaver-core")), "guided scenario private storage directory");
 		const QString storage = directory.filePath("plugin_config/pulse-weaver-core/motion.json"), stages = directory.filePath("pulseweaver-stages.json"); writeFile(stages, "[]");
 		const auto baseline = wizardSourceIdentities();
@@ -2617,6 +2619,14 @@ static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
 	{
 		QTemporaryDir directory;const QString storage=directory.filePath("config/obs-studio/plugin_config/pulse-weaver-core/motion.json");check(QDir().mkpath(QFileInfo(storage).absolutePath()),"finish integration private storage");
 		writeFile(storage,QJsonDocument(QJsonObject{{"version",1},{"actions",QJsonArray{}},{"originals",QJsonArray{}},{"originalScenes",QJsonObject{}}}).toJson());
+		// Every normal frontend installation already has a Stage catalogue. Keep
+		// a real unrelated show here so the production wrapper opens that file,
+		// then must release its read handle before QSaveFile replaces it.
+		OBSSceneAutoRelease retainedH=obs_scene_create("Retained existing show"),retainedV=obs_canvas_scene_create(canvas,"Retained existing show · Portrait");
+		check(retainedH&&retainedV,"existing show fixture has real landscape and portrait scenes");obs_scene_add(retainedH,content);obs_scene_add(retainedV,content);
+		const QJsonObject retainedStage{{"name","Retained existing show"},{"horizontal","Retained existing show"},{"vertical","Retained existing show · Portrait"},{"themeId","custom"},{"horizontalTransition","cut"},{"verticalTransition","fade"},{"verticalDurationMs",640},{"sourceRoles",QJsonObject{{"shared",contentId}}},{"auditSentinel",QJsonObject{{"keep","all existing fields"}}}};
+		const QString stagePath=QDir::cleanPath(QDir(QFileInfo(storage).absolutePath()).filePath("../../pulseweaver-stages.json"));
+		writeFile(stagePath,QJsonDocument(QJsonArray{retainedStage}).toJson());
 		const auto baseline=wizardSourceIdentities();PulseSetupPlan::Options chosen;QJsonObject request;bool reachedCompletion=false;
 		{
 			PulseMotionEngine engine(nullptr,storage);
@@ -2629,16 +2639,18 @@ static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
 				wizard->next();wizard->next();settleWizard();check(wizard->currentId()==3,"finish integration reaches screen choices");
 				setupField<QLineEdit>(wizard,"Show name")->setText("QA 16 real Finish");setupField<QCheckBox>(wizard,"Include starting screen")->setChecked(false);setupField<QCheckBox>(wizard,"Include break screen")->setChecked(false);setupField<QCheckBox>(wizard,"Include ending screen")->setChecked(false);
 				wizard->next();wizard->next();settleWizard();check(wizard->currentId()==5&&wizard->button(QWizard::FinishButton)->isEnabled(),"real finish only enables after a complete valid plan");chosen=wizard->options();request=PulseSetupPlan::draft(chosen);
-				QTimer::singleShot(0,[&]{auto *completion=qobject_cast<QDialog *>(QApplication::activeModalWidget());check(completion&&completion->windowTitle()=="Your show is created","successful production Finish opens creation confirmation");captureWizardWindow(completion,"guided-created");reachedCompletion=true;guidedButton(completion,"Done")->click();});
+				QTimer::singleShot(0,[&]{auto *completion=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(auto *error=qobject_cast<QMessageBox *>(completion))std::fprintf(stderr,"Real Finish error with pre-existing Stage catalogue: %s\n",error->text().toUtf8().constData());check(completion&&completion->windowTitle()=="Your show is created","production Finish atomically replaces a pre-existing Stage catalogue and opens creation confirmation");captureWizardWindow(completion,"guided-created");reachedCompletion=true;guidedButton(completion,"Done")->click();});
 				wizard->button(QWizard::FinishButton)->click();
 			});
 			PulseMotionEngineTestAccess::openWizard(engine);check(reachedCompletion,"production finish wiring completes the show transaction");guidedOutputEvidence.append(checkGuidedOutput(engine,chosen,request,baseline));
+			const auto savedStages=QJsonDocument::fromJson(readFile(stagePath)).array();check(savedStages.size()==2&&savedStages.first().toObject()==retainedStage&&savedStages.last().toObject().value("name")==chosen.name+" · Main","real Finish retains every field of the existing Stage and appends the requested new Stage");
 		}
 		removeAuditAdditions(baseline);
+		obs_source_remove(obs_scene_get_source(retainedH));obs_source_remove(obs_scene_get_source(retainedV));
 	}
 	// Bypass the planner to prove the backend also rejects invalid guided graphs
 	// before making any source, scene, generated image or catalogue change.
-	for (const QString &fault : {QString("missing-third"), QString("duplicate-third"), QString("camera-alert"), QString("card-feed"), QString("fourth-alert"), QString("invalid-card")}) {
+	if(!finishOnly)for (const QString &fault : {QString("missing-third"), QString("duplicate-third"), QString("camera-alert"), QString("card-feed"), QString("fourth-alert"), QString("invalid-card")}) {
 		QTemporaryDir directory; check(QDir().mkpath(directory.filePath("plugin_config/pulse-weaver-core")), "invalid guided request storage");
 		const QString storage = directory.filePath("plugin_config/pulse-weaver-core/motion.json"), stagePath = directory.filePath("pulseweaver-stages.json"); writeFile(stagePath, "[]");
 		PulseMotionEngine engine(nullptr, storage); PulseSetupPlan::Options options;
@@ -2661,7 +2673,7 @@ static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
 		check(wizardSourceIdentities() == beforeSources && generatedFileSnapshot(directory.path()) == beforeFiles && PulseMotionEngineTestAccess::actions(engine) == beforeActions,
 			"invalid guided request is rejected before sources, PNG files or persisted catalogues mutate");
 	}
-	for (bool preexistingArtwork : {false, true}) {
+	if(!finishOnly)for (bool preexistingArtwork : {false, true}) {
 		QTemporaryDir directory; const QString parent = directory.filePath("plugin_config/pulse-weaver-core"); check(QDir().mkpath(parent), "commit-failure fixture parent");
 		const QString storage = QDir(parent).filePath("motion.json"), assetDirectory = QDir(parent).filePath("show-graphics"), stagePath = directory.filePath("pulseweaver-stages.json"); writeFile(stagePath, "[]");
 		if (preexistingArtwork) { check(QDir().mkpath(assetDirectory), "preexisting artwork directory"); writeFile(QDir(assetDirectory).filePath("retained-artwork.bin"), "preserve this user-owned artwork exactly"); }
@@ -2714,7 +2726,7 @@ int main(int argc, char **argv)
 	check(obs_reset_video(&video) == OBS_VIDEO_SUCCESS, "isolated graphics startup");
 	registerInertBrowser();
 	registerInertImageAndCaptureInputs();
-	if (qEnvironmentVariableIsSet("PULSE_GUIDED_OUTPUT_ONLY")) {
+	if (qEnvironmentVariableIsSet("PULSE_GUIDED_OUTPUT_ONLY")||qEnvironmentVariableIsSet("PULSE_GUIDED_FINISH_ONLY")) {
 		guidedGeneratedOutputTests(video);
 	} else if (qEnvironmentVariableIsSet("PULSE_GUIDED_UI_ONLY")) {
 		guidedWizardInteractionTests();

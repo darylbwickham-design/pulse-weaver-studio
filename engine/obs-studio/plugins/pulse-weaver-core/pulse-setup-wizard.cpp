@@ -221,9 +221,11 @@ void showSetupCompletion(QWidget *parent, const QString &message)
 void PulseMotionEngine::openShowWizard()
 {
 	if (!mayLeaveDraft()) return;
-	QFile stagesFile(QDir(QFileInfo(storagePath).absolutePath()).filePath("../../pulseweaver-stages.json"));
 	QJsonArray savedStages;
-	if (stagesFile.open(QIODevice::ReadOnly)) savedStages = QJsonDocument::fromJson(stagesFile.readAll()).array();
+	{
+		QFile stagesFile(QDir(QFileInfo(storagePath).absolutePath()).filePath("../../pulseweaver-stages.json"));
+		if (stagesFile.open(QIODevice::ReadOnly)) savedStages = QJsonDocument::fromJson(stagesFile.readAll()).array();
+	} // Release the reader before show creation atomically replaces the catalogue.
 	PulseGuidedWizard wizard(editor, savedStages);
 	while (wizard.exec() == QDialog::Accepted) {
 		const QString issue = wizard.finalProblem();
