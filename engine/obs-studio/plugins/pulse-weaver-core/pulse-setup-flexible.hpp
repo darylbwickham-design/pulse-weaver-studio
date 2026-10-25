@@ -23,6 +23,7 @@
 #include <QSet>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QTabWidget>
 #include <QUrl>
 #include <QUuid>
@@ -30,6 +31,7 @@
 #include <QVector>
 #include <QWizard>
 #include <functional>
+#include <utility>
 
 class FlexibleLayoutDiagram final : public QWidget {
 	QPixmap diagram;
@@ -101,6 +103,74 @@ class FlexibleSetup {
 	QJsonObject stingerDrafts;
 	QSet<QString> existingTransitionNames;
 	QSpinBox *duration;
+	struct Issue { QString message; QVector<int> questions; };
+	QLabel *currentIssue = nullptr, *reuseHint = nullptr, *stagePosition = nullptr;
+	QPushButton *previousStage = nullptr, *nextStage = nullptr;
+	QCheckBox *sharedLayers = nullptr;
+	bool includeSharedLayers = false;
+	QWidget *reviewBody = nullptr;
+	QVBoxLayout *reviewLayout = nullptr;
+	std::function<void()> returnToSources;
+	FlexibleLayoutDiagram *configurePicture = nullptr;
+	QLabel *configureCaption = nullptr;
+	QString previewOverride;
+	static QString selectionSummary(QComboBox *choice, QLineEdit *url = nullptr) {
+		const QString id = choice->currentData().toString();
+		if (id.isEmpty()) return "No source assigned.";
+		if (id == "url") return !url || url->text().trimmed().isEmpty() ?
+			"Enter a browser link below. It has not been tested." :
+			"Browser link entered · " + QUrl(url->text().trimmed()).host() + " · not tested";
+		return choice->currentText() + " · assigned, not tested";
+	}
+	QString purpose(const Question &q) const {
+		if (q.group == "Overlay") return q.choice->accessibleName() + " · optional shared layer";
+		if (!q.role.startsWith("feed")) return q.choice->accessibleName();
+		QString job;
+		if (q.role == "feedC") job = "Alternate or detail view";
+		else if (q.role == "feedB") job = q.group == "Game" ? "Main game or content view" :
+			q.group == "Chat" ? "Content to react to or explain" : "Work or activity view";
+		else job = q.group == "Chat" ? "Main conversation feed" : q.group == "Celebration" ?
+			"Reaction or announcement feed" : "Presenter or content feed";
+		return q.group + " · " + job + " (" + PulseShow::roleName(q.role) + ")";
+	}
+	QString preferredType(const Question &q) const {
+		if (!q.requiredKind.isEmpty()) return q.requiredKind;
+		if (q.group == "Game" && q.role == "feedB") return "game_capture";
+		if ((q.group == "Projects" || q.group == "Chat") && q.role == "feedB") return "window_capture";
+		return "dshow_input";
+	}
+	void refreshStageNavigation() {
+		if (!stagePosition) return;
+		QVector<int> visible;
+		for (int index = 0; index < tabs->count(); ++index) if (tabs->isTabVisible(index)) visible.append(index);
+		const int position = visible.indexOf(tabs->currentIndex());
+		stagePosition->setText(position < 0 ? "Choose a stage group" : QString("%1 · Stage %2 of %3")
+			.arg(tabs->tabText(tabs->currentIndex())).arg(position + 1).arg(visible.size()));
+		previousStage->setEnabled(position > 0);
+		nextStage->setEnabled(position >= 0 && position + 1 < visible.size());
+		previousStage->setText(position > 0 ? "← " + tabs->tabText(visible[position - 1]) : "Previous");
+		nextStage->setText(position >= 0 && position + 1 < visible.size() ? tabs->tabText(visible[position + 1]) + " →" : "Next");
+		previousStage->setAccessibleName(position > 0 ? "Previous stage: " + tabs->tabText(visible[position - 1]) : "Previous stage");
+		nextStage->setAccessibleName(position >= 0 && position + 1 < visible.size() ? "Next stage: " + tabs->tabText(visible[position + 1]) : "Next stage");
+	}
+	void openLookPreview(QWizard &owner, const QString &key, const QString &label) {
+		const int index = review->findData(key);
+		if (index >= 0) review->setCurrentIndex(index);
+		previewOverride = key;
+		QDialog dialog(&owner); dialog.setObjectName("PulseWeaverLookPreviewDialog"); dialog.setProperty("pulseSetupDialog", true);
+		dialog.setWindowTitle("Preview " + label); dialog.resize(900, 580);
+		if (const auto *screen = owner.screen()) { const auto available = screen->availableGeometry().size();
+			dialog.resize(qMin(900, available.width() - 40), qMin(580, available.height() - 60)); }
+		auto *layout = new QVBoxLayout(&dialog);
+		configureCaption = new QLabel(label, &dialog); configureCaption->setTextFormat(Qt::PlainText); configureCaption->setWordWrap(true);
+		configureCaption->setObjectName("PulseSetupTitle"); layout->addWidget(configureCaption);
+		auto *hint = new QLabel("Static placement only · no live sources are opened. Preview does not change whether this Look is included.", &dialog);
+		hint->setWordWrap(true); hint->setObjectName("PulseSetupMuted"); layout->addWidget(hint);
+		configurePicture = new FlexibleLayoutDiagram(&dialog); configurePicture->setObjectName("PulseSetupPreviewDiagram"); layout->addWidget(configurePicture, 1);
+		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog); buttons->button(QDialogButtonBox::Close)->setText("Back to Looks");
+		layout->addWidget(buttons); QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+		draw(); dialog.exec(); configurePicture = nullptr; configureCaption = nullptr;
+	}
 	bool usesSaved(const QString &group) const { return saved.contains(group) && saved[group].preset->currentIndex() == 1; }
 	QJsonArray savedIds(const QString &group) const {
 		QJsonArray ids; const auto &s = saved[group];
@@ -151,17 +221,30 @@ class FlexibleSetup {
 		const QString choice = q.choice->currentData().toString();
 		if (choice.isEmpty()) return required(q) ? "Choose a source for this required assignment." : QString();
 		QString url;
+		bool browserDraft = false;
 		if (choice == "url") url = q.url->text();
 		else if (choice.startsWith("new:")) {
+			if (!draftedSources.contains(choice.mid(4))) return "This source draft is missing. Choose or create it again.";
 			const auto spec = draftedSources.value(choice.mid(4));
 			const QString kind = spec.value("kind").toString();
+			if (!q.requiredKind.isEmpty() && kind != q.requiredKind) return "Choose a source of the required type.";
 			if (kind == "image_source" || kind == "ffmpeg_source") {
 				const QFileInfo file(spec.value("target").toString());
 				if (!file.isFile() || !file.isReadable()) return "Edit this new source and choose a readable file.";
 			}
-			if (kind == "browser_source") url = spec.value("url").toString();
+			if (kind == "browser_source") { browserDraft = true; url = spec.value("url").toString(); }
+		} else {
+			OBSSourceAutoRelease source = obs_get_source_by_uuid(choice.toUtf8().constData());
+			if (!source || !(obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) || obs_scene_from_source(source) || obs_group_from_source(source))
+				return "This source is missing or incompatible. Choose another source.";
+			if (!q.requiredKind.isEmpty() && q.requiredKind != QString::fromUtf8(obs_source_get_unversioned_id(source)))
+				return "Choose a source of the required type.";
+			bool artwork = q.group == "Overlay" || q.role == "graphic" || q.role == "chat";
+			if (q.role.startsWith("saved:")) { OBSSourceAutoRelease original = obs_get_source_by_uuid(q.role.mid(6).toUtf8().constData()); artwork = pulseIsNativeOverlaySource(original); }
+			if (pulseIsNativeOverlaySource(source) || (artwork && !pulseWizardOverlaySourceAllowed(source))) return "Choose a browser overlay source for this artwork.";
+			if (artwork && !questionCanvas(q).isEmpty() && !pulseBrowserMatchesCanvas(source, questionCanvas(q) == "vertical")) return "Choose the matching landscape or portrait browser source.";
 		}
-		if (!url.isEmpty() || choice == "url") {
+		if (browserDraft || choice == "url") {
 			const QString problem = PulseShow::browserLinkProblem(url);
 			if (!problem.isEmpty()) return problem;
 			if (!pulseWizardOverlayUrlAllowed(url)) return "Use a Lumia overlay or plugin browser link.";
@@ -171,6 +254,7 @@ class FlexibleSetup {
 		return {};
 	}
 	void previewGroup(const QString &group, const QString &lookId = {}, const QString &role = {}) {
+		previewOverride.clear();
 		for (const auto &g : PulseShow::setupCatalogue()) if (g.name == group) {
 			auto matches = [&](const QString &key) {
 				if (key.section('/', 0, 0) != g.id) return false;
@@ -187,6 +271,7 @@ class FlexibleSetup {
 		}
 	}
 	void previewQuestion(const Question &q) {
+		previewOverride.clear();
 		if (q.group != "Overlay") previewGroup(q.group, q.lookId, q.role.startsWith("saved:") ? QString() : q.role);
 		else {
 			const QString scope = q.scope->currentData().toString();
@@ -196,19 +281,43 @@ class FlexibleSetup {
 		}
 	}
 	void updateAssignmentStatus() {
-		int requiredCount = 0, readyCount = 0; bool needsAttention = false;
+		int requiredCount = 0, readyCount = 0;
 		for (int index : activeQuestions) {
 			const auto &q = inventory[index]; const bool ready = assignmentProblem(q).isEmpty();
 			if (required(q)) { ++requiredCount; if (ready) ++readyCount; }
-			if (!ready) needsAttention = true;
+			const int position = activeQuestions.indexOf(index);
+			if (position < sourceReview->count()) sourceReview->setItemData(position,
+				(required(q) ? "Required · " : "Optional · ") + selectionSummary(q.choice, q.url), Qt::ToolTipRole);
 		}
+		const auto problems = issues(true);
 		QString current;
 		if (!activeQuestions.isEmpty()) {
 			const auto &q = inventory[activeQuestions[sourceIndex]];
 			current = required(q) ? "This source is required. " : "This source is optional and can be skipped. ";
 		}
-		assignmentStatus->setText(current + QString("%1 of %2 required sources are ready.").arg(readyCount).arg(requiredCount));
-		attention->setEnabled(needsAttention);
+		assignmentStatus->setText(current + QString("%1 of %2 required assignments complete · %3 issue%4. Sources have not been tested.")
+			.arg(readyCount).arg(requiredCount).arg(problems.size()).arg(problems.size() == 1 ? "" : "s"));
+		bool repairable = false;
+		for (const auto &issue : problems) for (int index : issue.questions) if (activeQuestions.contains(index)) repairable = true;
+		attention->setEnabled(repairable);
+		if (currentIssue) {
+			QString message;
+			const int questionIndex = activeQuestions.value(sourceIndex, -1);
+			for (const auto &issue : problems) if (issue.questions.contains(questionIndex)) { message = issue.message; break; }
+			if (message.isEmpty()) for (const auto &issue : problems) if (issue.questions.isEmpty()) { message = issue.message; break; }
+			currentIssue->setText(message); currentIssue->setVisible(!message.isEmpty());
+		}
+		if (reuseHint && !activeQuestions.isEmpty()) {
+			const auto &q = inventory[activeQuestions[sourceIndex]];
+			const QString id = q.choice->currentData().toString();
+			int uses = 0;
+			if (!id.isEmpty() && id != "url") for (int index : activeQuestions)
+				if (inventory[index].choice->currentData().toString() == id) ++uses;
+			reuseHint->setText(uses > 1 ? QString("Shared with %1 other assignment%2. Source content and settings are shared; placement may differ.")
+				.arg(uses - 1).arg(uses == 2 ? "" : "s") : id == "url" ?
+				"Entering the same link in another question makes a separate browser. To share one browser, create a Browser link source once, then choose its New source card under Use existing elsewhere." :
+				"Reuse a source when it already supplies this content. Use existing also includes sources drafted in this wizard; a new camera is not required.");
+		}
 		if (!activeQuestions.isEmpty()) {
 			const auto &q = inventory[activeQuestions[sourceIndex]];
 			next->setEnabled(sourceIndex + 1 < activeQuestions.size() && assignmentProblem(q).isEmpty());
@@ -229,8 +338,7 @@ class FlexibleSetup {
 			if (questions->indexOf(current.panel) < 0) questions->addWidget(current.panel);
 			current.panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
 			questions->setCurrentWidget(current.panel); questions->updateGeometry();
-			title->setText(QString("Source %1 of %2 · %3").arg(sourceIndex + 1).arg(activeQuestions.size())
-				.arg(inventory[activeQuestions[sourceIndex]].choice->accessibleName()));
+			title->setText(QString("Assignment %1 of %2 · %3").arg(sourceIndex + 1).arg(activeQuestions.size()).arg(purpose(current)));
 			sourceReview->blockSignals(true); sourceReview->setCurrentIndex(sourceIndex); sourceReview->blockSignals(false);
 			if (selectPreview) { previewQuestion(current); draw(); }
 		}
@@ -252,11 +360,14 @@ class FlexibleSetup {
 		}
 		return targets;
 	}
-	void createSource(QWizard &owner, QComboBox *selection, const QString &label, const QString &requiredKind, bool edit, const QString &canvas) {
+	void createSource(QWizard &owner, QComboBox *selection, const QString &label, const QString &requiredKind, bool edit, const QString &canvas, const QString &preferredKind = {}) {
 		const QString selected = selection->currentData().toString();
 		const QString key = edit ? selected.mid(4) : "wizard-source-" + QString::number(nextSource);
 		const QJsonObject prior = edit ? draftedSources.value(key) : QJsonObject();
-		QDialog dialog(&owner); dialog.setWindowTitle(edit ? "Edit new source" : "Create new source");
+		QString enteredUrl;
+		if (!edit && selected == "url") for (const auto &q : inventory) if (q.choice == selection && q.url) { enteredUrl = q.url->text().trimmed(); break; }
+		QDialog dialog(&owner); dialog.setObjectName("PulseWeaverNewSourceDialog"); dialog.setProperty("pulseSetupDialog", true);
+		dialog.setWindowTitle(edit ? "Edit source draft" : "Create a source draft");
 		dialog.resize(640, 480);
 		if (const auto *screen = owner.screen()) {
 			const auto available = screen->availableGeometry().size();
@@ -273,26 +384,50 @@ class FlexibleSetup {
 			{"Window capture", "window_capture"}, {"Game capture", "game_capture"}, {"Video / media file", "ffmpeg_source"},
 			{"Image file", "image_source"}, {"Browser link", "browser_source"}})
 			if (requiredKind.isEmpty() || requiredKind == entry.second) kind->addItem(entry.first, entry.second);
-		auto *typeCards = PulseSetupChoices::cards(kind, fields); form->addRow("Source type", typeCards);
+		const QMap<QString, QString> typeHints{
+			{"dshow_input", "A webcam or capture device. Reuse an existing source if it already owns this device."},
+			{"monitor_capture", "The contents of one display, including applications shown on it."},
+			{"window_capture", "One application window; choose the window after selecting this type."},
+			{"game_capture", "A fullscreen game, or a specific game window."},
+			{"ffmpeg_source", "A local video or media file, with optional looping."},
+			{"image_source", "A local still image; a camera is not required."},
+			{"browser_source", "An HTTP or HTTPS browser link. New browser output audio starts off."}};
+		for (int index = 0; index < kind->count(); ++index) kind->setItemData(index, typeHints.value(kind->itemData(index).toString()), Qt::ToolTipRole);
+		kind->hide(); auto *typeRow = new QWidget(fields); auto *typeLayout = new QHBoxLayout(typeRow); typeLayout->setContentsMargins(0, 0, 0, 0);
+		auto *typeSummary = new QLabel(typeRow); typeSummary->setObjectName("PulseSetupSectionTitle"); typeSummary->setWordWrap(true); typeLayout->addWidget(typeSummary, 1);
+		auto *changeType = new QPushButton("Change source type…", typeRow); changeType->setObjectName("PulseWeaverSetupPicker"); changeType->setAccessibleName("Change source type"); typeLayout->addWidget(changeType);
+		form->addRow("Source type", typeRow);
+		QObject::connect(changeType, &QPushButton::clicked, &dialog, [&dialog, kind] {
+			PulseSetupChoices::choose(&dialog, kind, "Choose source type", {}, "No supported source types are available.", {}, "Choose what supplies this feed. Your device, window, file or link is selected in the next field.");
+		});
 		auto *target = new QComboBox(&dialog); target->setAccessibleName("New source device or window");
 		target->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); target->setMinimumContentsLength(18);
-		form->addRow("Device / window", target);
+		target->hide(); auto *targetRow = new QWidget(fields); auto *targetLayout = new QHBoxLayout(targetRow); targetLayout->setContentsMargins(0, 0, 0, 0);
+		auto *targetSummary = new QLabel(targetRow); targetSummary->setWordWrap(true); targetSummary->setObjectName("PulseSetupMuted"); targetSummary->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); targetLayout->addWidget(targetSummary, 1);
+		auto *chooseTarget = new QPushButton("Choose device or window…", targetRow); chooseTarget->setObjectName("PulseWeaverSetupPicker"); chooseTarget->setAccessibleName("Choose source device or window"); targetLayout->addWidget(chooseTarget);
+		form->addRow("Device / window", targetRow);
+		auto targetText = [target, targetSummary] { targetSummary->setText(target->count() ? target->currentText() : "No compatible device or window is available yet."); };
+		QObject::connect(target, &QComboBox::currentIndexChanged, &dialog, [targetText](int) { targetText(); });
 		auto *fileRow = new QWidget(&dialog); auto *fileLayout = new QHBoxLayout(fileRow); fileLayout->setContentsMargins(0, 0, 0, 0);
 		auto *file = new QLineEdit(prior.value("target").toString(), fileRow); file->setAccessibleName("New source file");
 		auto *browse = new QPushButton("Browse…", fileRow); fileLayout->addWidget(file, 1); fileLayout->addWidget(browse);
 		form->addRow("File", fileRow);
 		auto *loop = new QCheckBox("Loop video", &dialog); loop->setChecked(prior.value("loop").toBool(true)); form->addRow(loop);
-		auto *url = new QLineEdit(prior.value("url").toString(), &dialog); url->setPlaceholderText("https://…");
+		auto *url = new QLineEdit(prior.value("url").toString(enteredUrl), &dialog); url->setPlaceholderText("https://…");
 		url->setAccessibleName("New source browser URL"); form->addRow("Browser URL", url);
 		auto *hint = new QLabel("This source is created only when you create your show. You can reuse it in other stage groups. Reuse an existing camera input when it already uses the same device.", &dialog);
 		hint->setWordWrap(true); layout->addWidget(hint);
+		for (int row = 0; row < form->rowCount(); ++row)
+			if (auto *item = form->itemAt(row, QFormLayout::LabelRole))
+				if (auto *label = qobject_cast<QLabel *>(item->widget())) label->setWordWrap(true);
 		auto refresh = [&] {
 			const QString type = kind->currentData().toString();
+			typeSummary->setText(kind->currentText());
 			const bool localFile = type == "ffmpeg_source" || type == "image_source", browser = type == "browser_source";
-			target->setVisible(!localFile && !browser); form->labelForField(target)->setVisible(!localFile && !browser);
+			targetRow->setVisible(!localFile && !browser); form->labelForField(targetRow)->setVisible(!localFile && !browser);
 			fileRow->setVisible(localFile); form->labelForField(fileRow)->setVisible(localFile);
 			loop->setVisible(type == "ffmpeg_source"); url->setVisible(browser); form->labelForField(url)->setVisible(browser);
-			target->clear(); if (localFile || browser) return;
+			const QString previousTarget = target->currentData().toString(); target->clear(); if (localFile || browser) return;
 			if (type == "game_capture") target->addItem("Any fullscreen game", "");
 			obs_properties_t *properties = obs_get_source_properties(type.toUtf8().constData());
 			if (!properties) return;
@@ -306,11 +441,18 @@ class FlexibleSetup {
 				if (!id.isEmpty()) target->addItem(obs_property_list_item_name(list, i), id);
 			}
 			obs_properties_destroy(properties);
+			if (target->findData(previousTarget) >= 0) target->setCurrentIndex(target->findData(previousTarget));
+			targetText();
 		};
+		QObject::connect(chooseTarget, &QPushButton::clicked, &dialog, [&] {
+			refresh(); PulseSetupChoices::choose(&dialog, target, "Choose a device or window", {},
+				"No compatible device or window is available. Go back, connect or open it, then choose this button again to refresh.", {},
+				"Choose the content to capture. Any fullscreen game follows the active fullscreen game; other choices use the named device or window.");
+		});
 		QObject::connect(kind, &QComboBox::currentIndexChanged, &dialog, [&](int) { refresh(); });
-		kind->setCurrentIndex(qMax(0, kind->findData(prior.value("kind").toString()))); refresh();
+		kind->setCurrentIndex(qMax(0, kind->findData(prior.value("kind").toString(preferredKind)))); refresh();
 		kind->setEnabled(!edit && requiredKind.isEmpty());
-		typeCards->setEnabled(kind->isEnabled());
+		changeType->setEnabled(kind->isEnabled());
 		if (!prior.isEmpty() && target->findData(prior.value("target")) >= 0) target->setCurrentIndex(target->findData(prior.value("target")));
 		QObject::connect(browse, &QPushButton::clicked, &dialog, [&] {
 			const QString selectedFile = QFileDialog::getOpenFileName(&dialog, "Choose source file", file->text(),
@@ -320,13 +462,26 @@ class FlexibleSetup {
 		});
 		auto *error = new QLabel(&dialog); error->setWordWrap(true); layout->addWidget(error);
 		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog); outer->addWidget(buttons);
+		buttons->button(QDialogButtonBox::Ok)->setText("Use this source draft");
+		auto *useSource = buttons->button(QDialogButtonBox::Ok);
+		useSource->setProperty("setupPrimary", true);
+		useSource->style()->unpolish(useSource); useSource->style()->polish(useSource); useSource->update();
 		QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 		QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
 			const QString n = name->text().trimmed(), type = kind->currentData().toString();
-			OBSSourceAutoRelease existing = obs_get_source_by_name(n.toUtf8().constData());
-			if (n.isEmpty() || n.size() > 120 || existing) { error->setText("Choose an unused source name (1–120 characters)."); return; }
-			for (auto it = draftedSources.cbegin(); it != draftedSources.cend(); ++it)
-				if (it.key() != key && it.value().value("name").toString() == n) { error->setText("Another new source uses that name."); return; }
+			if (n.isEmpty() || n.size() > 120) { error->setText("Choose an unused source name (1–120 characters)."); return; }
+			auto generatedNames = [](const QString &name, const QString &kind) {
+				QStringList names{name}; if (kind == "browser_source") names << name + " · horizontal" << name + " · vertical"; return names;
+			};
+			const QStringList candidates = generatedNames(n, type);
+			for (const QString &candidate : candidates) {
+				OBSSourceAutoRelease existing = obs_get_source_by_name(candidate.toUtf8().constData());
+				if (existing) { error->setText("The generated source name “" + candidate + "” is already used. Choose another name."); return; }
+				for (auto it = draftedSources.cbegin(); it != draftedSources.cend(); ++it)
+					if (it.key() != key && generatedNames(it.value().value("name").toString(), it.value().value("kind").toString()).contains(candidate)) {
+						error->setText("Another source draft reserves “" + candidate + "”. Choose another name."); return;
+					}
+			}
 			QString chosenTarget = target->currentData().toString();
 			if (type == "ffmpeg_source" || type == "image_source") {
 				const QFileInfo chosen(file->text().trimmed());
@@ -356,11 +511,10 @@ class FlexibleSetup {
 			"ffmpeg_source", "image_source", "browser_source"};
 		const bool canCreate = q.requiredKind.isEmpty() || creatable.contains(q.requiredKind);
 		q.choice->hide();
-		auto *selected = new QLabel(q.panel); selected->setWordWrap(true); selected->setTextFormat(Qt::PlainText);
+		auto *selected = new QLabel(q.panel); selected->setWordWrap(true); selected->setTextFormat(Qt::PlainText); selected->setObjectName("PulseSetupSelectedSource"); selected->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 		selected->setAccessibleName(label + " selected source"); layout->addWidget(selected);
 		auto refresh = [choice = q.choice, selected] {
-			const QString id = choice->currentData().toString();
-			selected->setText(id.isEmpty() ? "No source selected yet." : id == "url" ? "Using your pasted Lumia browser link." : "Selected: " + choice->currentText());
+			selected->setText(selectionSummary(choice, choice->parentWidget()->findChild<QLineEdit *>("PulseSetupBrowserUrl")));
 		};
 		refresh(); QObject::connect(q.choice, &QComboBox::currentIndexChanged, selected, [refresh](int) { refresh(); });
 		QObject::connect(q.choice->model(), &QAbstractItemModel::dataChanged, selected, [refresh] { refresh(); });
@@ -368,15 +522,17 @@ class FlexibleSetup {
 		auto *existing = new QPushButton("Use existing…", q.panel); existing->setAccessibleName(label + " use existing source"); row->addWidget(existing);
 		QObject::connect(existing, &QPushButton::clicked, &owner, [&owner, choice = q.choice, label] {
 			PulseSetupChoices::choose(&owner, choice, "Choose a source for " + label,
-				[](const QString &id) { return !id.isEmpty() && id != "url"; });
+				[](const QString &id) { return !id.isEmpty() && id != "url"; },
+				"No compatible sources are available yet. Go back and choose Create new, or enter a browser link where offered.", {},
+				"Choose an existing source or a source drafted in this wizard. Reusing it shares its content and source settings.");
 		});
 		auto *create = new QPushButton("Create new…", q.panel), *edit = new QPushButton("Edit new…", q.panel);
 		create->setAccessibleName(label + " create new source"); edit->setAccessibleName(label + " edit new source");
 		row->addWidget(create); row->addWidget(edit); row->addStretch(); layout->addLayout(row);
 		create->setVisible(canCreate);
 		edit->hide();
-		QObject::connect(create, &QPushButton::clicked, &owner, [this, &owner, choice = q.choice, label, requiredKind = q.requiredKind, canvas = questionCanvas(q)] {
-			createSource(owner, choice, label, requiredKind, false, canvas);
+		QObject::connect(create, &QPushButton::clicked, &owner, [this, &owner, choice = q.choice, label, requiredKind = q.requiredKind, canvas = questionCanvas(q), preferred = preferredType(q)] {
+			createSource(owner, choice, label, requiredKind, false, canvas, preferred);
 		});
 		QObject::connect(edit, &QPushButton::clicked, &owner, [this, &owner, choice = q.choice, label, requiredKind = q.requiredKind, canvas = questionCanvas(q)] {
 			createSource(owner, choice, label, requiredKind, true, canvas);
@@ -408,9 +564,10 @@ public:
 		};
 		lookReview = new QComboBox(lookPage); lookReview->setAccessibleName("Look layout to preview");
 		lookCaption = text(lookLayout, lookPage, "");
-		lookLayout->addWidget(PulseSetupChoices::picker(lookReview, lookPage, "Preview another Look…"));
-		lookPicture = new FlexibleLayoutDiagram(lookPage); lookPicture->setMaximumHeight(210); lookLayout->addWidget(lookPicture);
-		text(lookLayout, lookPage, "Preview placement here. Assign real feeds and artwork on page 4; these diagrams do not play your sources.");
+		lookReview->hide(); lookCaption->setObjectName("PulseSetupSectionTitle");
+		lookCaption->hide();
+		lookPicture = new FlexibleLayoutDiagram(lookPage); lookPicture->hide();
+		text(lookLayout, lookPage, "Preview inspects a Look without including it. Configure changes its layout in a focused view. Assign real feeds and artwork on Sources; diagrams do not play live inputs.");
 		tabs = new QTabWidget(lookPage); lookLayout->addWidget(tabs);
 		for (const auto &group : PulseShow::setupCatalogue()) {
 			auto *tab = new QWidget(tabs); auto *layout = new QVBoxLayout(tab); layout->setAlignment(Qt::AlignTop); tabs->addTab(tab, group.name);
@@ -433,21 +590,42 @@ public:
 					QString label = action.value("name").toString(); label.remove(0, s.stage.value("name").toString().size() + 3);
 					auto *check = new QCheckBox(label, savedPanel); check->setChecked(true);
 					savedLayout->addWidget(PulseSetupChoices::checkCard(check, savedPanel)); s.selected.insert(id, check);
+					auto *preview = new QPushButton("Preview this saved Look", savedPanel); savedLayout->addWidget(preview);
+					QObject::connect(preview, &QPushButton::clicked, &owner, [this, &owner, key = group.id + "/saved:" + id, title = group.name + " · " + label] {
+						openLookPreview(owner, key, title);
+					});
 					QObject::connect(check, &QCheckBox::toggled, &owner, [this](bool) { update(activeGroups); if (changed) changed(); });
 				}
 			}
 			saved.insert(group.name, s);
-			auto *transitionToggle = new QPushButton("Stage transitions (optional): Fade, Cut or a stinger", tab);
-			transitionToggle->setCheckable(true); transitionToggle->setAccessibleName(group.name + " stage transition options");
+			auto *transitionToggle = new QPushButton("Configure stage transitions…", tab);
+			transitionToggle->setObjectName("PulseSetupStageTransitions"); transitionToggle->setAccessibleName(group.name + " stage transition options");
 			layout->addWidget(transitionToggle);
 			auto *transitionCard = new QGroupBox("When entering this stage", tab); transitionCard->hide();
-			QObject::connect(transitionToggle, &QPushButton::toggled, transitionCard, &QWidget::setVisible);
-			auto *transitionLayout = new QFormLayout(transitionCard); layout->addWidget(transitionCard);
+			auto *transitionLayout = new QVBoxLayout(transitionCard);
+			auto *formatTabs = new QTabWidget(transitionCard); formatTabs->setObjectName("PulseSetupTransitionFormatTabs");
+			formatTabs->setAccessibleName(group.name + " transition format"); transitionLayout->addWidget(formatTabs);
+			auto *horizontalPage = new QWidget(formatTabs); horizontalPage->setProperty("pulseCanvas", "horizontal");
+			auto *verticalPage = new QWidget(formatTabs); verticalPage->setProperty("pulseCanvas", "vertical");
+			formatTabs->addTab(horizontalPage, "Landscape · 16:9"); formatTabs->addTab(verticalPage, "Portrait · 9:16");
+			auto *horizontalForm = new QFormLayout(horizontalPage); horizontalForm->setRowWrapPolicy(QFormLayout::WrapAllRows);
+			auto *verticalForm = new QFormLayout(verticalPage); verticalForm->setRowWrapPolicy(QFormLayout::WrapAllRows);
+			QObject::connect(transitionToggle, &QPushButton::clicked, &owner, [&owner, transitionCard, tab, name = group.name] {
+				QDialog dialog(&owner); dialog.setObjectName("PulseWeaverStageTransitionsDialog"); dialog.setProperty("pulseSetupDialog", true);
+				dialog.setWindowTitle(name + " · Stage transitions"); dialog.resize(940, 660);
+				if (const auto *screen = owner.screen()) { const auto available = screen->availableGeometry().size();
+					dialog.resize(qMin(940, available.width() - 40), qMin(660, available.height() - 60)); }
+				auto *outer = new QVBoxLayout(&dialog); auto *scroll = new QScrollArea(&dialog); scroll->setWidgetResizable(true);
+				outer->addWidget(scroll, 1); scroll->setWidget(transitionCard); transitionCard->show();
+				auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog); buttons->button(QDialogButtonBox::Close)->setText("Done"); outer->addWidget(buttons);
+				QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::accept);
+				dialog.exec(); scroll->takeWidget(); transitionCard->setParent(tab); transitionCard->hide();
+			});
 			StageTransitions policy{};
-			auto selector = [&](const QString &route, QSpinBox *&time) {
+			auto selector = [&](const QString &route, QSpinBox *&time, QFormLayout *formatForm) {
 				auto *combo = new QComboBox(transitionCard); combo->setAccessibleName(group.name + " " + route + " stage transition");
 				combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); combo->setMinimumContentsLength(18);
-				combo->addItem("Keep saved transition / use Fade for a new layout", "");
+				combo->addItem("Fade · 500 ms (default)", "");
 				combo->addItem("Fade", "fade"); combo->addItem("Cut", "cut");
 				for (auto it = stingers.cbegin(); it != stingers.cend(); ++it) combo->addItem("Stinger · " + it.key(), it.value());
 				time = new QSpinBox(transitionCard); time->setRange(0, 3000); time->setValue(500); time->setSuffix(" ms");
@@ -455,16 +633,17 @@ public:
 				auto *row = new QWidget(transitionCard); auto *rowLayout = new QHBoxLayout(row); rowLayout->setContentsMargins(0, 0, 0, 0);
 				auto *choices = new QVBoxLayout; rowLayout->addLayout(choices, 1);
 				choices->addWidget(PulseSetupChoices::cards(combo, row, 3, [](const QString &id) { return id.isEmpty() || id == "fade" || id == "cut"; }));
-				auto *selectedTransition = new QLabel(combo->currentText(), row); selectedTransition->setWordWrap(true); selectedTransition->setTextFormat(Qt::PlainText); choices->addWidget(selectedTransition);
-				auto *existing = new QPushButton("Use an existing stinger…", row); choices->addWidget(existing);
+				auto *selectedTransition = new QLabel(combo->currentText(), row); selectedTransition->setWordWrap(true); selectedTransition->setTextFormat(Qt::PlainText); selectedTransition->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); choices->addWidget(selectedTransition);
+				auto *existing = new QPushButton("Choose stinger…", row); choices->addWidget(existing);
 				QObject::connect(existing, &QPushButton::clicked, &owner, [&owner, combo] {
 					PulseSetupChoices::choose(&owner, combo, "Choose a stinger", [](const QString &id) { return id.startsWith("stinger:") || id.startsWith("new-stinger:"); });
 				});
 				QObject::connect(combo, &QComboBox::currentIndexChanged, selectedTransition, [combo, selectedTransition](int) { selectedTransition->setText(combo->currentText()); });
-				auto *add = new QPushButton("Add stinger…", row); add->setAccessibleName(group.name + " " + route + " add stinger"); rowLayout->addWidget(add);
+				QObject::connect(combo->model(), &QAbstractItemModel::dataChanged, selectedTransition, [combo, selectedTransition] { selectedTransition->setText(combo->currentText()); });
+				auto *add = new QPushButton("Add video…", row); add->setAccessibleName(group.name + " " + route + " add stinger"); rowLayout->addWidget(add);
 				auto *edit = new QPushButton("Edit…", row); edit->setAccessibleName(group.name + " " + route + " edit new stinger"); edit->setEnabled(false); rowLayout->addWidget(edit);
-				transitionLayout->addRow(route == "horizontal" ? "Landscape transition" : "Portrait transition", row);
-				transitionLayout->addRow("Fade duration", time);
+				formatForm->addRow("Transition", row);
+				formatForm->addRow("Fade duration", time);
 				QObject::connect(combo, &QComboBox::currentIndexChanged, &owner, [this, combo, time, edit](int) {
 					time->setEnabled(combo->currentData().toString() == "fade");
 					edit->setEnabled(combo->currentData().toString().startsWith("new-stinger:"));
@@ -491,35 +670,53 @@ public:
 				QObject::connect(edit, &QPushButton::clicked, &owner, [configure] { configure(true); });
 				return combo;
 			};
-			policy.horizontal = selector("horizontal", policy.horizontalDuration);
-			policy.vertical = selector("vertical", policy.verticalDuration); stageTransitions.insert(group.name, policy);
+			policy.horizontal = selector("horizontal", policy.horizontalDuration, horizontalForm);
+			policy.vertical = selector("vertical", policy.verticalDuration, verticalForm); stageTransitions.insert(group.name, policy);
+			for (auto *choice : {policy.horizontal, policy.vertical}) choice->setItemText(0, "Fade · 500 ms (default)");
+			QObject::connect(s.preset, &QComboBox::currentIndexChanged, &owner, [policy](int index) {
+				for (auto *choice : {policy.horizontal, policy.vertical}) choice->setItemText(0,
+					index == 1 ? "Keep saved transition" : "Fade · 500 ms (default)");
+			});
 			auto *transitionHint = new QLabel("Use an existing transition or add a stinger video for each format. New stingers are created with your show and can be reused by other stages. A stinger uses its own cut point; movement between Looks is separate.", transitionCard);
-			transitionHint->setWordWrap(true); transitionLayout->addRow(transitionHint);
+			transitionHint->setWordWrap(true); transitionLayout->addWidget(transitionHint);
 			auto *stingerLink = new QPushButton("Find stinger designs at Profounder", transitionCard);
-			stingerLink->setAccessibleName(group.name + " stinger designs from Profounder"); transitionLayout->addRow(stingerLink);
+			stingerLink->setAccessibleName(group.name + " stinger designs from Profounder"); transitionLayout->addWidget(stingerLink);
 			QObject::connect(stingerLink, &QPushButton::clicked, &owner, [] { QDesktopServices::openUrl(QUrl("https://profounder.com/transitions/")); });
+			for (auto *formatForm : {horizontalForm, verticalForm})
+				for (int row = 0; row < formatForm->rowCount(); ++row)
+					if (auto *item = formatForm->itemAt(row, QFormLayout::LabelRole))
+						if (auto *label = qobject_cast<QLabel *>(item->widget())) label->setWordWrap(true);
 			auto *optionsPanel = new QWidget(tab); auto *optionsLayout = new QVBoxLayout(optionsPanel); layout->addWidget(optionsPanel);
 			QObject::connect(s.preset, &QComboBox::currentIndexChanged, &owner, [this, savedPanel, optionsPanel](int index) {
 				savedPanel->setVisible(index == 1); optionsPanel->setVisible(index == 0); update(activeGroups); if (changed) changed(); });
 			layout = optionsLayout;
 			text(layout, tab, "Click the Looks you use. Feed A, B and C are slots for this stage; assign their cameras, captures or media on the next page.");
-			auto *lookCards = new QGridLayout; layout->addLayout(lookCards); int lookCardIndex = 0;
+			auto *lookCards = new PulseSetupChoices::ChoiceGrid(tab, 2); layout->addWidget(lookCards);
 			for (const auto &look : group.looks) {
-				auto *card = new QWidget(tab); card->setMinimumHeight(160);
-				auto *body = new QVBoxLayout(card); body->setContentsMargins(0, 0, 0, 0); body->setAlignment(Qt::AlignTop);
-				lookCards->addWidget(card, lookCardIndex / 2, lookCardIndex % 2, Qt::AlignTop); ++lookCardIndex;
+				auto *card = new QWidget(lookCards); card->setObjectName("PulseSetupSurface");
+				auto *body = new QVBoxLayout(card); body->setContentsMargins(12, 12, 12, 12); body->setAlignment(Qt::AlignTop);
+				lookCards->addCard(card);
 				LookFields f{};
 				f.selected = new QCheckBox(look.name, card);
 				f.selected->setChecked(look.id == group.looks.front().id || (group.name == "Intermission" && look.id == "ending"));
+				f.selected->hide();
 				QString requirements = "Required: " + PulseShow::roleName(look.main);
 				if (!look.support.isEmpty()) requirements += QString(look.optionalPresenter ? ". Optional: " : " and ") + PulseShow::roleName(look.support);
-				body->addWidget(PulseSetupChoices::checkCard(f.selected, card, look.description + "\n" + requirements + "."));
-				auto *configure = new QPushButton("Layout options…", card); configure->setCheckable(true);
-				configure->setAccessibleName(group.name + " · " + look.name + " layout options"); body->addWidget(configure);
-				configure->setVisible(f.selected->isChecked());
-				auto *options = new QWidget(card); auto *form = new QFormLayout(options); form->setRowWrapPolicy(QFormLayout::WrapAllRows); body->addWidget(options);
+				auto *heading = text(body, card, look.name); heading->setObjectName("PulseSetupSectionTitle");
+				text(body, card, look.description + "\n" + requirements + ".")->setObjectName("PulseSetupMuted");
+				auto *include = new QCheckBox("Include in my show", card); include->setObjectName("PulseSetupLookInclude");
+				include->setAccessibleName(group.name + " · " + look.name + " include"); include->setChecked(f.selected->isChecked());
+				QObject::connect(include, &QCheckBox::toggled, f.selected, &QCheckBox::setChecked);
+				QObject::connect(f.selected, &QCheckBox::toggled, include, &QCheckBox::setChecked); body->addWidget(include);
+				auto *actions = new QHBoxLayout; body->addLayout(actions);
+				auto *preview = new QPushButton("Preview", card); preview->setObjectName("PulseSetupLookPreview");
+				preview->setAccessibleName(group.name + " · " + look.name + " preview"); actions->addWidget(preview);
+				auto *configure = new QPushButton("Configure…", card); configure->setObjectName("PulseSetupLookConfigure");
+				configure->setAccessibleName(group.name + " · " + look.name + " layout options"); actions->addWidget(configure);
+				configure->setEnabled(f.selected->isChecked());
+				auto *options = new QWidget(card); auto *form = new QFormLayout(options); form->setRowWrapPolicy(QFormLayout::WrapAllRows);
 				options->setEnabled(f.selected->isChecked());
-				options->hide(); QObject::connect(configure, &QPushButton::toggled, options, &QWidget::setVisible);
+				options->hide();
 				f.composition = new QComboBox(options); f.composition->addItem("Recommended layout", "");
 				f.composition->addItem("Main view with corner inset", "corner"); f.composition->addItem("Supporting side column", "rail");
 				f.composition->addItem("Side by side", "split");
@@ -527,8 +724,10 @@ public:
 				for (const auto &entry : {std::pair{"Top left", "top-left"}, {"Top right", "top-right"}, {"Bottom left", "bottom-left"}, {"Bottom right", "bottom-right"}})
 					f.corner->addItem(entry.first, entry.second);
 				f.portraitShare = new QSpinBox(options); f.portraitShare->setRange(15, 65); f.portraitShare->setValue(30); f.portraitShare->setSuffix("%");
-				f.mainFill = new QCheckBox("Crop main feed to fill (off: fit whole image)", options);
-				f.supportFill = new QCheckBox("Crop supporting feed to fill (off: fit whole image)", options);
+				f.mainFill = new QCheckBox("Crop main", options);
+				f.supportFill = new QCheckBox("Crop support", options);
+				f.mainFill->setAccessibleName(group.name + " · " + look.name + " crop main feed to fill");
+				f.supportFill->setAccessibleName(group.name + " · " + look.name + " crop supporting feed to fill");
 				f.composition->setAccessibleName(group.name + " · " + look.name + " landscape composition");
 				f.corner->setAccessibleName(group.name + " · " + look.name + " inset corner");
 				f.portraitShare->setAccessibleName(group.name + " · " + look.name + " portrait top panel size");
@@ -541,6 +740,13 @@ public:
 				else f.mainFill->hide();
 				if (!look.support.isEmpty() && !PulseShow::graphic(look.support)) form->addRow(f.supportFill);
 				else f.supportFill->hide();
+				if (!PulseShow::graphic(look.main) || (!look.support.isEmpty() && !PulseShow::graphic(look.support))) {
+					auto *cropHint = new QLabel("Crop fills the panel; leave off to fit the whole image.", options);
+					cropHint->setWordWrap(true); cropHint->setObjectName("PulseSetupMuted"); form->addRow(cropHint);
+				}
+				for (int row = 0; row < form->rowCount(); ++row)
+					if (auto *item = form->itemAt(row, QFormLayout::LabelRole))
+						if (auto *label = qobject_cast<QLabel *>(item->widget())) label->setWordWrap(true);
 				auto optionState = [f, cornerCards, recommended = look.layout] {
 					const QString composition = f.composition->currentData().toString().isEmpty() ? recommended : f.composition->currentData().toString();
 					f.corner->setEnabled(composition == "corner");
@@ -550,42 +756,82 @@ public:
 				optionState();
 				looks.insert(group.id + "/" + look.id, f);
 				QObject::connect(f.selected, &QCheckBox::toggled, &owner, [this, options, configure](bool checked) {
-					configure->setVisible(checked); if (!checked) configure->setChecked(false);
-					options->setEnabled(checked); options->setVisible(checked && configure->isChecked()); update(activeGroups); if (changed) changed(); });
+					configure->setEnabled(checked); options->setEnabled(checked); update(activeGroups); if (changed) changed(); });
 				auto previewLook = [this, key = group.id + "/" + look.id] {
-					const int index = review->findData(key); if (index >= 0) review->setCurrentIndex(index); draw();
+					const int index = review->findData(key); if (index >= 0) review->setCurrentIndex(index);
+					previewOverride = key; draw();
 				};
+				QObject::connect(preview, &QPushButton::clicked, &owner, [this, &owner, key = group.id + "/" + look.id, label = group.name + " · " + look.name] {
+					openLookPreview(owner, key, label);
+				});
+				QObject::connect(configure, &QPushButton::clicked, &owner, [this, &owner, options, card, previewLook, label = group.name + " · " + look.name, simple = look.support.isEmpty()] {
+					previewLook();
+					QDialog dialog(&owner); dialog.setObjectName("PulseWeaverLookConfigureDialog"); dialog.setProperty("pulseSetupDialog", true);
+					const int initialWidth = simple ? 820 : 940, initialHeight = simple ? 440 : 680;
+					dialog.setWindowTitle("Configure " + label); dialog.resize(initialWidth, initialHeight);
+					if (const auto *screen = owner.screen()) { const auto available = screen->availableGeometry().size();
+						dialog.resize(qMin(initialWidth, available.width() - 40), qMin(initialHeight, available.height() - 60)); }
+					auto *outer = new QVBoxLayout(&dialog); auto *columns = new QHBoxLayout; outer->addLayout(columns, 1);
+					auto *previewPanel = new QWidget(&dialog); auto *previewLayout = new QVBoxLayout(previewPanel);
+					configureCaption = new QLabel(label, previewPanel); configureCaption->setWordWrap(true); configureCaption->setObjectName("PulseSetupSectionTitle"); previewLayout->addWidget(configureCaption);
+					configurePicture = new FlexibleLayoutDiagram(previewPanel); configurePicture->setObjectName("PulseSetupConfigureDiagram"); previewLayout->addWidget(configurePicture, 1);
+					auto *hint = new QLabel("Placement only · no live sources are opened. Changes stay in this show draft.", previewPanel); hint->setWordWrap(true); hint->setObjectName("PulseSetupMuted"); previewLayout->addWidget(hint);
+					columns->addWidget(previewPanel, 1);
+					auto *details = new QScrollArea(&dialog); details->setWidgetResizable(true); details->setMinimumWidth(300); details->setWidget(options); options->show(); columns->addWidget(details, 1);
+					auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog); buttons->button(QDialogButtonBox::Close)->setText("Done"); outer->addWidget(buttons);
+					QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::accept);
+					draw(); dialog.exec(); configurePicture = nullptr; configureCaption = nullptr;
+					details->takeWidget(); options->setParent(card); options->hide();
+				});
 				for (auto *combo : {f.composition, f.corner}) QObject::connect(combo, &QComboBox::currentIndexChanged, &owner, [previewLook](int) { previewLook(); });
 				QObject::connect(f.composition, &QComboBox::currentIndexChanged, &owner, [optionState](int) { optionState(); });
 				QObject::connect(f.portraitShare, &QSpinBox::valueChanged, &owner, [previewLook](int) { previewLook(); });
 				for (auto *check : {f.mainFill, f.supportFill}) QObject::connect(check, &QCheckBox::toggled, &owner, [previewLook](bool) { previewLook(); });
 			}
-			layout->addStretch();
+			lookCards->reflow(true); layout->addStretch();
 		}
+		stagePosition = new QLabel(lookPage); stagePosition->setObjectName("PulseSetupStagePosition"); stagePosition->setWordWrap(true);
+		stagePosition->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); lookLayout->addWidget(stagePosition);
 		auto *stageNavigation = new QHBoxLayout; lookLayout->addLayout(stageNavigation);
-		for (const auto &step : {std::pair{"Previous stage", -1}, {"Next stage", 1}}) {
-			auto *button = new QPushButton(step.first, lookPage); stageNavigation->addWidget(button);
+		previousStage = new QPushButton("Previous stage", lookPage); nextStage = new QPushButton("Next stage", lookPage);
+		previousStage->setObjectName("PulseSetupPreviousStage"); nextStage->setObjectName("PulseSetupNextStage");
+		stageNavigation->addWidget(previousStage); stageNavigation->addStretch(); stageNavigation->addWidget(nextStage);
+		for (const auto &step : {std::pair{previousStage, -1}, {nextStage, 1}}) {
+			auto *button = step.first;
 			QObject::connect(button, &QPushButton::clicked, &owner, [this, direction = step.second] {
 				for (int index = tabs->currentIndex() + direction; index >= 0 && index < tabs->count(); index += direction)
 					if (tabs->isTabVisible(index)) { tabs->setCurrentIndex(index); return; }
 			});
-		} stageNavigation->addStretch();
+		}
 		sourcePanel = new QWidget(sourcePage); auto *layout = new QVBoxLayout(sourcePanel); sourceLayout->addWidget(sourcePanel);
+		sharedLayers = new QCheckBox("Add shared layers", sourcePanel);
+		sharedLayers->setAccessibleName("Add shared alerts or overlay layers (optional)");
+		sharedLayers->setObjectName("PulseSetupSharedLayersToggle"); layout->addWidget(sharedLayers);
+		text(layout, sourcePanel, "Leave shared layers off for a simpler show. Enabling them adds three optional layers per canvas. Turning them off preserves your draft choices without creating those layers.")->setObjectName("PulseSetupMuted");
+		QObject::connect(sharedLayers, &QCheckBox::toggled, &owner, [this](bool enabled) {
+			includeSharedLayers = enabled; update(activeGroups); if (changed) changed();
+		});
 		title = text(layout, sourcePanel, "Assign your feeds");
+		title->setObjectName("PulseSetupSectionTitle");
 		sourceReview = new QComboBox(sourcePanel); sourceReview->setAccessibleName("Source to assign");
-		sourcePicker = PulseSetupChoices::picker(sourceReview, sourcePanel, "Review source assignments…"); layout->addWidget(sourcePicker);
+		sourcePicker = PulseSetupChoices::picker(sourceReview, sourcePanel, "Jump to an assignment…"); layout->addWidget(sourcePicker);
 		assignmentStatus = text(layout, sourcePanel, ""); assignmentStatus->setAccessibleName("Source assignment progress");
 		questions = new FlexibleQuestionStack(sourcePanel);
 		auto questionPolicy = questions->sizePolicy(); questionPolicy.setHorizontalPolicy(QSizePolicy::Expanding); questionPolicy.setVerticalPolicy(QSizePolicy::Maximum); questions->setSizePolicy(questionPolicy);
 		layout->addWidget(questions);
+		currentIssue = text(layout, sourcePanel, ""); currentIssue->setObjectName("PulseSetupCurrentIssue");
+		currentIssue->setAccessibleName("Current assignment issue");
+		reuseHint = text(layout, sourcePanel, ""); reuseHint->setObjectName("PulseSetupNotice");
 		QObject::connect(sourceReview, &QComboBox::currentIndexChanged, &owner, [this](int index) {
 			if (index >= 0) { sourceIndex = index; showQuestion(); }
 		});
 		auto *navigation = new QHBoxLayout; previous = new QPushButton("Previous source", sourcePanel); next = new QPushButton("Next source", sourcePanel);
-		attention = new QPushButton("Next source needing attention", sourcePanel);
+		attention = new QPushButton("Fix next issue", sourcePanel);
 		attention->setAccessibleName("Next source needing attention");
-		navigation->addWidget(previous); navigation->addWidget(next); navigation->addWidget(attention); navigation->addStretch(); layout->addLayout(navigation);
-		skip = new QPushButton("Skip this optional source", sourcePanel); navigation->insertWidget(2, skip);
+		navigation->addWidget(previous); navigation->addWidget(next); navigation->addStretch(); layout->addLayout(navigation);
+		auto *repairNavigation = new QHBoxLayout; layout->addLayout(repairNavigation);
+		skip = new QPushButton("Skip optional", sourcePanel); skip->setAccessibleName("Skip this optional source");
+		repairNavigation->addWidget(skip); repairNavigation->addWidget(attention); repairNavigation->addStretch();
 		QObject::connect(skip, &QPushButton::clicked, &owner, [this] {
 			if (activeQuestions.isEmpty()) return;
 			auto &q = inventory[activeQuestions[sourceIndex]]; if (required(q)) return;
@@ -594,9 +840,11 @@ public:
 			showQuestion();
 		});
 		QObject::connect(attention, &QPushButton::clicked, &owner, [this] {
+			const auto found = issues(true); QSet<int> targets;
+			for (const auto &issue : found) for (int index : issue.questions) targets.insert(index);
 			for (int step = 1; step <= activeQuestions.size(); ++step) {
 				const int index = (sourceIndex + step) % activeQuestions.size();
-				if (!assignmentProblem(inventory[activeQuestions[index]]).isEmpty()) { sourceIndex = index; showQuestion(); return; }
+				if (targets.contains(activeQuestions[index])) { sourceIndex = index; showQuestion(); return; }
 			}
 		});
 		QObject::connect(previous, &QPushButton::clicked, &owner, [this] { --sourceIndex; showQuestion(); });
@@ -607,8 +855,9 @@ public:
 			body->setAlignment(Qt::AlignTop); q.panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Ignored);
 			const QString label = group == "Overlay" ? (role.startsWith("horizontal") ? "Landscape overlay " : "Portrait overlay ") + role.section('/', 1) :
 				group + " · " + (role == "graphic" ? lookName + " · " + (canvas == "vertical" ? "Portrait artwork" : "Landscape artwork") : PulseShow::roleName(role));
-			text(body, q.panel, label);
+			auto *questionHeading = text(body, q.panel, label); questionHeading->setObjectName("PulseSetupSectionTitle");
 			q.choice = new QComboBox(q.panel); q.choice->setAccessibleName(label);
+			questionHeading->setText(purpose(q));
 			const bool overlay = group == "Overlay";
 			const bool artwork = overlay || role == "graphic" || role == "chat";
 			q.choice->addItem(role == "graphic" ? "Choose your Lumia overlay…" : "None / skip when optional", "");
@@ -628,12 +877,13 @@ public:
 			sourceActions(owner, q, body, label);
 			if (!role.startsWith("feed")) {
 				q.choice->addItem("Add a Lumia browser link", "url"); q.url = new QLineEdit(q.panel);
-				q.url->setPlaceholderText("https://…"); q.url->setAccessibleName(label + " browser URL"); body->addWidget(q.url);
-				auto *paste = new QPushButton("Paste Lumia link", q.panel); body->insertWidget(1, paste);
-				paste->setAccessibleName(label + " paste Lumia link");
+				q.url->setObjectName("PulseSetupBrowserUrl"); q.url->setPlaceholderText("https://…"); q.url->setAccessibleName(label + " browser URL"); body->addWidget(q.url);
+				auto *paste = new QPushButton("Enter browser link…", q.panel); body->insertWidget(1, paste);
+				paste->setAccessibleName(label + " enter browser link");
 				QObject::connect(paste, &QPushButton::clicked, &owner, [choice = q.choice, url = q.url] {
 					choice->setCurrentIndex(choice->findData("url")); url->show(); url->setFocus();
 				});
+				text(body, q.panel, "Import the template in Lumia first, then copy its browser link using Lumia's chain button. A template import link cannot be displayed as a source.")->setObjectName("PulseSetupMuted");
 			}
 			if (role == "graphic") {
 				if (lookId == "countdown") text(body, q.panel, "Set the countdown duration and its command at zero in Lumia. The Lumia bulb on Show Control explains how to start it and change Look when it finishes.");
@@ -679,7 +929,10 @@ public:
 				if (url) url->setVisible(choice->currentData().toString() == "url");
 				draw(); if (changed) changed();
 			});
-			if (q.url) QObject::connect(q.url, &QLineEdit::textChanged, &owner, [this](const QString &) { updateAssignmentStatus(); if (changed) changed(); });
+			if (q.url) QObject::connect(q.url, &QLineEdit::textChanged, &owner, [this, panel = q.panel, choice = q.choice, url = q.url](const QString &) {
+				if (auto *selected = panel->findChild<QLabel *>("PulseSetupSelectedSource")) selected->setText(selectionSummary(choice, url));
+				updateAssignmentStatus(); if (changed) changed();
+			});
 		};
 		for (const auto &g : PulseShow::setupCatalogue()) {
 			QJsonArray ids; for (const auto &look : g.looks) ids.append(look.id);
@@ -740,19 +993,25 @@ public:
 			}
 		}
 		for (const QString &route : {QString("horizontal"), QString("vertical")}) for (int i = 1; i <= 3; ++i) addQuestion("Overlay", route + "/" + QString::number(i));
-		auto *form = new QFormLayout; duration = new QSpinBox(sourcePanel); duration->setRange(0, 3000); duration->setValue(850); duration->setSuffix(" ms");
-		form->addRow("Movement between Looks", duration); layout->addLayout(form);
+		auto *form = new QFormLayout; duration = new QSpinBox(lookPage); duration->setRange(0, 3000); duration->setValue(850); duration->setSuffix(" ms");
+		form->addRow("Movement between new Looks", duration); lookLayout->addLayout(form);
 		review = new QComboBox(sourcePanel); review->setAccessibleName("Flexible Look to review");
 		reviewCaption = text(layout, sourcePanel, "");
-		layout->addWidget(PulseSetupChoices::picker(review, sourcePanel, "Review another Look…"));
-		picture = new FlexibleLayoutDiagram(sourcePanel); layout->addWidget(picture); summary = text(layout, sourcePanel, "");
-		text(layout, sourcePanel, "The diagrams show placement in both formats. Saved layouts keep their artwork, camera treatments and movement. Shared alert layers apply to both new and copied layouts. Stage transitions stay saved unless you choose replacements on page 3. Check your actual feeds privately in Control after creation, before starting a broadcast.");
-		QObject::connect(review, &QComboBox::currentIndexChanged, &owner, [this](int) { draw(); });
+		review->hide(); reviewCaption->setObjectName("PulseSetupMuted");
+		auto *sourceDiagram = new QPushButton("Show placement diagram", sourcePanel); sourceDiagram->setCheckable(true); sourceDiagram->setObjectName("PulseSetupSourceDiagramToggle"); layout->addWidget(sourceDiagram);
+		picture = new FlexibleLayoutDiagram(sourcePanel); picture->setMaximumHeight(190); layout->addWidget(picture); picture->hide(); reviewCaption->hide();
+		QObject::connect(sourceDiagram, &QPushButton::toggled, picture, [sourceDiagram, picture = picture, caption = reviewCaption](bool visible) {
+			picture->setVisible(visible); caption->setVisible(visible); sourceDiagram->setText(visible ? "Hide placement diagram" : "Show placement diagram");
+		});
+		summary = new QLabel(sourcePanel); summary->hide();
+		text(layout, sourcePanel, "Placement only · no live sources are opened. Next reviews your actual assignments before anything is created.")->setObjectName("PulseSetupMuted");
+		QObject::connect(review, &QComboBox::currentIndexChanged, &owner, [this](int) { previewOverride.clear(); draw(); });
 		QObject::connect(lookReview, &QComboBox::currentIndexChanged, &owner, [this](int index) {
 			if (index >= 0) review->setCurrentIndex(review->findData(lookReview->itemData(index)));
 		});
 		QObject::connect(tabs, &QTabWidget::currentChanged, &owner, [this](int index) {
 			if (index >= 0) previewGroup(tabs->tabText(index));
+			refreshStageNavigation();
 		});
 		for (auto *page : {lookPage, sourcePage}) for (auto *combo : page->findChildren<QComboBox *>()) {
 			combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); combo->setMinimumContentsLength(18);
@@ -779,7 +1038,7 @@ public:
 		}
 		bool custom = false; for (const auto &group : groups) if (!usesSaved(group)) custom = true;
 		duration->setEnabled(custom);
-		for (int i = 0; i < int(inventory.size()); ++i) if (!groups.isEmpty() && inventory[i].group == "Overlay") activeQuestions.append(i);
+		for (int i = 0; i < int(inventory.size()); ++i) if (includeSharedLayers && !groups.isEmpty() && inventory[i].group == "Overlay") activeQuestions.append(i);
 		for (auto &q : inventory) if (q.scope) {
 			const QString scope = q.scope->currentData().toString(), label = q.scope->currentText();
 			q.scope->blockSignals(true); q.scope->clear(); q.scope->addItem("Every Look in this show", "");
@@ -796,7 +1055,10 @@ public:
 			q.scope->setCurrentIndex(q.scope->findData(scope)); q.scope->blockSignals(false);
 		}
 		sourceReview->blockSignals(true); sourceReview->clear();
-		for (int index : activeQuestions) sourceReview->addItem(inventory[index].choice->accessibleName(), index);
+		for (int index : activeQuestions) {
+			const auto &q = inventory[index]; sourceReview->addItem(purpose(q), index);
+			sourceReview->setItemData(sourceReview->count() - 1, (required(q) ? "Required · " : "Optional · ") + selectionSummary(q.choice, q.url), Qt::ToolTipRole);
+		}
 		sourceIndex = qMax(0, activeQuestions.indexOf(previousQuestion)); sourceReview->blockSignals(false);
 		lookReview->blockSignals(true); lookReview->clear();
 		for (int index = 0; index < review->count(); ++index) lookReview->addItem(review->itemText(index), review->itemData(index));
@@ -808,93 +1070,197 @@ public:
 			if (!q.role.startsWith("saved:") && q.choice->itemData(0).toString().isEmpty())
 				q.choice->setItemText(0, required(q) ? (q.requiredKind == "browser_source" ? "Choose your Lumia overlay…" : "Choose a source…") : "None / skip this optional source");
 		}
-		showQuestion(false); draw();
+		showQuestion(false); draw(); refreshStageNavigation();
 	}
-	QString problem(bool sources) const {
+	QVector<Issue> issues(bool sources) const {
+		QVector<Issue> result;
 		for (const QString &group : activeGroups) {
 			const auto &policy = stageTransitions[group];
 			for (auto *selector : {policy.horizontal, policy.vertical}) {
 				const QString choice = selector->currentData().toString();
-				if (!choice.startsWith("new-stinger:")) continue;
-				const auto spec = stingerDrafts.value(choice.mid(12)).toObject();
-				const QString issue = PulseSetupStingers::fileProblem(spec.value("path").toString());
-				if (!issue.isEmpty()) return group + "'s new stinger: " + issue;
+				if (choice.startsWith("new-stinger:")) {
+					const QString issue = PulseSetupStingers::fileProblem(stingerDrafts.value(choice.mid(12)).toObject().value("path").toString());
+					if (!issue.isEmpty()) result.append({group + "'s stinger: " + issue + " Return to Looks to edit it.", {}});
+				}
 			}
 		}
 		for (const auto &g : PulseShow::setupCatalogue()) {
-			if (!activeGroups.contains(g.name)) continue; bool any = false;
-			if (usesSaved(g.name)) { if (savedIds(g.name).isEmpty()) return "Choose at least one saved Look for " + g.name + "."; continue; }
-			for (const auto &look : g.looks) {
-				if (!looks.value(g.id + "/" + look.id).selected->isChecked()) continue; any = true;
-				if (sources) for (const QString &role : {look.main, look.optionalPresenter ? QString() : look.support}) {
-					if (role.isEmpty()) continue;
-					const QStringList routes = role == "graphic" ? QStringList{"horizontal", "vertical"} : QStringList{QString()};
-					for (const QString &route : routes) {
-						const auto *q = question(g.name, role, route, look.id);
-						if (!q || q->choice->currentData().toString().isEmpty()) return "Choose " +
-							(route.isEmpty() ? PulseShow::roleName(role) : route == "vertical" ? "portrait artwork" : "landscape artwork") +
-							" for " + g.name + " · " + look.name + ".";
-					}
-				}
-			}
-			if (!any) return "Choose at least one Look for " + g.name + ".";
+			if (!activeGroups.contains(g.name)) continue;
+			bool any = false;
+			if (usesSaved(g.name)) any = !savedIds(g.name).isEmpty();
+			else for (const auto &look : g.looks) if (looks.value(g.id + "/" + look.id).selected->isChecked()) any = true;
+			if (!any) result.append({"Choose at least one Look for " + g.name + ". Return to Looks.", {}});
 		}
-		if (sources) for (int i : activeQuestions) { const auto &q = inventory[i];
-			if (q.role.startsWith("saved:") && q.choice->currentData().toString().isEmpty()) {
-				OBSSourceAutoRelease original = obs_get_source_by_uuid(q.role.mid(6).toUtf8().constData());
-				if (!optionalSources.contains(q.role.mid(6)) || pulseIsNativeOverlaySource(original))
-					return "Choose a replacement source for " + q.choice->accessibleName() + ".";
-			}
-			if (!q.choice->currentData().toString().isEmpty()) {
-				const QString issue = assignmentProblem(q);
-				if (!issue.isEmpty()) return q.choice->accessibleName() + ": " + issue;
-			}
-			if (q.choice->currentData().toString() == "url") {
-				const QString error = PulseShow::browserLinkProblem(q.url->text());
-				if (!error.isEmpty()) return q.choice->accessibleName() + ": " + error;
-				if (!pulseWizardOverlayUrlAllowed(q.url->text())) return q.choice->accessibleName() + ": use a Lumia overlay or plugin browser link.";
-			}
-			if (q.scope && !q.choice->currentData().toString().isEmpty()) {
-				const QString scope = q.scope->currentData().toString(); bool matches = scope.isEmpty();
-				for (const auto &g : PulseShow::setupCatalogue()) if (activeGroups.contains(g.name)) {
-					if (usesSaved(g.name)) {
-						for (const auto &id : savedIds(g.name)) if (scope == g.name || scope == g.id + "/saved:" + id.toString()) matches = true;
-					} else for (const auto &look : g.looks) if (looks.value(g.id + "/" + look.id).selected->isChecked() &&
-						(scope == g.name || scope == g.id + "/" + look.id)) matches = true;
+		if (!sources) return result;
+		for (int index : activeQuestions) {
+			const auto &q = inventory[index];
+			const QString issue = assignmentProblem(q);
+			if (!issue.isEmpty()) result.append({purpose(q) + ": " + issue, {index}});
+		}
+		for (int index : activeQuestions) {
+			const auto &q = inventory[index];
+			const QString choice = q.choice->currentData().toString();
+			if (!q.scope || choice.isEmpty() || !assignmentProblem(q).isEmpty()) continue;
+			const QString scope = q.scope->currentData().toString();
+			const auto targets = overlayTargets(scope);
+			for (int previous : activeQuestions) {
+				if (previous >= index) continue;
+				const auto &other = inventory[previous];
+				if (!other.scope || other.role.section('/', 0, 0) != q.role.section('/', 0, 0) ||
+					other.choice->currentData() != q.choice->currentData() || choice == "url") continue;
+				for (const auto &target : overlayTargets(other.scope->currentData().toString())) if (targets.contains(target)) {
+					result.append({q.choice->currentText() + " is already used in another shared layer: " +
+						other.choice->accessibleName() + " and " + q.choice->accessibleName() +
+						" overlap. Keep one layer, or choose different Looks.", {previous, index}});
+					break;
 				}
-				if (!matches) return "Choose a selected Look or stage group for " + q.choice->accessibleName() + ", or skip this overlay.";
-				const auto targets = overlayTargets(scope);
-				for (int previous = 0; previous < i; ++previous) {
-					const auto &other = inventory[previous];
-					if (!other.scope || other.role.section('/', 0, 0) != q.role.section('/', 0, 0) ||
-						other.choice->currentData() != q.choice->currentData()) continue;
-					// Separate pasted-link questions have separate draft identities.
-					if (q.choice->currentData().toString() == "url") continue;
-					for (const auto &target : overlayTargets(other.scope->currentData().toString())) if (targets.contains(target))
-						return q.choice->currentText() + " is already used in another shared layer on this canvas for the same Look. Choose a different source or different Looks.";
+			}
+			for (const auto &g : PulseShow::setupCatalogue()) if (activeGroups.contains(g.name) && usesSaved(g.name)) {
+				bool targeted = scope.isEmpty() || scope == g.name;
+				for (const auto &id : savedIds(g.name)) if (scope == g.id + "/saved:" + id.toString()) targeted = true;
+				if (!targeted) continue;
+				QJsonObject bindings; QJsonArray disabled;
+				for (const auto &input : inventory) if (input.group == g.name && input.role.startsWith("saved:")) {
+					const QString uuid = input.role.mid(6), assignment = input.choice->currentData().toString();
+					if (assignment.isEmpty()) disabled.append(uuid); else if (assignment != uuid) bindings.insert(uuid, assignment);
 				}
-				for (const auto &g : PulseShow::setupCatalogue()) if (activeGroups.contains(g.name) && usesSaved(g.name)) {
-					bool targeted = scope.isEmpty() || scope == g.name;
-					for (const auto &id : savedIds(g.name)) if (scope == g.id + "/saved:" + id.toString()) targeted = true;
-					if (!targeted) continue;
-					QJsonObject bindings; QJsonArray disabled;
-					for (const auto &input : inventory) if (input.group == g.name && input.role.startsWith("saved:")) {
-						const QString uuid = input.role.mid(6), assignment = input.choice->currentData().toString();
-						if (assignment.isEmpty()) disabled.append(uuid); else if (assignment != uuid) bindings.insert(uuid, assignment);
-					}
-					const QString route = q.role.section('/', 0, 0), name = saved[g.name].stage.value(route).toString();
-					OBSSourceAutoRelease scene = obs_get_source_by_name(name.toUtf8().constData());
-					if (!scene && route == "vertical") {
-						OBSCanvasAutoRelease canvas = obs_get_canvas_by_name("Pulse Weaver Vertical");
-						if (canvas) scene = obs_canvas_get_source_by_name(canvas, name.toUtf8().constData());
-					}
-					if (pulseSceneUsesSource(scene, q.choice->currentData().toString(), bindings, disabled))
-						return q.choice->currentText() + " already exists in saved layout “" + saved[g.name].stage.value("name").toString() +
-							"”. Leave this shared slot empty, or choose another scope or source.";
+				const QString route = q.role.section('/', 0, 0), name = saved[g.name].stage.value(route).toString();
+				OBSSourceAutoRelease scene = obs_get_source_by_name(name.toUtf8().constData());
+				if (!scene && route == "vertical") {
+					OBSCanvasAutoRelease canvas = obs_get_canvas_by_name("Pulse Weaver Vertical");
+					if (canvas) scene = obs_canvas_get_source_by_name(canvas, name.toUtf8().constData());
 				}
+				if (pulseSceneUsesSource(scene, choice, bindings, disabled))
+					result.append({q.choice->currentText() + " already exists in saved layout “" +
+						saved[g.name].stage.value("name").toString() + "”. Leave " +
+						q.choice->accessibleName() + " empty, or choose another scope or source.", {index}});
 			}
 		}
-		return {};
+		return result;
+	}
+	QString problem(bool sources) const {
+		const auto found = issues(sources);
+		return found.isEmpty() ? QString() : found.first().message;
+	}
+	void focusFirstProblem() {
+		const auto found = issues(true);
+		if (found.isEmpty()) return;
+		for (int index : found.first().questions) {
+			const int position = activeQuestions.indexOf(index);
+			if (position >= 0) { sourceIndex = position; showQuestion(); return; }
+		}
+	}
+	void setSharedLayersEnabled(bool enabled) {
+		if (sharedLayers && sharedLayers->isChecked() != enabled) { sharedLayers->setChecked(enabled); return; }
+		includeSharedLayers = enabled; update(activeGroups);
+	}
+	bool sharedLayersEnabled() const { return includeSharedLayers; }
+	void buildReview(QWidget *parent, QVBoxLayout *layout, std::function<void()> editSources) {
+		returnToSources = std::move(editSources);
+		reviewBody = new QWidget(parent); reviewBody->setObjectName("PulseSetupReview");
+		reviewLayout = new QVBoxLayout(reviewBody); reviewLayout->setContentsMargins(0, 0, 0, 0);
+		reviewLayout->setAlignment(Qt::AlignTop); layout->addWidget(reviewBody);
+		refreshReview();
+	}
+	QString transitionSummary(const QString &group) const {
+		const auto &policy = stageTransitions[group];
+		auto effective = [this, &group](QComboBox *choice, QSpinBox *fadeTime) {
+			if (choice->currentData().toString().isEmpty()) return usesSaved(group) ? QString("Keep saved transition") : QString("Fade · 500 ms");
+			if (choice->currentData().toString() == "fade") return QString("Fade · %1 ms").arg(fadeTime->value());
+			return choice->currentText();
+		};
+		return "Landscape: " + effective(policy.horizontal, policy.horizontalDuration) + "\nPortrait: " + effective(policy.vertical, policy.verticalDuration);
+	}
+	void openReviewGroup(QWidget *parent, const QString &group) {
+		QDialog dialog(parent); dialog.setObjectName("PulseWeaverReviewGroupDialog"); dialog.setProperty("pulseSetupDialog", true);
+		dialog.setWindowTitle(group == "Overlay" ? "Review shared layers" : "Review " + group);
+		int assignments = 0; for (int index : activeQuestions) if (inventory[index].group == group) ++assignments;
+		const int initialHeight = qBound(380, 220 + assignments * 100, 620);
+		dialog.resize(820, initialHeight);
+		if (const auto *screen = parent->screen()) { const auto available = screen->availableGeometry().size();
+			dialog.resize(qMin(820, available.width() - 40), qMin(initialHeight, available.height() - 60)); }
+		auto *outer = new QVBoxLayout(&dialog);
+		auto *heading = new QLabel(group == "Overlay" ? "Shared layers · both canvases" : group, &dialog);
+		heading->setObjectName("PulseSetupTitle"); outer->addWidget(heading);
+		if (group != "Overlay") {
+			auto *transitions = new QLabel(transitionSummary(group), &dialog); transitions->setWordWrap(true);
+			transitions->setObjectName("PulseSetupMuted"); outer->addWidget(transitions);
+		}
+		auto *scroll = new QScrollArea(&dialog); scroll->setWidgetResizable(true); outer->addWidget(scroll, 1);
+		auto *body = new QWidget(scroll); auto *rows = new QVBoxLayout(body); rows->setAlignment(Qt::AlignTop); scroll->setWidget(body);
+		QMap<QString, int> uses;
+		for (int index : activeQuestions) { const QString id = inventory[index].choice->currentData().toString(); if (!id.isEmpty() && id != "url") ++uses[id]; }
+		int editTarget = -1;
+		for (int index : activeQuestions) {
+			const auto &q = inventory[index]; if (q.group != group) continue;
+			auto *surface = new QWidget(body); surface->setObjectName("PulseSetupSurface"); auto *row = new QHBoxLayout(surface);
+			auto *values = new QVBoxLayout; auto *title = new QLabel(purpose(q), surface);
+			title->setTextFormat(Qt::PlainText); title->setWordWrap(true); title->setObjectName("PulseSetupSectionTitle"); values->addWidget(title);
+			const QString id = q.choice->currentData().toString();
+			QString description = id.isEmpty() && !required(q) ? "Skipped · optional" : selectionSummary(q.choice, q.url);
+			if (id.startsWith("new:") || id == "url") description += " · new source";
+			else if (!id.isEmpty()) description += " · existing source";
+			if (uses.value(id) > 1) description += QString(" · shared by %1 assignments").arg(uses.value(id));
+			if (q.scope) description += "\nVisible in: " + q.scope->currentText();
+			auto *detail = new QLabel(description, surface); detail->setTextFormat(Qt::PlainText); detail->setWordWrap(true);
+			detail->setObjectName("PulseSetupMuted"); values->addWidget(detail);
+			if (id == "url" && q.url) {
+				auto *link = new QLineEdit(q.url->text(), surface); link->setReadOnly(true); link->setObjectName("PulseSetupReviewUrl");
+				link->setAccessibleName("Entered browser link · not tested"); values->addWidget(link);
+			}
+			row->addLayout(values, 1);
+			auto *edit = new QPushButton("Edit assignment", surface); edit->setObjectName("PulseSetupReviewEdit");
+			edit->setProperty("pulseQuestionIndex", index); edit->setAccessibleName("Edit " + purpose(q)); row->addWidget(edit);
+			QObject::connect(edit, &QPushButton::clicked, &dialog, [index, &editTarget, &dialog] { editTarget = index; dialog.accept(); });
+			rows->addWidget(surface);
+		}
+		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog); outer->addWidget(buttons);
+		QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+		dialog.exec();
+		if (editTarget >= 0) {
+			sourceIndex = activeQuestions.indexOf(editTarget); showQuestion();
+			if (returnToSources) returnToSources();
+		}
+	}
+	void refreshReview() {
+		if (!reviewLayout) return;
+		while (auto *item = reviewLayout->takeAt(0)) { delete item->widget(); delete item; }
+		auto label = [&](const QString &text, const char *role = "PulseSetupMuted") {
+			auto *value = new QLabel(text, reviewBody); value->setTextFormat(Qt::PlainText); value->setWordWrap(true);
+			value->setObjectName(role); reviewLayout->addWidget(value); return value;
+		};
+		const auto request = draft("Show preview");
+		label(QString("%1 Stages · %2 paired Looks · %3 new source definitions · %4 new stingers")
+			.arg(activeGroups.size()).arg(review->count()).arg(request.value("newSources").toObject().size())
+			.arg(request.value("newStingers").toObject().size()), "PulseSetupSectionTitle");
+		label("Open a Stage card to check its actual sources and edit an assignment. Creation adds this show; it does not start a broadcast.", "PulseSetupNotice");
+		auto *cards = new QWidget(reviewBody); auto *grid = new QGridLayout(cards); grid->setContentsMargins(0, 0, 0, 0);
+		int cardIndex = 0;
+		for (const auto &g : PulseShow::setupCatalogue()) if (activeGroups.contains(g.name)) {
+			QStringList names;
+			for (int index = 0; index < review->count(); ++index)
+				if (review->itemData(index).toString().startsWith(g.id + "/")) names.append(review->itemText(index).section(" · ", -1));
+			int assigned = 0, total = 0;
+			for (int index : activeQuestions) if (inventory[index].group == g.name) {
+				++total; if (!inventory[index].choice->currentData().toString().isEmpty()) ++assigned;
+			}
+			auto *card = PulseSetupChoices::card(cards, g.name, names.join(", ") + QString("\n%1 of %2 sources assigned\n").arg(assigned).arg(total) + transitionSummary(g.name));
+			card->setCheckable(false); card->setProperty("pulseReviewGroup", g.name);
+			card->setAccessibleName("Review " + g.name); grid->addWidget(card, cardIndex / 2, cardIndex % 2); ++cardIndex;
+			QObject::connect(card, &QPushButton::clicked, reviewBody, [this, group = g.name] { openReviewGroup(reviewBody, group); });
+		}
+		if (includeSharedLayers) {
+			int assigned = 0; for (int index : activeQuestions) if (inventory[index].group == "Overlay" && !inventory[index].choice->currentData().toString().isEmpty()) ++assigned;
+			auto *card = PulseSetupChoices::card(cards, "Shared layers", QString("%1 of 6 optional layers assigned\nReview visibility, shared sources and both formats").arg(assigned));
+			card->setCheckable(false); card->setProperty("pulseReviewGroup", "Overlay"); card->setAccessibleName("Review shared layers");
+			grid->addWidget(card, cardIndex / 2, cardIndex % 2);
+			QObject::connect(card, &QPushButton::clicked, reviewBody, [this] { openReviewGroup(reviewBody, "Overlay"); });
+		}
+		reviewLayout->addWidget(cards);
+		label(includeSharedLayers ? "Empty optional feeds and shared layers are skipped." : "Shared overlay layers are deferred; enable them on Sources if needed.");
+		label("New browser sources start with output audio off. Existing source audio settings are preserved. After creation, check both canvases, microphone/desktop audio, one intended overlay audio owner, transitions and destinations. Browser viewports may be separate in each format.", "PulseSetupNotice");
+		const auto found = issues(true);
+		if (!found.isEmpty()) label(found.first().message, "PulseSetupError");
 	}
 	QJsonObject draft(const QString &name) const {
 		QJsonArray stages, overlays; QJsonObject definitions, selectedStingers;
@@ -945,7 +1311,7 @@ public:
 			}
 			stages.append(QJsonObject{{"theme", g.id}, {"looks", ids}, {"roles", roles}, {"lookArtwork", artwork}, {"framing", frames}, {"transitions", transitionChoices}});
 		}
-		for (const auto &q : inventory) if (q.group == "Overlay" && !q.choice->currentData().toString().isEmpty()) {
+		for (const auto &q : inventory) if (includeSharedLayers && q.group == "Overlay" && !q.choice->currentData().toString().isEmpty()) {
 			QJsonArray visible; for (const auto &key : selectedKeys) { const auto *g = PulseShow::theme(key.toString().section('/', 0, 0));
 				if (q.scope->currentData().toString().isEmpty() || q.scope->currentData().toString() == g->name || q.scope->currentData() == key.toString()) visible.append(key); }
 			if (!visible.isEmpty()) overlays.append(QJsonObject{{"canvas", q.role.section('/', 0, 0)}, {"order", q.role.section('/', 1).toInt()}, {"source", sourceId(q)}, {"looks", visible}});
@@ -953,7 +1319,7 @@ public:
 		return {{"schema", 2}, {"overlayProvider", "lumia"}, {"name", name}, {"stages", stages}, {"newSources", definitions}, {"newStingers", selectedStingers}, {"overlays", overlays}};
 	}
 	void draw() {
-		const QString key = review->currentData().toString(); const auto *g = PulseShow::theme(key.section('/', 0, 0));
+		const QString key = previewOverride.isEmpty() ? review->currentData().toString() : previewOverride; const auto *g = PulseShow::theme(key.section('/', 0, 0));
 		if (g) for (int index = 0; index < tabs->count(); ++index) if (tabs->tabText(index) == g->name) {
 			const bool blocked = tabs->blockSignals(true); tabs->setCurrentIndex(index); tabs->blockSignals(blocked); break;
 		}
@@ -964,10 +1330,10 @@ public:
 			if (entry.toObject().value("id").toString() == key.section('/', 1).mid(6)) savedLook = entry.toObject();
 		auto diagram = [&](bool beforeAssignment) {
 			bool hasLayers = false;
-			if (!beforeAssignment) for (const auto &q : inventory) if (q.scope && !q.choice->currentData().toString().isEmpty() &&
+			if (includeSharedLayers && !beforeAssignment) for (const auto &q : inventory) if (q.scope && !q.choice->currentData().toString().isEmpty() &&
 				overlayTargets(q.scope->currentData().toString()).contains(key)) hasLayers = true;
 			QPixmap image(760, hasLayers ? 408 : 320); image.fill(QColor("#0b1220")); QPainter painter(&image);
-		QFont diagramFont = painter.font(); diagramFont.setPixelSize(18); painter.setFont(diagramFont);
+		QFont diagramFont = painter.font(); diagramFont.setPixelSize(24); painter.setFont(diagramFont);
 		painter.setRenderHint(QPainter::TextAntialiasing);
 		for (bool vertical : {false, true}) {
 			const QRectF canvas = vertical ? QRectF(590, 26, 158, 281) : QRectF(20, 26, 500, 281.25);
@@ -990,14 +1356,14 @@ public:
 				const bool fullGraphic = panel.role == "graphic" && fullCanvasArtwork(q);
 				if (fullGraphic) panel.rect = {0, 0, 1, 1};
 				QRectF rect(canvas.x() + panel.rect.x() * canvas.width(), canvas.y() + panel.rect.y() * canvas.height(), panel.rect.width() * canvas.width(), panel.rect.height() * canvas.height());
-				painter.fillRect(rect, fullGraphic ? QColor(23, 102, 128, 80) : panel.role == "feedA" ? QColor("#66479c") : QColor("#176680"));
+				painter.fillRect(rect, fullGraphic ? QColor(45, 77, 96, 100) : panel.role == "feedA" ? QColor("#3A4963") : QColor("#294A59"));
 				painter.setPen(QColor("#52daef")); painter.drawRect(rect);
 				QString label = panel.role == "graphic" ? "Artwork" : PulseShow::roleName(panel.role);
 				if (!beforeAssignment && q) label += "\n" + painter.fontMetrics().elidedText(q->choice->currentData().toString().isEmpty() ? "Not assigned" : q->choice->currentText(), Qt::ElideRight, qMax(0, int(rect.width()) - 10));
 				painter.setPen(Qt::white); painter.drawText(rect.adjusted(5, 1, -5, -1), Qt::AlignCenter | Qt::TextWordWrap, label);
 			}
 			QStringList layers;
-			if (g) for (const auto &q : inventory) if (q.group == "Overlay" &&
+			if (includeSharedLayers && g) for (const auto &q : inventory) if (q.group == "Overlay" &&
 				q.role.startsWith(vertical ? "vertical/" : "horizontal/") && !q.choice->currentData().toString().isEmpty() &&
 				(q.scope->currentData().toString().isEmpty() || q.scope->currentData().toString() == g->name || q.scope->currentData().toString() == key))
 				layers.append(q.role.section('/', 1) + ": " + q.choice->currentText());
@@ -1013,9 +1379,13 @@ public:
 		painter.end(); return image;
 		};
 		picture->setDiagram(diagram(false)); lookPicture->setDiagram(diagram(true));
-		lookCaption->setText(review->currentIndex() < 0 ? "Select a Look to preview." : "Preview: " + review->currentText());
+		if (configurePicture) configurePicture->setDiagram(diagram(true));
+		const QString previewName = look && g ? g->name + " · " + look->name :
+			!savedLook.isEmpty() ? savedLook.value("name").toString() : review->currentText();
+		lookCaption->setText(key.isEmpty() ? "Select Preview on a Look to inspect it." : "Preview: " + previewName);
 		reviewCaption->setText(review->currentIndex() < 0 ? "Select a Look to review." : "Review: " + review->currentText());
 		summary->setText(QString("%1 stage groups · %2 selected Looks · landscape and portrait. Review each Look and its assigned source names above.").arg(activeGroups.size()).arg(review->count()));
 		updateAssignmentStatus();
+		refreshStageNavigation();
 	}
 };

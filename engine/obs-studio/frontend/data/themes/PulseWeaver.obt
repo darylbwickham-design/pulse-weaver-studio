@@ -223,7 +223,7 @@ QPushButton#PulseWeaverLive:focus, QPushButton#PulseWeaverRecord:focus { border-
 /* Click-through cards retain their own flexible height; no inherited cap. */
 QDialog#PulseWeaverCommandPalette { background: var(--bg_window); }
 QLineEdit#PulseWeaverCommandSearch { min-height: 26px; padding: 8px 12px; font-size: 15px; }
-QPushButton#PulseWeaverChoiceCard, QPushButton#PulseWeaverSetupChoiceCard {
+QPushButton#PulseWeaverChoiceCard {
     min-height: 0; max-height: 16777215px; padding: 0; border-radius: 11px;
     background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2D4056,stop:0.55 #223247,stop:1 #172538);
 }
@@ -231,12 +231,8 @@ QPushButton#PulseWeaverChoiceCard, QPushButton#PulseWeaverSetupChoiceCard {
  * Explicit role dimensions also replace Yami's inherited height:22px. */
 QPushButton#PulseWeaverChoiceCard { height: 90px; min-height: 90px; max-height: 90px; }
 QPushButton#PulseWeaverChoiceCard[pulseSetupCategoryCard="true"] { height: 106px; min-height: 106px; max-height: 106px; }
-/* A 40px content floor + 20px vertical padding + 4px borders makes 64px.
- * Native multiline hints grow beyond that floor, including after checked
- * state/theme repolishing; -1 clears the inherited fixed height. */
-QPushButton#PulseWeaverSetupChoiceCard { height: -1px; min-height: 40px; padding: 10px; }
-QPushButton#PulseWeaverChoiceCard:hover, QPushButton#PulseWeaverSetupChoiceCard:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #415A75,stop:1 #253B53); border-top-color: #90AAC5; }
-QPushButton#PulseWeaverChoiceCard:pressed, QPushButton#PulseWeaverSetupChoiceCard:pressed, QPushButton#PulseWeaverSetupChoiceCard:checked { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #111E30,stop:1 var(--pw_selection)); border-top-color: #08111C; border-bottom-color: var(--primary_light); }
+QPushButton#PulseWeaverChoiceCard:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #415A75,stop:1 #253B53); border-top-color: #90AAC5; }
+QPushButton#PulseWeaverChoiceCard:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #111E30,stop:1 var(--pw_selection)); border-top-color: #08111C; border-bottom-color: var(--primary_light); }
 QPushButton#PulseWeaverSetupBack { padding: 5px 12px; }
 QToolButton#PulseWeaverMotionPolicyChoice { height: -1px; min-height: 54px; max-height: 16777215px; padding: 5px 10px; text-align: left; }
 QToolButton#PulseWeaverMotionPlacement { height: -1px; min-height: 24px; max-height: 16777215px; padding: 4px 8px; }
@@ -244,3 +240,96 @@ QPushButton#PulseWeaverMotionStageChoice { height: 24px; min-height: 24px; max-h
 QToolButton#PulseWeaverMotionSourceChoice { height: -1px; min-height: 24px; max-height: 16777215px; padding: 4px 8px; }
 QToolButton#PulseWeaverMotionSourceChoice[pulseSelected="true"] { background: var(--pw_selection); border-top-color: var(--pw_accent); color: var(--text_light); }
 QToolButton#PulseWeaverMotionVisibility { height: -1px; min-height: 22px; max-height: 16777215px; padding: 3px 7px; }
+
+/* Show setup owns a calm blue/cyan accent without changing the production
+ * console. All shell rules are scoped to the wizard or an explicit setup dialog. */
+QWizard#PulseWeaverSetupWizard, QDialog[pulseSetupDialog="true"], QDialog#PulseWeaverSetupDialog {
+    background: #0D1724; color: #EAF2FC; font-size: 14px;
+}
+#PulseWeaverSetupWizard QWizardPage { background: transparent; border: none; }
+#PulseWeaverSetupWizard QLabel, QDialog[pulseSetupDialog="true"] QLabel, QDialog#PulseWeaverSetupDialog QLabel { background: transparent; }
+#PulseWeaverSetupWizard QLabel#PulseSetupEyebrow,
+QDialog[pulseSetupDialog="true"] QLabel#PulseSetupEyebrow,
+QDialog#PulseWeaverSetupDialog QLabel#PulseSetupEyebrow { color: #72DAE8; font-size: 11px; font-weight: 700; padding: 0; }
+#PulseWeaverSetupWizard QLabel#PulseSetupTitle,
+QDialog[pulseSetupDialog="true"] QLabel#PulseSetupTitle,
+QDialog#PulseWeaverSetupDialog QLabel#PulseSetupTitle { color: #F2F7FF; font-size: 23px; font-weight: 700; padding: 0; }
+#PulseWeaverSetupWizard QLabel#PulseSetupSubtitle,
+QDialog[pulseSetupDialog="true"] QLabel#PulseSetupSubtitle,
+QDialog#PulseWeaverSetupDialog QLabel#PulseSetupSubtitle { color: #B4C5D9; font-size: 14px; font-weight: 400; padding: 0; }
+#PulseWeaverSetupWizard QLabel#PulseSetupMuted,
+QDialog[pulseSetupDialog="true"] QLabel#PulseSetupMuted,
+QDialog#PulseWeaverSetupDialog QLabel#PulseSetupMuted { color: #ADBED3; font-size: 13px; font-weight: 400; }
+#PulseWeaverSetupWizard QLabel#PulseSetupSectionTitle,
+QDialog[pulseSetupDialog="true"] QLabel#PulseSetupSectionTitle,
+QDialog#PulseWeaverSetupDialog QLabel#PulseSetupSectionTitle { color: #EAF2FC; font-size: 15px; font-weight: 600; }
+#PulseWeaverSetupWizard QWidget#PulseSetupSurface,
+QDialog[pulseSetupDialog="true"] QWidget#PulseSetupSurface,
+QDialog#PulseWeaverSetupDialog QWidget#PulseSetupSurface {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #1C2C40,stop:1 #142234);
+    border: 1px solid #344B65; border-top-color: #506982; border-radius: 12px;
+}
+#PulseWeaverSetupWizard QWidget#PulseSetupNotice,
+QDialog[pulseSetupDialog="true"] QWidget#PulseSetupNotice,
+QDialog#PulseWeaverSetupDialog QWidget#PulseSetupNotice {
+    background: #142C3A; color: #D5EDF6; border: 1px solid #346079; border-radius: 10px; padding: 10px;
+}
+#PulseWeaverSetupWizard QLabel[setupPhaseState="upcoming"] { color: #9CAFC7; background: #152235; border: 1px solid #2E435C; border-radius: 8px; padding: 7px 12px; }
+#PulseWeaverSetupWizard QLabel[setupPhaseState="complete"] { color: #B7E5EF; background: #173542; border: 1px solid #376476; border-radius: 8px; padding: 7px 12px; }
+#PulseWeaverSetupWizard QLabel[setupPhaseState="current"] { color: #F0FCFF; background: #21465F; border: 1px solid #6DD4E4; border-bottom: 3px solid #0A1A29; border-radius: 8px; padding: 7px 12px; font-weight: 700; }
+#PulseWeaverSetupWizard QGroupBox,
+QDialog[pulseSetupDialog="true"] QGroupBox,
+QDialog#PulseWeaverSetupDialog QGroupBox { background: #142234; border: 1px solid #344B65; border-top-color: #506982; border-radius: 12px; margin-top: 15px; padding: 12px; }
+#PulseWeaverSetupWizard QGroupBox::title,
+QDialog[pulseSetupDialog="true"] QGroupBox::title,
+QDialog#PulseWeaverSetupDialog QGroupBox::title { color: #BDDAE9; font-weight: 600; }
+#PulseWeaverSetupWizard QScrollArea,
+QDialog[pulseSetupDialog="true"] QScrollArea,
+QDialog#PulseWeaverSetupDialog QScrollArea { background: transparent; border: none; }
+#PulseWeaverSetupWizard QLineEdit, #PulseWeaverSetupWizard QComboBox, #PulseWeaverSetupWizard QSpinBox,
+QDialog[pulseSetupDialog="true"] QLineEdit, QDialog[pulseSetupDialog="true"] QComboBox, QDialog[pulseSetupDialog="true"] QSpinBox,
+QDialog#PulseWeaverSetupDialog QLineEdit, QDialog#PulseWeaverSetupDialog QComboBox, QDialog#PulseWeaverSetupDialog QSpinBox {
+    min-height: 24px; padding: 7px 10px; background: #0B1624; border: 1px solid #405874; border-top-color: #07101B; border-bottom-color: #5C728A; border-radius: 9px; color: #ECF4FF;
+}
+#PulseWeaverSetupWizard QLineEdit:focus, #PulseWeaverSetupWizard QComboBox:focus, #PulseWeaverSetupWizard QSpinBox:focus,
+QDialog[pulseSetupDialog="true"] QLineEdit:focus, QDialog[pulseSetupDialog="true"] QComboBox:focus, QDialog[pulseSetupDialog="true"] QSpinBox:focus,
+QDialog#PulseWeaverSetupDialog QLineEdit:focus, QDialog#PulseWeaverSetupDialog QComboBox:focus, QDialog#PulseWeaverSetupDialog QSpinBox:focus { border-color: #73DCEB; }
+#PulseWeaverSetupWizard QPushButton, QDialog[pulseSetupDialog="true"] QPushButton, QDialog#PulseWeaverSetupDialog QPushButton {
+    height: -1px; min-height: 26px; max-height: 16777215px; margin: 0; padding: 7px 14px;
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #354B64,stop:0.5 #293D56,stop:1 #1B2D43);
+    border: 1px solid #49627F; border-top-color: #7088A3; border-bottom: 3px solid #07111D; border-radius: 10px; color: #EAF2FC; font-weight: 600;
+}
+#PulseWeaverSetupWizard QPushButton:hover, QDialog[pulseSetupDialog="true"] QPushButton:hover, QDialog#PulseWeaverSetupDialog QPushButton:hover {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #426581,stop:1 #27445F); border-top-color: #91C3D7;
+}
+#PulseWeaverSetupWizard QPushButton:pressed, QDialog[pulseSetupDialog="true"] QPushButton:pressed, QDialog#PulseWeaverSetupDialog QPushButton:pressed {
+    background: #182B41; border-top-color: #07111D; border-bottom-color: #6A8AA4;
+}
+#PulseWeaverSetupWizard QPushButton:focus, QDialog[pulseSetupDialog="true"] QPushButton:focus, QDialog#PulseWeaverSetupDialog QPushButton:focus { border-left-color: #85E5F0; border-right-color: #85E5F0; border-top-color: #85E5F0; }
+#PulseWeaverSetupWizard QPushButton[setupPrimary="true"], QDialog[pulseSetupDialog="true"] QPushButton[setupPrimary="true"], QDialog#PulseWeaverSetupDialog QPushButton[setupPrimary="true"] {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #59C5DD,stop:0.5 #319DBD,stop:1 #247A9D);
+    color: #061D2A; border-color: #60CCDF; border-top-color: #B5F5FC; border-bottom: 3px solid #0B3A52;
+}
+#PulseWeaverSetupWizard QPushButton[setupPrimary="true"]:hover, QDialog[pulseSetupDialog="true"] QPushButton[setupPrimary="true"]:hover, QDialog#PulseWeaverSetupDialog QPushButton[setupPrimary="true"]:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #8CE4EF,stop:1 #42B6CF); }
+#PulseWeaverSetupWizard QPushButton[setupPrimary="true"]:pressed, QDialog[pulseSetupDialog="true"] QPushButton[setupPrimary="true"]:pressed, QDialog#PulseWeaverSetupDialog QPushButton[setupPrimary="true"]:pressed { background: #2A8FAB; border-top-color: #0B3A52; border-bottom-color: #91DFEB; }
+#PulseWeaverSetupWizard QPushButton:disabled, QDialog[pulseSetupDialog="true"] QPushButton:disabled, QDialog#PulseWeaverSetupDialog QPushButton:disabled { background: #172435; color: #8195AF; border-color: #2C4058; border-bottom-color: #0B1522; }
+
+/* Responsive choices paint title, detail and selection inside their own surface.
+ * Clear inherited button dimensions: geometry is owned by heightForWidth. */
+QPushButton#PulseWeaverSetupChoiceCard {
+    height: -1px; min-height: 0; max-height: 16777215px; min-width: 0; margin: 0; padding: 0; font-size: 15px; font-weight: 600;
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #293E55,stop:0.55 #203248,stop:1 #17273B);
+    color: #EDF4FF; border: 2px solid #3C526D; border-top-color: #627C97; border-bottom: 3px solid #081320; border-radius: 12px;
+}
+QPushButton#PulseWeaverSetupChoiceCard:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #34556F,stop:1 #213D56); border-color: #668EA8; border-top-color: #9ACBDD; }
+QPushButton#PulseWeaverSetupChoiceCard:checked { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #24516A,stop:0.55 #1C3D56,stop:1 #183149); border-color: #60C8D9; border-top-color: #9CEAF2; color: #F2FCFF; }
+QPushButton#PulseWeaverSetupChoiceCard:checked:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2D617A,stop:1 #21465E); border-color: #89E2ED; }
+QPushButton#PulseWeaverSetupChoiceCard:pressed { background: #162D43; border-top-color: #081320; border-bottom-color: #7898AF; }
+QPushButton#PulseWeaverSetupChoiceCard:focus { border-color: #A5F1F7; border-top-color: #E0FCFF; }
+QPushButton#PulseWeaverSetupChoiceCard:disabled { background: #152235; color: #8296AD; border-color: #2D4057; border-top-color: #3B4D64; border-bottom-color: #091420; }
+QWidget#PulseWeaverSetupChoiceGrid { background: transparent; border: none; }
+QLabel#PulseSetupChoiceEmpty { color: #BDCADB; background: #16273B; border: 1px solid #3B536E; border-radius: 10px; padding: 16px; font-size: 14px; }
+#PulseWeaverSetupWizard QLabel#PulseSetupCurrentIssue, #PulseWeaverSetupWizard QLabel#PulseSetupError,
+QDialog[pulseSetupDialog="true"] QLabel#PulseSetupCurrentIssue, QDialog[pulseSetupDialog="true"] QLabel#PulseSetupError,
+QDialog#PulseWeaverSetupDialog QLabel#PulseSetupCurrentIssue, QDialog#PulseWeaverSetupDialog QLabel#PulseSetupError { color: #FFE6BA; background: #342D23; border: 1px solid #8A7147; border-radius: 9px; padding: 10px 12px; font-size: 14px; }
+QLineEdit#PulseSetupChoiceSearch { min-height: 26px; padding: 8px 12px; font-size: 14px; }

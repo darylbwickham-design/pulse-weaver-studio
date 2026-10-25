@@ -1,10 +1,14 @@
 # Pulse Weaver 2.0 preview
 
-Version: **2.0.0-unstable.3**. Windows native interface and local-controls preview.
+Version: **2.0.0-unstable.4**. Windows native interface and local-controls preview.
 
 This build brings the main workspaces forward, gives programme previews more room and uses a consistent tactile style for operating controls. Within each task, choose a category, open its focused page and use Back to return. It retains the native Qt/OBS engine, Stage/Look system, landscape and portrait outputs, native Move, stingers, audio mixer and account connections. It is an unstable preview for testing before using it for an important broadcast.
 
 ## What changes
+
+This revision rebuilds **Build my show** into five click-through phases: Start, Sections, Looks, Sources and Review. Previewing a Look does not include it. Configure opens a focused editor, transitions have separate landscape/portrait tabs, and optional shared layers can be deferred. Review shows actual assignments and lets you return directly to their source questions. The wizard uses the main UI's raised navy/cyan controls, with wrapping and visible actions checked at three window sizes. See [Create your show](SETUP-WIZARD-GUIDE.md).
+
+The Show output/status and broadcast controls now sit above the programme previews and mixer. The compact mixer retains its content-based expanded height, and the unused portrait bitrate control for landscape-only Kick stays hidden.
 
 The four main workspace controls—**Show**, **Lights**, **Camera** and **Action**—stay visible as large buttons. The Show operating row combines Stage, capture and Show/Control choices; it removes the separate heading/control block so programme previews get more of a small display. Buttons share the sliders' raised cap, highlight and pressed feedback instead of mixing flat navigation with tactile sliders.
 
@@ -53,7 +57,7 @@ Existing Lumia routes and plugin command identities remain in place. To test Lum
 
 ## Install and test separately
 
-The preview installer is named `PulseWeaver-2-Preview-Setup-2.0.0-unstable.3.exe`. Its product is **Pulse Weaver 2 Preview** and its default directory is `%LOCALAPPDATA%\Programs\Pulse Weaver 2 Preview`. It has its own shortcut, uninstall registration, configuration, recovery backups and updater product identity. Installing this dedicated installer does not upgrade the regular Alpha installation. The ordinary unstable installer family does not provide this isolation. Installing this revision updates an existing **2 Preview** instance and preserves that instance's configuration.
+The preview installer is named `PulseWeaver-2-Preview-Setup-2.0.0-unstable.4.exe`. Its product is **Pulse Weaver 2 Preview** and its default directory is `%LOCALAPPDATA%\Programs\Pulse Weaver 2 Preview`. It has its own shortcut, uninstall registration, configuration, recovery backups and updater product identity. Installing this dedicated installer does not upgrade the regular Alpha installation. The ordinary unstable installer family does not provide this isolation. Installing this revision updates an existing **2 Preview** instance and preserves that instance's configuration.
 
 Keep a fresh profile for the first check. The installer leaves automatic launch unchecked for the preview. Close other instances for a simple first run; if you deliberately run them together, ensure API, OBS WebSocket and overlay ports do not collide and verify which window each external client controls. Avoid streaming from both while comparing the interface.
 

@@ -1,3 +1,17 @@
+# Pulse Weaver 2.0.0-unstable.4 — Click-through show setup
+
+Build my show now follows Start, Sections, Looks, Sources and Review. Focused
+Preview and Configure screens, separate landscape/portrait transition tabs,
+deferred optional layers and direct Review edits keep the main task clear.
+The wizard matches the main UI's raised controls and retains existing native
+movement, stingers, multistream and Lumia/audio behavior.
+
+Show output and broadcast controls sit above previews and audio. Native build,
+2,143 preservation checks, three-size layout checks and an isolated Windows
+creation walkthrough passed. Both ordinary unstable and isolated 2 Preview
+installer families advance to revision 4. See `docs/RELEASE-2.0.0-unstable.4.md`.
+
+---
 # Pulse Weaver 1.14.4-alpha.2 — Installer update fix
 
 This alpha fixes updates that stop with “Access to the path …\config is denied”.

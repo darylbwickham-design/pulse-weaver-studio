@@ -2035,9 +2035,9 @@ void OBSBasic::InitPulseWeaverShell()
 	previewMixerSplit->setHandleWidth(6);
 	previewMixerSplit->addWidget(workScroll);
 	operatingLayout->addWidget(previewMixerSplit, 1);
-	// Health remains visible even while an operator expands audio or scrolls
-	// the programme surface on a small display.
-	operatingLayout->addWidget(statsCard);
+	// Keep output health and the operating controls together above the
+	// programme surface, where they remain visible when audio is expanded.
+	operatingLayout->insertWidget(0, statsCard);
 	showBody->addWidget(operatingPanel);
 	showBody->addWidget(activityCard);
 	showBody->setStretchFactor(0, 5);
@@ -2562,7 +2562,7 @@ void OBSBasic::InitPulseWeaverShell()
 	outputLayout->addWidget(pulseEngineStatus, 0, Qt::AlignBottom);
 	outputLayout->addWidget(contributorGuides, 0, Qt::AlignBottom);
 	outputLayout->addWidget(platformsButton, 0, Qt::AlignBottom);
-	operatingLayout->addWidget(outputPanel);
+	operatingLayout->insertWidget(operatingLayout->indexOf(statsCard) + 1, outputPanel);
 	/* Show Control uses the same proven OBS vertical controls as Camera, in a
 	 * compact horizontally scrolling band. */
 	auto *mixerCard = new QFrame;
@@ -2622,7 +2622,7 @@ void OBSBasic::InitPulseWeaverShell()
 	mixerScroll->setWidget(pulseCompactMixerBody);
 	mixerLayout->addWidget(mixerScroll);
 	previewMixerSplit->addWidget(mixerCard);
-	auto setMixerCollapsed = [mixerCard, mixerScroll, collapseMixer, previewMixerSplit, operatingPanel, operatingLayout, statsCard](bool collapsed) {
+	auto setMixerCollapsed = [mixerCard, mixerScroll, collapseMixer, previewMixerSplit, operatingPanel, operatingLayout](bool collapsed) {
 		mixerScroll->setVisible(!collapsed);
 		collapseMixer->setText(collapsed ? "Expand audio" : "Collapse audio");
 		collapseMixer->setToolTip(collapsed ? "Expand audio mixer" : "Collapse audio mixer");
@@ -2632,7 +2632,7 @@ void OBSBasic::InitPulseWeaverShell()
 		// expanded audio returns to the same resizable native splitter.
 		if(collapsed && previewMixerSplit->indexOf(mixerCard) >= 0) {
 			mixerCard->setParent(operatingPanel);
-			operatingLayout->insertWidget(operatingLayout->indexOf(statsCard) + 1, mixerCard);
+			operatingLayout->insertWidget(operatingLayout->indexOf(previewMixerSplit) + 1, mixerCard);
 			mixerCard->show();
 		} else if(!collapsed && previewMixerSplit->indexOf(mixerCard) < 0) {
 			operatingLayout->removeWidget(mixerCard);
@@ -2896,7 +2896,7 @@ void OBSBasic::InitPulseWeaverShell()
 		}
 	});
 	controls->addWidget(pulseStreamButton);
-	operatingLayout->addWidget(controls);
+	operatingLayout->insertWidget(operatingLayout->indexOf(outputPanel) + 1, controls);
 	pulsePages->addWidget(pulseShowPage);
 
 	/* LIGHTS — the existing device, live control and saved-look workspace. */

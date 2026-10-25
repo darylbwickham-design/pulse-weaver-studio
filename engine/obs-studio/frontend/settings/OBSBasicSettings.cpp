@@ -358,7 +358,12 @@ void OBSBasicSettings::BuildPulseBandwidthPanel()
 		spin->setSingleStep(250);
 		spin->setSuffix(" kbps");
 		spin->setToolTip("Saved per profile. Applied the next time this output starts. Platform limits still apply.");
-		if (i != 1) grid->addWidget(spin, 1 + i / 2, 1 + i % 2);
+		if (i == 1)
+			// Preserve the legacy Kick portrait value without exposing an
+			// unmanaged child over the group title. Kick is landscape-only.
+			spin->hide();
+		else
+			grid->addWidget(spin, 1 + i / 2, 1 + i % 2);
 		HookWidget(spin, &QSpinBox::valueChanged, &OBSBasicSettings::OutputsChanged);
 		connect(spin, &QSpinBox::valueChanged, this, &OBSBasicSettings::UpdatePulseBandwidthEstimate);
 	}

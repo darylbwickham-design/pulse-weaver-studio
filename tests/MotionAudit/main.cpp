@@ -9,6 +9,9 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QImage>
+#include <QEventLoop>
+#include <QScrollBar>
+#include <QWizardPage>
 #include <QSize>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -90,6 +93,7 @@ static void wizardOverlayPolicyTests()
 }
 
 struct PulseMotionEngineTestAccess {
+	static void openWizard(PulseMotionEngine &engine) { engine.openShowWizard(); }
 	static QString selectedStage(PulseMotionEngine &engine, const QString &stage) {
 		QComboBox field;field.addItem("Unrelated old Stage","Unrelated old Stage");
 		engine.stageField=&field;engine.selectEditorStage(stage);engine.populateStages();
@@ -777,6 +781,7 @@ static void setupBuilderTests(const obs_video_info &video)
 		FlexibleSetup setup(wizard, &lookPage, lookLayout, &sourcePage, sourceLayout,
 			{{"groups", QJsonObject{{"Starting", QJsonObject{{"reference", "Setup Reference"}}}}}},
 			QJsonDocument::fromJson(readFile(stagePath)).array(), PulseMotionEngineTestAccess::actions(engine));
+		setup.setSharedLayersEnabled(true);
 		setup.update({"Starting", "Chat"});
 		for (auto *box : lookPage.findChildren<QComboBox *>()) if (box->accessibleName() == "Starting layout preset") box->setCurrentIndex(1);
 		QComboBox *overlay = nullptr, *scope = nullptr;
@@ -872,6 +877,143 @@ template<typename T> static T *setupField(QWidget *root, const QString &name)
 	check(false, qPrintable("Missing setup field: " + name)); return nullptr;
 }
 
+static QJsonArray wizardRenderEvidence;
+static int wizardGeometryFailures = 0;
+class WizardCaptureWindows final : public QObject {
+protected:
+	bool eventFilter(QObject *object, QEvent *event) override {
+		if (event->type() == QEvent::Polish)
+			if (auto *widget = qobject_cast<QWidget *>(object); widget && widget->isWindow())
+				widget->setAttribute(Qt::WA_DontShowOnScreen);
+		return false;
+	}
+};
+static void settleWizard()
+{
+	QApplication::processEvents();
+	QEventLoop loop; QTimer::singleShot(0, &loop, &QEventLoop::quit); loop.exec();
+	QApplication::processEvents();
+}
+static QJsonArray wizardRect(QWidget *widget, QWidget *window)
+{
+	const QPoint origin = widget->mapTo(window, QPoint());
+	return {origin.x(), origin.y(), widget->width(), widget->height()};
+}
+static QScrollArea *wizardScrollAncestor(QWidget *widget, QWidget *window)
+{
+	for (auto *parent = widget->parentWidget(); parent && parent != window; parent = parent->parentWidget())
+		if (auto *scroll = qobject_cast<QScrollArea *>(parent)) return scroll;
+	return nullptr;
+}
+static void captureWizardWindow(QWidget *window, const QString &stem)
+{
+	const QSize previous = window->size();
+	const QString directory = qEnvironmentVariable("PULSE_WIZARD_EVIDENCE_DIR");
+	if (!directory.isEmpty()) check(QDir().mkpath(directory), "create synthetic wizard evidence directory");
+	for (const QSize size : {QSize(1100, 800), QSize(780, 620), QSize(740, 560)}) {
+		window->resize(size); settleWizard();
+		for (auto *scroll : window->findChildren<QScrollArea *>()) if (scroll->isVisibleTo(window)) scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->minimum());
+		settleWizard();
+		QJsonArray chrome, cards, scrolls, utilities, primaryColors; bool chromeContained = true, cardsFit = true, primaryReady = true; int offScroll = 0;
+		for (auto *button : window->findChildren<QPushButton *>()) {
+			if (!button->isVisibleTo(window) || button->size().isEmpty()) continue;
+			if (qEnvironmentVariableIsSet("PULSE_WIZARD_TEST_QSS") && button->property("setupPrimary").toBool() && button->isEnabled()) {
+				const QString foreground = button->palette().color(QPalette::ButtonText).name();
+				const bool readable = foreground == "#061d2a";
+				primaryReady = primaryReady && readable;
+				primaryColors.append(QJsonObject{{"label", button->text()}, {"foreground", foreground}, {"themedPrimaryForeground", readable}});
+			}
+			const QRect bounds(button->mapTo(window, QPoint()), button->size());
+			if (button->objectName() == "PulseWeaverSetupChoiceCard") {
+				auto *scroll = wizardScrollAncestor(button, window);
+				const QRect viewport = scroll ? QRect(scroll->viewport()->mapTo(window, QPoint()), scroll->viewport()->size()) : window->rect();
+				const bool horizontal = bounds.left() >= viewport.left() && bounds.right() <= viewport.right();
+				const bool textFits = !button->hasHeightForWidth() || button->height() >= button->heightForWidth(button->width());
+				const bool offscreen = bounds.top() < viewport.top() || bounds.bottom() > viewport.bottom();
+				if (offscreen) ++offScroll;
+				cardsFit = cardsFit && horizontal && textFits;
+				cards.append(QJsonObject{{"label", button->accessibleName()}, {"rect", wizardRect(button, window)},
+					{"viewport", QJsonArray{viewport.x(), viewport.y(), viewport.width(), viewport.height()}},
+					{"parentRect", wizardRect(button->parentWidget(), window)},
+					{"parentMinimumWidth", button->parentWidget()->minimumWidth()},
+					{"parentMinimumHintWidth", button->parentWidget()->minimumSizeHint().width()},
+					{"horizontalContained", horizontal}, {"textHeightFits", textFits}, {"offScrollContent", offscreen}, {"checked", button->isChecked()}});
+			} else if (!wizardScrollAncestor(button, window)) {
+				const bool contained = window->rect().contains(bounds);
+				chromeContained = chromeContained && contained;
+				chrome.append(QJsonObject{{"label", button->text()}, {"rect", wizardRect(button, window)}, {"contained", contained}});
+			}
+		}
+		for (auto *label : window->findChildren<QLabel *>()) {
+			if (!label->isVisibleTo(window) || label->size().isEmpty() || wizardScrollAncestor(label, window)) continue;
+			const QRect bounds(label->mapTo(window, QPoint()), label->size());
+			const bool contained = window->rect().contains(bounds);
+			const bool textFits = label->text().isEmpty() || (label->wordWrap() ?
+				label->height() >= label->heightForWidth(label->width()) : label->fontMetrics().horizontalAdvance(label->text()) <= label->contentsRect().width());
+			chromeContained = chromeContained && contained && textFits;
+			chrome.append(QJsonObject{{"label", label->text()}, {"rect", wizardRect(label, window)}, {"contained", contained}, {"textHeightFits", textFits}});
+		}
+		for (auto *scroll : window->findChildren<QScrollArea *>()) {
+			if (!scroll->isVisibleTo(window) || !scroll->widget()) continue;
+			const bool horizontal = scroll->widget()->width() <= scroll->viewport()->width() && scroll->horizontalScrollBar()->maximum() == 0;
+			cardsFit = cardsFit && horizontal;
+			scrolls.append(QJsonObject{{"viewport", wizardRect(scroll->viewport(), window)}, {"body", wizardRect(scroll->widget(), window)},
+				{"horizontalContained", horizontal}, {"verticalScrollMaximum", scroll->verticalScrollBar()->maximum()}});
+		}
+		if (stem == "wizard-4-review") {
+			for (const QString &title : {QString("Edit sections"), QString("Edit Looks"), QString("Edit sources"), QString("Check again")}) {
+				QPushButton *button = nullptr;
+				for (auto *candidate : window->findChildren<QPushButton *>()) if (candidate->text() == title) { button = candidate; break; }
+				bool reachable = button && button->isVisibleTo(window);
+				if (button) {
+					auto *scroll = wizardScrollAncestor(button, window);
+					auto *body = scroll ? scroll->widget() : window;
+					const QRect inBody(button->mapTo(body, QPoint()), button->size());
+					reachable = reachable && body->rect().contains(inBody);
+					for (auto *parent = button->parentWidget(); parent && parent != body; parent = parent->parentWidget()) {
+						const QRect inParent(button->mapTo(parent, QPoint()), button->size());
+						reachable = reachable && parent->contentsRect().contains(inParent);
+					}
+					utilities.append(QJsonObject{{"label", title}, {"rect", wizardRect(button, window)},
+						{"visible", button->isVisibleTo(window)}, {"reachableInScrollExtent", reachable}});
+				} else utilities.append(QJsonObject{{"label", title}, {"missing", true}});
+				cardsFit = cardsFit && reachable;
+			}
+		}
+		QJsonObject report{{"capture", stem}, {"requestedSize", QJsonArray{size.width(), size.height()}},
+			{"actualSize", QJsonArray{window->width(), window->height()}}, {"chrome", chrome}, {"cards", cards}, {"scrolls", scrolls}, {"reviewUtilities", utilities}, {"primaryButtonColors", primaryColors}, {"themedPrimaryReady", primaryReady},
+			{"offScrollCards", offScroll}, {"chromeContained", chromeContained}, {"cardsHorizontallyContained", cardsFit},
+			{"platform", QGuiApplication::platformName()}, {"theme", qEnvironmentVariableIsSet("PULSE_WIZARD_TEST_QSS") ? "supplied stylesheet; origin recorded separately; exact frontend theme reviewed separately" : "platform-default; exact frontend theme reviewed separately"}};
+		wizardRenderEvidence.append(report);
+		if (!chromeContained || !cardsFit || !primaryReady || window->size() != size)
+			std::fprintf(stderr, "Wizard render diagnostics: %s\n", QJsonDocument(report).toJson(QJsonDocument::Compact).constData());
+		if (!directory.isEmpty()) {
+			const QString prefix = directory + "/" + stem + QString("-%1x%2").arg(size.width()).arg(size.height());
+			check(window->grab().save(prefix + "-top.png"), "save actual synthetic Qt wizard capture");
+			for (auto *scroll : window->findChildren<QScrollArea *>()) {
+				if (!scroll->isVisibleTo(window) || !scroll->verticalScrollBar()->maximum()) continue;
+				const int before = scroll->verticalScrollBar()->value();
+				scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum()); settleWizard();
+				check(window->grab().save(prefix + "-bottom.png"), "save reachable lower wizard content");
+				scroll->verticalScrollBar()->setValue(before); settleWizard(); break;
+			}
+			writeFile(QDir(directory).filePath("wizard-layout-state-evidence.partial.json"), QJsonDocument(wizardRenderEvidence).toJson());
+		}
+		// Collect all page failures in one run, while still rejecting the run.
+		// A clipped options card must not hide a separate Sources/Review defect.
+		if (!chromeContained || !cardsFit || !primaryReady || window->size() != size) ++wizardGeometryFailures;
+	}
+	window->resize(previous); settleWizard();
+}
+static QSet<QString> wizardSourceIdentities()
+{
+	QSet<QString> identities;
+	obs_enum_sources([](void *opaque, obs_source_t *source) {
+		static_cast<QSet<QString> *>(opaque)->insert(QString::fromUtf8(obs_source_get_uuid(source))); return true;
+	}, &identities);
+	return identities;
+}
+
 static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *portrait,
 	obs_source_t *square, obs_source_t *unknown)
 {
@@ -902,7 +1044,7 @@ static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *por
 	check(horizontal && vertical && horizontal != vertical,
 		"wizard presents independent landscape and portrait graphic questions");
 	check(horizontal->currentData().toString().isEmpty() && vertical->currentData().toString().isEmpty() &&
-		setup.problem(true).contains("landscape artwork"), "new wizard artwork starts unassigned and requires an explicit overlay choice");
+		setup.problem(true).contains("landscape artwork", Qt::CaseInsensitive), "new wizard artwork starts unassigned and requires an explicit overlay choice");
 	check(horizontal->findData("builtin") < 0 && vertical->findData("builtin") < 0 &&
 		setup.draft("Unassigned Artwork Trial").value("newSources").toObject().isEmpty(),
 		"wizard offers no native title or countdown and does not silently generate artwork");
@@ -936,10 +1078,10 @@ static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *por
 	check(!roles.value("graphicFullCanvas").toBool() && roles.value("graphicPortraitFullCanvas").toBool(),
 		"landscape panel placement leaves the portrait full-canvas choice unchanged");
 	vertical->setCurrentIndex(vertical->findData(""));
-	check(setup.problem(true).contains("portrait artwork"), "wizard asks for required portrait artwork when that answer is empty");
+	check(setup.problem(true).contains("portrait artwork", Qt::CaseInsensitive), "wizard asks for required portrait artwork when that answer is empty");
 	vertical->setCurrentIndex(vertical->findData(obs_source_get_uuid(portrait)));
 	horizontal->setCurrentIndex(horizontal->findData(""));
-	check(setup.problem(true).contains("landscape artwork"), "wizard asks for required landscape artwork when that answer is empty");
+	check(setup.problem(true).contains("landscape artwork", Qt::CaseInsensitive), "wizard asks for required landscape artwork when that answer is empty");
 	QTimer::singleShot(0, [&] {
 		auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "new artwork source dialog opens");
 		auto *kind = setupField<QComboBox>(dialog, "New source type");
@@ -988,6 +1130,7 @@ static void setupGraphicQuestionTests(obs_source_t *landscape, obs_source_t *por
 	const auto welcome = PulseShow::rolesForLook(draft.value("stages").toArray().first().toObject(), "welcome");
 	check(welcome.value("graphic").toString() == obs_source_get_uuid(square) && welcome.value("graphicPortrait").toString() == obs_source_get_uuid(unknown),
 		"changing Countdown artwork leaves Welcome's separate artwork intact");
+	setup.setSharedLayersEnabled(true);
 	auto *overlay = combo("Landscape overlay 1"), *scope = combo("Landscape overlay 1 visibility");
 	check(overlay && scope && scope->findData("setup-starting/countdown") >= 0, "overlay can target a single selected Look");
 	check(overlay->findData(obs_source_get_uuid(nativeTitle)) < 0 && overlay->findData(obs_source_get_uuid(arbitraryVideo)) < 0,
@@ -1028,6 +1171,26 @@ static void setupQuestionFlowTests()
 	QWizard wizard; QWidget lookPage(&wizard), sourcePage(&wizard);
 	auto *lookLayout = new QVBoxLayout(&lookPage), *sourceLayout = new QVBoxLayout(&sourcePage);
 	FlexibleSetup setup(wizard, &lookPage, lookLayout, &sourcePage, sourceLayout, {}, {}, {});
+	setup.update({"Chat"});
+	auto *initialNavigator = setupField<QComboBox>(&sourcePage, "Source to assign");
+	const int feedQuestions = initialNavigator->count();
+	check(!setup.sharedLayersEnabled() && feedQuestions == 1, "simple Chat setup starts with one assignment and no shared-layer questions");
+	auto *dormantLayer = setupField<QComboBox>(&sourcePage, "Landscape overlay 1");
+	auto *dormantUrl = setupField<QLineEdit>(&sourcePage, "Landscape overlay 1 browser URL");
+	dormantLayer->setCurrentIndex(dormantLayer->findData("url"));
+	dormantUrl->setText("https://overlays.lumiastream.com/audit/optional-shared-layer");
+	check(setup.draft("Deferred extras").value("overlays").toArray().isEmpty() &&
+		setup.draft("Deferred extras").value("newSources").toObject().isEmpty(), "dormant layer answers do not leak sources into a deferred build");
+	setup.setSharedLayersEnabled(true);
+	check(initialNavigator->count() == feedQuestions + 6 && setup.draft("Enabled extras").value("overlays").toArray().size() == 1,
+		"opting into shared layers exposes six optional questions and the chosen assignment");
+	setup.setSharedLayersEnabled(false);
+	check(initialNavigator->count() == feedQuestions && setup.draft("Deferred again").value("overlays").toArray().isEmpty() &&
+		setup.draft("Deferred again").value("newSources").toObject().isEmpty(), "deferring extras again removes unused browser definitions and questions");
+	setup.setSharedLayersEnabled(true);
+	check(dormantLayer->currentData() == "url" && dormantUrl->text().endsWith("optional-shared-layer") &&
+		setup.draft("Restored extras").value("overlays").toArray().size() == 1, "re-enabling extras restores the user's dormant answer");
+	setup.setSharedLayersEnabled(false);
 	setup.update({"Starting", "Chat", "Game", "Projects", "Celebration", "Intermission"});
 	const auto initial = setup.draft("Default Selection"); int selected = 0;
 	check(initial.value("newSources").toObject().isEmpty(), "default Looks do not generate Pulse Weaver native overlays");
@@ -1066,13 +1229,17 @@ static void setupQuestionFlowTests()
 	check(preview->currentIndex() == -1 && setup.tabs->tabText(setup.tabs->currentIndex()) == "Game" && setup.problem(false).contains("Game"),
 		"an empty stage stays selected so the user can correct it without an unrelated diagram");
 	gameplay->setChecked(true);
-	const int gameQuestion = jump->findText("Game · Feed B"); check(gameQuestion >= 0, "source navigator names each stage assignment");
+	int gameQuestion = -1;
+	for (int index = 0; index < jump->count(); ++index)
+		if (jump->itemText(index).startsWith("Game ·") && jump->itemText(index).contains("(Feed B)")) gameQuestion = index;
+	check(gameQuestion >= 0, "source navigator explains the job of each stage assignment");
 	jump->setCurrentIndex(gameQuestion);
+	const QVariant gameQuestionIdentity = jump->currentData();
 	check(preview->currentData() == "setup-game/play", "source navigation reviews the Look that uses the requested feed");
 	setup.update({"Chat", "Game"});
-	check(jump->currentText() == "Game · Feed B", "changing groups preserves the current question by identity");
+	check(jump->currentData() == gameQuestionIdentity, "changing groups preserves the current question by identity");
 	auto *attention = setupField<QPushButton>(&sourcePage, "Next source needing attention");
-	attention->click(); check(jump->currentText() == "Chat · Feed A", "attention navigation wraps to an unfinished required source");
+	attention->click(); check(jump->currentText().startsWith("Chat ·") && jump->currentText().contains("(Feed A)"), "attention navigation wraps to an unfinished required source");
 	QPushButton *nextSource = nullptr;
 	for (auto *button : sourcePage.findChildren<QPushButton *>()) if (button->text() == "Next source") nextSource = button;
 	check(nextSource && !nextSource->isEnabled(), "source clickthrough asks for a required assignment before advancing");
@@ -1082,7 +1249,7 @@ static void setupQuestionFlowTests()
 		auto *kind = setupField<QComboBox>(dialog, "New source type");
 		check(kind->findData("image_source") >= 0 && kind->findData("dshow_input") >= 0,
 			"ordinary feeds retain media and camera creation alongside Lumia overlays");
-		setupField<QPushButton>(dialog, "New source type · Image file")->click();
+		kind->setCurrentIndex(kind->findData("image_source"));
 		setupField<QLineEdit>(dialog, "New source name")->setText("Wizard draft image");
 		setupField<QLineEdit>(dialog, "New source file")->setText(imagePath);
 		dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
@@ -1151,6 +1318,164 @@ static void setupQuestionFlowTests()
 	check(setup.draft("Stinger Trial").value("newStingers").toObject().isEmpty(), "unused staged stinger is excluded from build request");
 	QTimer::singleShot(0, [&] { auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog, "cancel stinger dialog opens"); dialog->reject(); });
 	addStinger->click(); check(setup.draft("Stinger Trial").value("newStingers").toObject().isEmpty(), "cancelling stinger addition leaves transitions unchanged");
+}
+
+static void setupWizardRoundTripTests(obs_source_t *landscape, obs_source_t *portrait)
+{
+	QTemporaryDir files;
+	const QString storage = files.filePath("config/obs-studio/plugin_config/pulse-weaver-core/motion.json");
+	check(QDir().mkpath(QFileInfo(storage).absolutePath()), "private full-wizard storage directory");
+	writeFile(storage, QJsonDocument(QJsonObject{{"version", 1}, {"actions", QJsonArray{}},
+		{"originals", QJsonArray{}}, {"originalScenes", QJsonObject{}}, {"auditSentinel", "unchanged"}}).toJson());
+	const QByteArray beforeStorage = readFile(storage);
+	const auto beforeSources = wizardSourceIdentities();
+	PulseMotionEngine engine(nullptr, storage);
+	bool completed = false;
+	QTimer::singleShot(0, [&] {
+		auto *wizard = qobject_cast<QWizard *>(QApplication::activeModalWidget());
+		check(wizard && wizard->objectName() == "PulseWeaverSetupWizard", "production five-page wizard opens in isolated test");
+		settleWizard();
+		check(wizard->pageIds() == QList<int>{0,1,2,3,4} && wizard->currentId() == 0, "wizard has distinct Start, Sections, Looks, Sources and Review pages");
+		check(!wizard->button(QWizard::CustomButton1)->isVisibleTo(wizard), "Return to review is absent before the first review");
+		auto *start = setupField<QComboBox>(wizard, "Show starting point");
+		auto *sections = wizard->page(1), *looks = wizard->page(2), *sources = wizard->page(3), *review = wizard->page(4);
+		QMap<QString, QCheckBox *> groups;
+		for (auto *box : sections->findChildren<QCheckBox *>())
+			for (const auto &group : PulseShow::setupCatalogue()) if (box->text() == group.name) groups.insert(group.name, box);
+		auto selected = [&] { QSet<QString> result; for (auto it = groups.cbegin(); it != groups.cend(); ++it) if (it.value()->isChecked()) result.insert(it.key()); return result; };
+		const QSet<QString> full{"Starting","Chat","Game","Celebration","Intermission"};
+		check(groups.size() == 6 && selected() == full && start->currentData() == "full", "fresh full-show preset selects exactly the five advertised sections");
+		captureWizardWindow(wizard, "wizard-0-start");
+		for (const auto &preset : {std::pair{"game","Game"}, {"chat","Chat"}}) {
+			start->setCurrentIndex(start->findData(preset.first));
+			check(selected() == QSet<QString>{preset.second}, "simple preset selects only its advertised section");
+			for (auto it = groups.cbegin(); it != groups.cend(); ++it)
+				check(setupField<QPushButton>(sections, it.key())->isChecked() == it.value()->isChecked(), "preset visibly synchronizes every section card with its model");
+		}
+		setupField<QPushButton>(wizard, "Full show starting point")->click();
+		check(selected() == full && start->currentData() == "full", "visible Full show card and section models stay synchronized");
+		for (auto it = groups.cbegin(); it != groups.cend(); ++it)
+			check(setupField<QPushButton>(sections, it.key())->isChecked() == it.value()->isChecked(), "restoring Full show also updates the visible section cards");
+		wizard->next(); settleWizard(); check(wizard->currentId() == 1, "Start advances to Sections");
+		groups["Projects"]->setChecked(true);
+		check(start->currentIndex() < 0 && !setupField<QPushButton>(wizard, "Full show starting point")->isChecked(), "custom section edits clear the preset's checked claim");
+		for (auto *box : groups) box->setChecked(false);
+		check(!wizard->currentPage()->isComplete() && !wizard->button(QWizard::NextButton)->isEnabled(), "empty section selection blocks continuation");
+		groups["Starting"]->setChecked(true);
+		auto *name = setupField<QLineEdit>(wizard, "Show name"); name->clear();
+		check(!wizard->currentPage()->isComplete(), "blank show name is rejected locally");
+		name->setText("Cancelled wizard audit");
+		check(wizard->currentPage()->isComplete(), "repairing the name restores section readiness");
+		captureWizardWindow(wizard, "wizard-1-sections");
+		wizard->next(); settleWizard(); check(wizard->currentId() == 2, "Sections advance to Looks");
+		auto *welcome = setupField<QCheckBox>(looks, "Starting · Welcome include");
+		check(!welcome->isChecked(), "alternate Look starts excluded");
+		QTimer::singleShot(0, [&] {
+			auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+			check(dialog && dialog->objectName() == "PulseWeaverLookPreviewDialog", "Preview opens a focused read-only Look diagram");
+			check(setupField<QWidget>(dialog, "Landscape and portrait layout diagram"), "Preview contains the real schematic widget");
+			captureWizardWindow(dialog, "wizard-look-preview-excluded"); dialog->reject();
+		});
+		setupField<QPushButton>(looks, "Starting · Welcome preview")->click();
+		check(!welcome->isChecked(), "previewing an excluded Look never includes it");
+		QTimer::singleShot(0, [&] {
+			auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+			check(dialog && dialog->objectName() == "PulseWeaverLookPreviewDialog", "selected Look Preview uses the same focused surface");
+			captureWizardWindow(dialog, "wizard-look-preview-included"); dialog->reject();
+		});
+		setupField<QPushButton>(looks, "Starting · Countdown preview")->click();
+		captureWizardWindow(wizard, "wizard-2-looks");
+		QTimer::singleShot(0, [&] {
+			auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+			check(dialog && dialog->objectName() == "PulseWeaverStageTransitionsDialog", "stage transitions open in their focused production dialog");
+			auto *formats = dialog->findChild<QTabWidget *>("PulseSetupTransitionFormatTabs");
+			check(formats && formats->count() == 2, "transitions expose separate landscape and portrait format tabs");
+			auto *horizontal = setupField<QComboBox>(dialog, "Starting horizontal stage transition");
+			auto *vertical = setupField<QComboBox>(dialog, "Starting vertical stage transition");
+			horizontal->setCurrentIndex(horizontal->findData("cut"));
+			for (int index = 0; index < formats->count(); ++index) {
+				formats->setCurrentIndex(index); settleWizard();
+				const QString route = index ? "vertical" : "horizontal";
+				check(formats->currentWidget()->property("pulseCanvas").toString() == route && formats->currentWidget()->isVisibleTo(dialog), "each transition format page is reachable and identifies its canvas");
+				bool visibleChoice = false;
+				for (auto *button : formats->currentWidget()->findChildren<QPushButton *>("PulseWeaverSetupChoiceCard"))
+					visibleChoice = visibleChoice || (button->isVisibleTo(dialog) && button->accessibleName().contains("Starting " + route + " stage transition"));
+				check(visibleChoice, "the active transition tab shows its actual canvas choice controls");
+				captureWizardWindow(dialog, "wizard-stage-transitions-" + route);
+			}
+			check(horizontal->currentData() == "cut" && vertical->currentData().toString().isEmpty(), "switching format tabs preserves independent transition selections");
+			dialog->reject();
+		});
+		setupField<QPushButton>(looks, "Starting stage transition options")->click();
+		QTimer::singleShot(0, [&] {
+			auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+			check(dialog && dialog->objectName() == "PulseWeaverLookConfigureDialog", "Look configuration opens as a focused production dialog");
+			check(dialog->findChild<QWidget *>("PulseSetupConfigureDiagram"), "focused Look options retain their schematic");
+			auto *composition = setupField<QComboBox>(dialog, "Starting · Countdown landscape composition");
+			composition->setCurrentIndex(composition->findData("rail"));
+			captureWizardWindow(dialog, "wizard-look-configure"); dialog->reject();
+		});
+		setupField<QPushButton>(looks, "Starting · Countdown layout options")->click();
+		check(setupField<QComboBox>(looks, "Starting · Countdown landscape composition")->currentData() == "rail", "leaving focused options preserves the chosen layout in the draft");
+		wizard->next(); settleWizard(); check(wizard->currentId() == 3, "Looks advance to Sources");
+		auto *jump = setupField<QComboBox>(sources, "Source to assign");
+		auto *extra = sources->findChild<QCheckBox *>("PulseSetupSharedLayersToggle");
+		check(extra && !extra->isChecked(), "optional shared layers start deferred");
+		for (int index = 0; index < jump->count(); ++index) check(!jump->itemText(index).contains("overlay "), "deferred extras add no mandatory-looking source questions");
+		const QString horizontalLabel = "Starting · Countdown · Landscape artwork", verticalLabel = "Starting · Countdown · Portrait artwork";
+		auto *horizontal = setupField<QComboBox>(sources, horizontalLabel), *vertical = setupField<QComboBox>(sources, verticalLabel);
+		check(horizontal->findData(obs_source_get_uuid(landscape)) >= 0 && vertical->findData(obs_source_get_uuid(portrait)) >= 0,
+			"production source assignment offers the matching inert artwork for each canvas");
+		auto *url = setupField<QLineEdit>(sources, horizontalLabel + " browser URL");
+		jump->setCurrentIndex(jump->findText(horizontalLabel)); horizontal->setCurrentIndex(horizontal->findData("url"));
+		auto *progress = setupField<QLabel>(sources, "Source assignment progress");
+		auto *selectedSource = horizontal->parentWidget()->findChild<QLabel *>("PulseSetupSelectedSource");
+		auto *nextSource = static_cast<QPushButton *>(nullptr);
+		for (auto *button : sources->findChildren<QPushButton *>()) if (button->text() == "Next source") nextSource = button;
+		check(nextSource && !nextSource->isEnabled() && selectedSource && selectedSource->text().contains("Enter a browser link"), "empty link mode requests an answer without claiming it was pasted or ready");
+		check(!wizard->currentPage()->isComplete(), "unassigned source questions block Review");
+		wizard->next(); check(wizard->currentId() == 3, "programmatic Next cannot bypass incomplete source validation");
+		captureWizardWindow(wizard, "wizard-3-sources-needs-answer");
+		url->setText("https://overlays.lumiastream.com/audit/cancelled-landscape");
+		check(nextSource->isEnabled() && progress->text().contains("1 of 2") && selectedSource->text().contains("not tested"), "typing a valid link repairs Next and progress without toggling source mode");
+		vertical->setCurrentIndex(vertical->findData(obs_source_get_uuid(portrait)));
+		check(wizard->currentPage()->isComplete() && progress->text().contains("2 of 2"), "independent portrait assignment completes required sources");
+		url->setText("not a browser URL");
+		check(!wizard->currentPage()->isComplete() && !nextSource->isEnabled() && progress->text().contains("1 of 2"), "editing an accepted answer to invalid text immediately revokes readiness");
+		url->setText("https://overlays.lumiastream.com/audit/cancelled-landscape");
+		check(wizard->currentPage()->isComplete() && nextSource->isEnabled(), "repairing the same field immediately restores readiness");
+		captureWizardWindow(wizard, "wizard-3-sources-complete");
+		wizard->next(); settleWizard(); check(wizard->currentId() == 4, "complete source assignments reach a separate Review page");
+		check(wizard->button(QWizard::FinishButton)->isEnabled() && !wizard->button(QWizard::CustomButton1)->isVisibleTo(wizard), "Create is gated at Review while Return is hidden there");
+		captureWizardWindow(wizard, "wizard-4-review");
+		QTimer::singleShot(0, [&] {
+			auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+			check(dialog && dialog->objectName() == "PulseWeaverReviewGroupDialog", "Review Stage card opens actual assignment details");
+			captureWizardWindow(dialog, "wizard-review-stage");
+			bool linkShown = false;
+			for (auto *link : dialog->findChildren<QLineEdit *>("PulseSetupReviewUrl")) if (link->text() == url->text()) linkShown = link->isReadOnly();
+			check(linkShown, "Review displays the actual entered link read-only without claiming it was tested");
+			QPushButton *edit = nullptr;
+			for (auto *button : dialog->findChildren<QPushButton *>("PulseSetupReviewEdit")) if (button->accessibleName().contains(horizontalLabel)) { edit = button; break; }
+			check(edit && edit->property("pulseQuestionIndex").isValid(), "Review provides an exact assignment edit target"); edit->click();
+		});
+		setupField<QPushButton>(review, "Review Starting")->click(); settleWizard();
+		check(wizard->currentId() == 3 && jump->currentText() == horizontalLabel && horizontal->currentData() == "url", "Review Edit returns to the intended source question with its answer preserved");
+		const QString preserved = url->text();
+		check(!wizard->button(QWizard::CustomButton1)->isVisibleTo(wizard), "Sources keeps its direct Review action without a duplicate footer shortcut");
+		wizard->button(QWizard::NextButton)->click(); settleWizard(); check(wizard->currentId() == 4, "valid edited source returns directly to Review");
+		QPushButton *editLooks = nullptr;
+		for (auto *button : review->findChildren<QPushButton *>()) if (button->text() == "Edit Looks") editLooks = button;
+		check(editLooks, "Review offers a section-specific Looks edit"); editLooks->click(); settleWizard();
+		check(wizard->currentId() == 2 && url->text() == preserved && vertical->currentData() == obs_source_get_uuid(portrait), "Back through Looks retains independent source answers");
+		check(wizard->button(QWizard::CustomButton1)->isVisibleTo(wizard), "visited Review exposes its shortcut while editing Looks");
+		wizard->button(QWizard::CustomButton1)->click(); settleWizard(); check(wizard->currentId() == 4, "Return to review traverses only valid remaining pages");
+		check(wizardSourceIdentities() == beforeSources, "review and Back navigation create no OBS input or scene");
+		completed = true; wizard->button(QWizard::CancelButton)->click();
+	});
+	PulseMotionEngineTestAccess::openWizard(engine);
+	check(completed && readFile(storage) == beforeStorage && wizardSourceIdentities() == beforeSources,
+		"cancelling the full production wizard leaves source identities and persistent motion storage unchanged");
 }
 
 static void themedBuilderTests(const obs_video_info &video)
@@ -1523,6 +1848,7 @@ static void themedBuilderTests(const obs_video_info &video)
 	OBSSourceAutoRelease unknownGraphic = obs_source_create("browser_source","Unknown-size graphic fixture",unknownBrowserSettings,nullptr);
 	setupGraphicQuestionTests(landscapeGraphic,portraitGraphic,squareGraphic,unknownGraphic);
 	setupQuestionFlowTests();
+	setupWizardRoundTripTests(landscapeGraphic, portraitGraphic);
 	QJsonObject perLookStage{{"theme", "setup-intermission"}, {"looks", QJsonArray{"brb", "ending"}},
 		{"lookArtwork", QJsonObject{
 			{"brb", QJsonObject{{"graphic", obs_source_get_uuid(landscapeGraphic)}, {"graphicPortrait", obs_source_get_uuid(portraitGraphic)}}},
@@ -1723,6 +2049,10 @@ static void themedBuilderTests(const obs_video_info &video)
 int main(int argc, char **argv)
 {
 	QApplication application(argc, argv);
+	WizardCaptureWindows captureWindows;
+	if (qEnvironmentVariableIsSet("PULSE_WIZARD_EVIDENCE_DIR")) application.installEventFilter(&captureWindows);
+	const QString stylesheet = qEnvironmentVariable("PULSE_WIZARD_TEST_QSS");
+	if (!stylesheet.isEmpty()) application.setStyleSheet(QString::fromUtf8(readFile(stylesheet)));
 	check(argc == 2, "pass an existing OBS runtime directory");
 	base_set_log_handler(logMessage, nullptr);
 	check(obs_startup("en-US", nullptr, nullptr), "isolated OBS startup");
@@ -1739,14 +2069,30 @@ int main(int argc, char **argv)
 	video.output_format = VIDEO_FORMAT_RGBA;
 	check(obs_reset_video(&video) == OBS_VIDEO_SUCCESS, "isolated graphics startup");
 	registerInertBrowser();
-	wizardOverlayPolicyTests();
-	std::fprintf(stderr, "Motion audit: storage preservation\n"); storageTests();
-	std::fprintf(stderr, "Motion audit: scene isolation\n"); sceneTests(); obs_wait_for_destroy_queue();
-	std::fprintf(stderr, "Motion audit: reference builder\n"); referenceBuilderTests(video); obs_wait_for_destroy_queue();
-	std::fprintf(stderr, "Motion audit: setup wizard\n"); setupBuilderTests(video); obs_wait_for_destroy_queue();
-	std::fprintf(stderr, "Motion audit: themed builder\n"); themedBuilderTests(video);
+	if (qEnvironmentVariableIsSet("PULSE_WIZARD_ONLY")) {
+		OBSDataAutoRelease settings = obs_data_create();
+		obs_data_set_int(settings, "width", 1920); obs_data_set_int(settings, "height", 1080);
+		obs_data_set_string(settings, "url", "https://overlays.lumiastream.com/audit/inert-landscape");
+		OBSSourceAutoRelease horizontal = obs_source_create("browser_source", "Inert landscape artwork", settings, nullptr);
+		OBSDataAutoRelease portraitSettings = obs_data_create();
+		obs_data_set_int(portraitSettings, "width", 1080); obs_data_set_int(portraitSettings, "height", 1920);
+		obs_data_set_string(portraitSettings, "url", "https://overlays.lumiastream.com/audit/inert-portrait");
+		OBSSourceAutoRelease vertical = obs_source_create("browser_source", "Inert portrait artwork", portraitSettings, nullptr);
+		setupWizardRoundTripTests(horizontal, vertical);
+		obs_source_remove(horizontal); obs_source_remove(vertical);
+	} else {
+		wizardOverlayPolicyTests();
+		std::fprintf(stderr, "Motion audit: storage preservation\n"); storageTests();
+		std::fprintf(stderr, "Motion audit: scene isolation\n"); sceneTests(); obs_wait_for_destroy_queue();
+		std::fprintf(stderr, "Motion audit: reference builder\n"); referenceBuilderTests(video); obs_wait_for_destroy_queue();
+		std::fprintf(stderr, "Motion audit: setup wizard\n"); setupBuilderTests(video); obs_wait_for_destroy_queue();
+		std::fprintf(stderr, "Motion audit: themed builder\n"); themedBuilderTests(video);
+	}
+	const QString evidence = qEnvironmentVariable("PULSE_WIZARD_EVIDENCE_DIR");
+	if (!evidence.isEmpty()) writeFile(QDir(evidence).filePath("wizard-layout-state-evidence.json"), QJsonDocument(wizardRenderEvidence).toJson());
 	obs_wait_for_destroy_queue();
 	obs_shutdown();
 	check(runtimeErrors == 0, "no unexpected OBS runtime errors");
+	check(wizardGeometryFailures == 0, "all wizard geometry, visible utilities and themed primary controls pass at normal/constrained/minimum sizes");
 	std::printf("PASS: %d motion preservation checks; no platform calls or installed settings used.\n", checks);
 }

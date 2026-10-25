@@ -200,11 +200,50 @@ inline QJsonObject choiceCardGeometry(QWidget *owner, QWidget *window, int expec
 	}
 	return {{"cards", cards}, {"paintedContentContained", contained && !cards.isEmpty()}};
 }
+inline QJsonObject controlDeckGeometry(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget *chat)
+{
+	auto *production = window->findChild<QWidget *>("PulseWeaverProductionControls");
+	auto *health = window->findChild<QWidget *>("PulseWeaverStreamStats");
+	auto *routes = window->findChild<QWidget *>("PulseWeaverOutputRouting");
+	auto *transport = window->findChild<QWidget *>("PulseWeaverTransport");
+	auto *work = window->findChild<QScrollArea *>("PulseWeaverWorkSurface");
+	auto *split = window->findChild<QSplitter *>("PulseWeaverPreviewMixerSplit");
+	auto *audio = window->findChild<QScrollArea *>("PulseWeaverCompactMixer");
+	auto *mixer = audio ? audio->parentWidget() : nullptr;
+	QJsonObject result{{"controlDeckOrdered", false}, {"controlDeckContained", false}, {"controlDeckChatIndependent", false}};
+	if(!production || !health || !routes || !transport || !work || !split || !mixer || !landscape || !portrait || !chat) return result;
+	auto bounds = [window](QWidget *widget) {return QRect(widget->mapTo(window, QPoint()), widget->size());};
+	auto adjacent = [bounds](QWidget *first, QWidget *second) {
+		const int gap = bounds(second).top() - bounds(first).bottom() - 1;
+		return gap >= 0 && gap <= 12;
+	};
+	auto *operating = split->parentWidget();
+	const bool samePanel = operating && health->parentWidget() == operating && routes->parentWidget() == operating &&
+		transport->parentWidget() == operating && (mixer->parentWidget() == operating || mixer->parentWidget() == split);
+	const bool aligned = bounds(health).left() == bounds(work).left() && bounds(routes).left() == bounds(work).left() &&
+		bounds(transport).left() == bounds(work).left() && bounds(health).width() == split->width() &&
+		bounds(routes).width() == split->width() && bounds(transport).width() == split->width();
+	const bool ordered = samePanel && aligned && adjacent(production, health) && adjacent(health, routes) &&
+		adjacent(routes, transport) && adjacent(transport, work) && adjacent(work, mixer) &&
+		bounds(landscape).top() == bounds(work).top() && bounds(portrait).top() == bounds(work).top();
+	bool contained = true;
+	for(auto *widget : {health, routes, transport, static_cast<QWidget *>(work), mixer, landscape, portrait})
+		contained = contained && fullyVisible(widget, window);
+	const bool chatIndependent = fullyVisible(chat, window) && bounds(chat).top() == bounds(health).top() &&
+		bounds(chat).left() > bounds(health).right() && chat->width() >= 280;
+	for(auto *widget : {production, health, routes, transport, static_cast<QWidget *>(work), mixer, landscape, portrait, chat})
+		result.insert(widget == landscape ? "landscape" : widget == portrait ? "portrait" : widget == chat ? "chat" : widget->objectName(), widgetGeometry(widget, window));
+	result.insert("audioExpanded", !audio->isHidden());
+	result.insert("controlDeckOrdered", ordered); result.insert("controlDeckContained", contained);
+	result.insert("controlDeckChatIndependent", chatIndependent);
+	return result;
+}
 inline QJsonObject operatingGeometry(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget *chat)
 {
 	const QRect horizontal = visibleRect(landscape, window), vertical = visibleRect(portrait, window);
+	const auto deck = controlDeckGeometry(window, landscape, portrait, chat);
 	const bool compact = fullyVisible(landscape, window) && fullyVisible(portrait, window) &&
-		horizontal.top() <= 160 && vertical.top() <= 160;
+		deck.value("controlDeckOrdered").toBool() && deck.value("controlDeckContained").toBool();
 	const bool programmes = compact && horizontal.height() >= 280 && vertical.height() >= 280;
 	auto *health = window->findChild<QWidget *>("PulseWeaverStreamStats");
 	auto *transport = window->findChild<QWidget *>("PulseWeaverTransport");
@@ -219,12 +258,13 @@ inline QJsonObject operatingGeometry(QWidget *window, QWidget *landscape, QWidge
 	constrained = constrained && tracks.size() == 4 && recording && fullyVisible(recording, window) &&
 		recording->width() >= 150 && recording->width() <= 240 && recording->height() == 32;
 	return {{"landscapeVisible", rectValue(horizontal)}, {"portraitVisible", rectValue(vertical)},
+		{"controlDeck", deck},
 		{"mainChromeCompact", compact}, {"smallProgrammeSpaceEfficient", programmes},
 		{"smallChatWidthPreserved", fullyVisible(chat, window) && chat->width() >= 280},
 		{"smallHealthVisible", fullyVisible(health, window)}, {"smallTransportVisible", fullyVisible(transport, window)},
 		{"routeTracks", tracks}, {"routeTracksConstrained", constrained}};
 }
-inline QJsonObject expandedMixerGeometry(QWidget *window, QWidget *landscape, QWidget *portrait)
+inline QJsonObject expandedMixerGeometry(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget *chat)
 {
 	auto *scroll = window->findChild<QScrollArea *>("PulseWeaverCompactMixer");
 	auto *card = scroll ? scroll->parentWidget() : nullptr;
@@ -273,6 +313,7 @@ inline QJsonObject expandedMixerGeometry(QWidget *window, QWidget *landscape, QW
 	report.insert("strips", entries); report.insert("nativeEightChannels", native); report.insert("controlsContained", contained);
 	report.insert("horizontalControlsReachable", reachable); report.insert("boundedHeight", bounded);
 	report.insert("programmeUsable", programme);
+	report.insert("controlDeck", controlDeckGeometry(window, landscape, portrait, chat));
 	report.insert("healthVisible", fullyVisible(window->findChild<QWidget *>("PulseWeaverStreamStats"), window));
 	report.insert("transportVisible", fullyVisible(window->findChild<QWidget *>("PulseWeaverTransport"), window));
 	return report;
@@ -288,20 +329,34 @@ inline QJsonObject mixerGeometryAudit(QWidget *window, QWidget *landscape, QWidg
 	QJsonObject result{{"mixerPopulatedFixture", false}};
 	if(!scroll || !split || !card || !toggle) return result;
 	if(!scroll->isHidden()) {toggle->click(); settleUi();}
-	QJsonArray profiles;
+	QJsonArray profiles, collapsedProfiles;
 	bool populated = true, bounded = true, controls = true, reachable = true, previews = true, health = true, transport = true, restored = true, chatStable = true, exactSizes = true;
+	bool deckOrdered = true, deckContained = true, deckChatIndependent = true, collapsedProgrammes = true;
 	int smallest = 10000, largest = 0;
 	for(const auto &size : {QSize(1180, 720), QSize(1240, 930), QSize(1280, 1000)}) {
 		window->resize(size); settleUi();
 		const QRect baselineLandscape(landscape->mapTo(window, QPoint()), landscape->size());
 		const QRect baselinePortrait(portrait->mapTo(window, QPoint()), portrait->size());
 		const QRect baselineChat(chat->mapTo(window, QPoint()), chat->size());
+		auto collapsed = controlDeckGeometry(window, landscape, portrait, chat);
+		collapsed.insert("windowSize", QJsonArray{size.width(), size.height()});
+		collapsed.insert("actualWindowSize", QJsonArray{window->width(), window->height()});
+		collapsedProfiles.append(collapsed);
+		deckOrdered = deckOrdered && collapsed.value("controlDeckOrdered").toBool();
+		deckContained = deckContained && collapsed.value("controlDeckContained").toBool();
+		deckChatIndependent = deckChatIndependent && collapsed.value("controlDeckChatIndependent").toBool();
+		collapsedProgrammes = collapsedProgrammes && landscape->height() >= 280 && portrait->height() >= 280;
+		window->grab().save(directory + QString("/main-%1x%2-audio-collapsed.png").arg(size.width()).arg(size.height()));
 		for(int cycle = 0; cycle < 2; ++cycle) {
 			toggle->click(); settleUi();
-			auto state = expandedMixerGeometry(window, landscape, portrait);
+			auto state = expandedMixerGeometry(window, landscape, portrait, chat);
 			state.insert("windowSize", QJsonArray{size.width(), size.height()}); state.insert("cycle", cycle + 1);
 			state.insert("actualWindowSize", QJsonArray{window->width(), window->height()}); exactSizes = exactSizes && window->size() == size;
 			profiles.append(state);
+			const auto deck = state.value("controlDeck").toObject();
+			deckOrdered = deckOrdered && deck.value("controlDeckOrdered").toBool();
+			deckContained = deckContained && deck.value("controlDeckContained").toBool();
+			deckChatIndependent = deckChatIndependent && deck.value("controlDeckChatIndependent").toBool();
 			populated = populated && state.value("nativeEightChannels").toBool();
 			bounded = bounded && state.value("boundedHeight").toBool(); controls = controls && state.value("controlsContained").toBool();
 			reachable = reachable && state.value("horizontalControlsReachable").toBool(); previews = previews && state.value("programmeUsable").toBool();
@@ -330,7 +385,7 @@ inline QJsonObject mixerGeometryAudit(QWidget *window, QWidget *landscape, QWidg
 	stateFile.setValue("showControl2/previewMixerSplit", legacy); stateFile.sync();
 	card->setMinimumHeight(minimum); card->setMaximumHeight(maximum); card->setSizePolicy(policy);
 	toggle->click(); settleUi(); toggle->click(); settleUi();
-	const auto recovered = expandedMixerGeometry(window, landscape, portrait);
+	const auto recovered = expandedMixerGeometry(window, landscape, portrait, chat);
 	const bool legacyRecovered = legacyHeight > largest + 80 && recovered.value("boundedHeight").toBool() && recovered.value("programmeUsable").toBool();
 	window->grab().save(directory + "/main-1280x1000-audio-oversize-recovered.png");
 	toggle->click(); settleUi(); window->resize(1180, 720); settleUi();
@@ -338,6 +393,9 @@ inline QJsonObject mixerGeometryAudit(QWidget *window, QWidget *landscape, QWidg
 	const QString mode = qEnvironmentVariable("PULSEWEAVER_MIXER_FIXTURE_AUDIT");
 	const bool startupPass = mode == "saved-oversize" ? startup.value("boundedHeight").toBool() && startup.value("nativeEightChannels").toBool() && startup.value("controlsContained").toBool() : startup.value("initiallyCollapsed").toBool();
 	result.insert("mixerProfiles", profiles); result.insert("mixerStartup", startup);
+	result.insert("mixerCollapsedProfiles", collapsedProfiles);
+	result.insert("controlDeckOrderPreserved", deckOrdered); result.insert("controlDeckFullyContained", deckContained);
+	result.insert("controlDeckChatIndependent", deckChatIndependent); result.insert("collapsedProgrammeHeightsPreserved", collapsedProgrammes);
 	result.insert("mixerPopulatedFixture", populated); result.insert("mixerExpandedHeightBounded", bounded && largest - smallest <= 2);
 	result.insert("mixerNativeControlsContained", controls); result.insert("mixerHorizontalControlsReachable", reachable);
 	result.insert("mixerExpandedProgrammeUsable", previews); result.insert("mixerExpandedTransportVisible", transport);
@@ -658,7 +716,7 @@ inline void run(QWidget *window, QWidget *landscape, QWidget *portrait, QWidget 
 		QJsonObject mixerStartup;
 		if(audioFixture) {
 			if(initialMixer && !initialMixer->isHidden()) {
-				mixerStartup = expandedMixerGeometry(window, landscape, portrait);
+				mixerStartup = expandedMixerGeometry(window, landscape, portrait, chat);
 				window->grab().save(directory + "/mixer-startup-saved-oversize.png");
 				for(auto *button : initialMixer->parentWidget()->findChildren<QPushButton *>())
 					if(button->text() == "Collapse audio") {button->click(); settleUi(); break;}

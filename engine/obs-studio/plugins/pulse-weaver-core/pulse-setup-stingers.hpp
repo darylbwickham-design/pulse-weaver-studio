@@ -15,6 +15,7 @@
 #include <QScreen>
 #include <QScrollArea>
 #include <QSpinBox>
+#include <QStyle>
 #include <QStringList>
 #include <QVBoxLayout>
 
@@ -31,6 +32,7 @@ inline QString fileProblem(const QString &path)
 inline QJsonObject ask(QWidget *parent, bool portrait, const QSet<QString> &usedNames, const QJsonObject &prior = {})
 {
 	QDialog dialog(parent);
+	dialog.setObjectName("PulseWeaverSetupDialog"); dialog.setProperty("pulseSetupDialog", true);
 	dialog.setWindowTitle(prior.isEmpty() ? "Add a stinger" : "Edit new stinger");
 	dialog.resize(560, 460);
 	if (const auto *screen = parent ? parent->screen() : QGuiApplication::primaryScreen()) {
@@ -62,6 +64,9 @@ inline QJsonObject ask(QWidget *parent, bool portrait, const QSet<QString> &used
 	auto *error = new QLabel(&dialog); error->setWordWrap(true); error->setStyleSheet("color:#ffb8a8"); body->addWidget(error);
 	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog); outer->addWidget(buttons);
 	buttons->button(QDialogButtonBox::Save)->setText("Use this stinger");
+	buttons->button(QDialogButtonBox::Save)->setProperty("setupPrimary", true);
+	auto *save = buttons->button(QDialogButtonBox::Save);
+	save->style()->unpolish(save); save->style()->polish(save); save->update();
 	auto validate = [&] {
 		QString problem;
 		const QString value = name->text().trimmed();
