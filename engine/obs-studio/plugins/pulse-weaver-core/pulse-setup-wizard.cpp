@@ -27,6 +27,7 @@
 #include <QWizardPage>
 #include <functional>
 #include "pulse-setup-flexible.hpp"
+#include "pulse-setup-guided.hpp"
 #include "../../shared/qt/PulseInstructions.hpp"
 #include "../../shared/qt/PulseOutputActivity.hpp"
 
@@ -218,6 +219,28 @@ void showSetupCompletion(QWidget *parent, const QString &message)
 }
 
 void PulseMotionEngine::openShowWizard()
+{
+	if (!mayLeaveDraft()) return;
+	QFile stagesFile(QDir(QFileInfo(storagePath).absolutePath()).filePath("../../pulseweaver-stages.json"));
+	QJsonArray savedStages;
+	if (stagesFile.open(QIODevice::ReadOnly)) savedStages = QJsonDocument::fromJson(stagesFile.readAll()).array();
+	PulseGuidedWizard wizard(editor, savedStages);
+	while (wizard.exec() == QDialog::Accepted) {
+		const QString issue = wizard.finalProblem();
+		if (!issue.isEmpty()) { QMessageBox::warning(&wizard, "Your show needs attention", issue + "\nYour choices are preserved."); continue; }
+		const auto request = PulseSetupPlan::draft(wizard.options());
+		if (request.isEmpty()) { QMessageBox::warning(&wizard, "Your show needs attention", "Check your inputs and included views. Your choices are preserved."); continue; }
+		const auto result = createGuidedShow(request);
+		if (!result.value("ok").toBool()) { QMessageBox::warning(&wizard, "Show not created", result.value("message").toString() + "\nYour choices are preserved."); continue; }
+		selectEditorStage(wizard.options().name.trimmed() + " · Main");
+		setStatus(result.value("message").toString());
+		showSetupCompletion(editor, "Created “" + wizard.options().name.trimmed() + "”. Main contains your chosen views. In Control, screens are called Stages and views are called Looks. Check the actual pictures and one intended alert-audio copy before streaming.");
+		return;
+	}
+	if (wizard.advancedRequested()) openDetailedShowWizard();
+}
+
+void PulseMotionEngine::openDetailedShowWizard()
 {
 	if (!mayLeaveDraft()) return;
 	QWizard wizard(editor); wizard.setObjectName("PulseWeaverSetupWizard");

@@ -32,6 +32,7 @@ struct Look {
 	bool optionalPresenter = false;
 	double divider = .30;
 	QString corner = "top-left";
+	QString third;
 };
 struct Theme {
 	QString id, name;
@@ -120,6 +121,24 @@ inline const std::vector<Theme> &setupCatalogue()
 			{"ending", "Ending", "A closing message with an optional supporting feed", "graphic", "feedA", "corner", true}}}};
 	return groups;
 }
+// The task-first builder has a separate catalogue. Existing saved recipes and
+// the detailed builder keep their original IDs, selections and framing.
+inline const std::vector<Theme> &guidedCatalogue()
+{
+	static const std::vector<Theme> groups{
+		{"guided-main", "Main", {
+			{"content-camera", "Content and camera", "Keep the main content visible with your camera alongside it", "feedB", "feedA", "guided-pip"},
+			{"content-detail", "Content and detail/guest", "Give your content and separate detail or guest view equal space", "feedB", "feedC", "guided-equal"},
+			{"content", "Content only", "Show the complete game, screen or activity without a camera", "feedB", {}, "guided-full"},
+			{"camera", "Camera only", "Give your main camera the whole canvas", "feedA", {}, "guided-full"},
+			{"detail", "Detail only", "Focus on your separate close-up or second view", "feedC", {}, "guided-full"},
+			{"two-cameras", "Two cameras", "Give the main camera and detail view equal space", "feedA", "feedC", "guided-equal"},
+			{"three-up", "Content and two cameras", "Show the main content, main camera and detail view together", "feedB", "feedA", "guided-three", false, .30, "top-left", "feedC"}}},
+		{"guided-starting", "Starting", {{"card", "Starting screen", "A readable local starting message", "graphic", {}, "guided-full"}}},
+		{"guided-break", "Break", {{"card", "Break screen", "A readable away message without showing your cameras", "graphic", {}, "guided-full"}}},
+		{"guided-ending", "Ending", {{"card", "Ending screen", "A readable local closing message", "graphic", {}, "guided-full"}}}};
+	return groups;
+}
 inline const Theme *theme(const QString &id)
 {
 	for (const auto &value : catalogue()) {
@@ -128,6 +147,7 @@ inline const Theme *theme(const QString &id)
 		}
 	}
 	for (const auto &value : setupCatalogue()) if (value.id == id) return &value;
+	for (const auto &value : guidedCatalogue()) if (value.id == id) return &value;
 	return nullptr;
 }
 inline const Look *look(const Theme &theme, const QString &id)
@@ -182,7 +202,7 @@ inline QStringList roles(const Theme &theme, const QJsonArray &selected)
 	QStringList result;
 	for (const auto &id : selected) {
 		if (const auto *value = look(theme, id.toString())) {
-			for (const auto &role : {value->main, value->support}) {
+			for (const auto &role : {value->main, value->support, value->third}) {
 				if (!role.isEmpty() && !result.contains(role)) {
 					result << role;
 				}
@@ -198,6 +218,40 @@ struct Panel {
 };
 inline std::vector<Panel> layout(const Look &look, bool portrait, bool support, const QJsonObject &options = {})
 {
+	if (look.layout.startsWith("guided-")) {
+		// These are panel bounds, not promises that a fitted source fills them.
+		// In particular a wide content feed remains letterboxed in portrait.
+		std::vector<Panel> result{{look.main, {0, 0, 1, 1}, false, false}};
+		if (support && !look.support.isEmpty()) {
+			if (look.layout == "guided-pip") {
+				if (portrait) {
+					result[0].rect = {0, .33, 1, .67};
+					result.push_back({look.support, {0, 0, 1, .33}, false, false});
+				} else {
+					result.push_back({look.support, {.70, .66, .265, .30}, false, false});
+				}
+			} else if (look.layout == "guided-equal") {
+				result[0].rect = portrait ? QRectF(0, 0, 1, .5) : QRectF(0, 0, .5, 1);
+				result.push_back({look.support, portrait ? QRectF(0, .5, 1, .5) : QRectF(.5, 0, .5, 1), false, false});
+			} else if (look.layout == "guided-three") {
+				result[0].rect = portrait ? QRectF(0, 0, 1, .42) : QRectF(0, 0, .70, 1);
+				result.push_back({look.support, portrait ? QRectF(0, .42, 1, .29) : QRectF(.70, 0, .30, .5), false, false});
+				if (!look.third.isEmpty())
+					result.push_back({look.third, portrait ? QRectF(0, .71, 1, .29) : QRectF(.70, .5, .30, .5), false, false});
+			}
+		}
+		for (auto &panel : result) {
+			const QJsonArray rect = options.value(panel.role + "Rect").toArray();
+			if (rect.size() == 4) {
+				const double x = qBound(0., rect[0].toDouble(), .99), y = qBound(0., rect[1].toDouble(), .99);
+				panel.rect = {x, y, qBound(.01, rect[2].toDouble(), 1 - x), qBound(.01, rect[3].toDouble(), 1 - y)};
+			}
+			// Content always fits. Cropping camera/detail requires an explicit choice.
+			if (panel.role != "feedB" && options.contains(panel.role + "Fill"))
+				panel.fill = options.value(panel.role + "Fill").toBool();
+		}
+		return result;
+	}
 	const QString composition = options.value("composition").toString();
 	if (!composition.isEmpty() && composition != look.layout &&
 	    (composition == "corner" || composition == "rail" || composition == "split")) {

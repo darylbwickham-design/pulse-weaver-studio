@@ -209,6 +209,7 @@ private:
 	void createLook(const QString &name, bool duplicate);
 	void createStarterStage();
 	void openShowWizard();
+	void openDetailedShowWizard();
 	void openLegacyShowWizard();
 	void refreshNavigation();
 	void refreshSourceChips();

@@ -2,6 +2,9 @@
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-scene-item-ref.hpp"
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-show-templates.hpp"
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-flexible.hpp"
+#include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-plan.hpp"
+#include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-cards.hpp"
+#include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-guided.hpp"
 
 #include <QApplication>
 #include <QComboBox>
@@ -9,6 +12,10 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QImage>
+#include <QPainter>
+#include <QFileInfo>
+#include <QDirIterator>
+#include <QCryptographicHash>
 #include <QEventLoop>
 #include <QScrollBar>
 #include <QWizardPage>
@@ -26,6 +33,7 @@
 
 static int checks = 0, runtimeErrors = 0;
 static std::atomic<uint32_t> fixtureWidth{640}, fixtureHeight{480};
+static std::atomic<int> imageFixtureCreates{0};
 
 static void check(bool ok, const char *message)
 {
@@ -60,7 +68,9 @@ static void writeFile(const QString &path, const QByteArray &bytes)
 
 static void registerInertBrowser()
 {
-	obs_source_info type{}; type.id = "browser_source"; type.type = OBS_SOURCE_TYPE_INPUT; type.output_flags = OBS_SOURCE_VIDEO;
+	// Audio is advertised but never emitted. This makes mixer-mask assertions
+	// meaningful: OBS ignores those setters/getters for video-only fixtures.
+	obs_source_info type{}; type.id = "browser_source"; type.type = OBS_SOURCE_TYPE_INPUT; type.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_AUDIO;
 	type.get_name = [](void *) { return "Inert browser fixture"; };
 	type.create = [](obs_data_t *settings, obs_source_t *) -> void * {
 		return new QSize(int(obs_data_get_int(settings, "width")), int(obs_data_get_int(settings, "height")));
@@ -69,6 +79,37 @@ static void registerInertBrowser()
 	type.get_width = [](void *p) { return uint32_t(static_cast<QSize *>(p)->width()); };
 	type.get_height = [](void *p) { return uint32_t(static_cast<QSize *>(p)->height()); };
 	obs_register_source(&type);
+}
+
+static void registerInertImageAndCaptureInputs()
+{
+	obs_source_info image{}; image.id = "image_source"; image.type = OBS_SOURCE_TYPE_INPUT; image.output_flags = OBS_SOURCE_VIDEO;
+	image.get_name = [](void *) { return "Inert PNG image fixture"; };
+	image.create = [](obs_data_t *settings, obs_source_t *) -> void * {
+		++imageFixtureCreates;
+		const QImage pixels(QString::fromUtf8(obs_data_get_string(settings, "file")));
+		return new QSize(pixels.isNull() ? QSize(640, 480) : pixels.size());
+	};
+	image.update = [](void *opaque, obs_data_t *settings) {
+		const QImage pixels(QString::fromUtf8(obs_data_get_string(settings, "file")));
+		*static_cast<QSize *>(opaque) = pixels.isNull() ? QSize(640, 480) : pixels.size();
+	};
+	image.destroy = [](void *opaque) { delete static_cast<QSize *>(opaque); };
+	image.get_width = [](void *opaque) { return uint32_t(static_cast<QSize *>(opaque)->width()); };
+	image.get_height = [](void *opaque) { return uint32_t(static_cast<QSize *>(opaque)->height()); };
+	obs_register_source(&image);
+	for (const char *kind : {"dshow_input", "game_capture", "monitor_capture", "window_capture", "ffmpeg_source"}) {
+		obs_source_info type{}; type.id = kind; type.type = OBS_SOURCE_TYPE_INPUT; type.output_flags = OBS_SOURCE_VIDEO;
+		type.get_name = [](void *) { return "Inert capture fixture"; };
+		type.create = [](obs_data_t *settings, obs_source_t *) -> void * {
+			const int width = int(obs_data_get_int(settings, "width")), height = int(obs_data_get_int(settings, "height"));
+			return new QSize(width > 0 ? width : 640, height > 0 ? height : 480);
+		};
+		type.destroy = [](void *opaque) { delete static_cast<QSize *>(opaque); };
+		type.get_width = [](void *opaque) { return uint32_t(static_cast<QSize *>(opaque)->width()); };
+		type.get_height = [](void *opaque) { return uint32_t(static_cast<QSize *>(opaque)->height()); };
+		obs_register_source(&type);
+	}
 }
 
 static void wizardOverlayPolicyTests()
@@ -94,6 +135,7 @@ static void wizardOverlayPolicyTests()
 
 struct PulseMotionEngineTestAccess {
 	static void openWizard(PulseMotionEngine &engine) { engine.openShowWizard(); }
+	static void openDetailedWizard(PulseMotionEngine &engine) { engine.openDetailedShowWizard(); }
 	static QString selectedStage(PulseMotionEngine &engine, const QString &stage) {
 		QComboBox field;field.addItem("Unrelated old Stage","Unrelated old Stage");
 		engine.stageField=&field;engine.selectEditorStage(stage);engine.populateStages();
@@ -960,8 +1002,9 @@ static void captureWizardWindow(QWidget *window, const QString &stem)
 			scrolls.append(QJsonObject{{"viewport", wizardRect(scroll->viewport(), window)}, {"body", wizardRect(scroll->widget(), window)},
 				{"horizontalContained", horizontal}, {"verticalScrollMaximum", scroll->verticalScrollBar()->maximum()}});
 		}
-		if (stem == "wizard-4-review") {
-			for (const QString &title : {QString("Edit sections"), QString("Edit Looks"), QString("Edit sources"), QString("Check again")}) {
+		if (stem == "wizard-4-review" || stem == "guided-5-review") {
+			const QStringList titles = stem == "guided-5-review" ? QStringList{"Change inputs…","Change screens…","Change alert layers…","Change included views…","Check assignments again"} : QStringList{"Edit sections","Edit Looks","Edit sources","Check again"};
+			for (const QString &title : titles) {
 				QPushButton *button = nullptr;
 				for (auto *candidate : window->findChildren<QPushButton *>()) if (candidate->text() == title) { button = candidate; break; }
 				bool reachable = button && button->isVisibleTo(window);
@@ -1010,6 +1053,12 @@ static QSet<QString> wizardSourceIdentities()
 	QSet<QString> identities;
 	obs_enum_sources([](void *opaque, obs_source_t *source) {
 		static_cast<QSet<QString> *>(opaque)->insert(QString::fromUtf8(obs_source_get_uuid(source))); return true;
+	}, &identities);
+	obs_enum_canvases([](void *opaque, obs_canvas_t *canvas) {
+		obs_canvas_enum_scenes(canvas, [](void *data, obs_source_t *source) {
+			static_cast<QSet<QString> *>(data)->insert(QString::fromUtf8(obs_source_get_uuid(source))); return true;
+		}, opaque);
+		return true;
 	}, &identities);
 	return identities;
 }
@@ -1473,7 +1522,7 @@ static void setupWizardRoundTripTests(obs_source_t *landscape, obs_source_t *por
 		check(wizardSourceIdentities() == beforeSources, "review and Back navigation create no OBS input or scene");
 		completed = true; wizard->button(QWizard::CancelButton)->click();
 	});
-	PulseMotionEngineTestAccess::openWizard(engine);
+	PulseMotionEngineTestAccess::openDetailedWizard(engine);
 	check(completed && readFile(storage) == beforeStorage && wizardSourceIdentities() == beforeSources,
 		"cancelling the full production wizard leaves source identities and persistent motion storage unchanged");
 }
@@ -1554,12 +1603,6 @@ static void themedBuilderTests(const obs_video_info &video)
 	check(readFile(stagePath)==before, "validation failures preserve existing stages");
 	// All source types are inert test fixtures, including browser sources. No URL
 	// is fetched and no device is opened by these catalogue/transaction checks.
-	for (const char *kind : {"dshow_input", "game_capture", "monitor_capture", "image_source", "ffmpeg_source"}) {
-		obs_source_info type{}; type.id=kind; type.type=OBS_SOURCE_TYPE_INPUT; type.output_flags=OBS_SOURCE_VIDEO;
-		type.get_name=[](void *){return "Inert builder fixture";}; type.get_width=[](void *){return 640u;}; type.get_height=[](void *){return 480u;};
-		type.create=[](obs_data_t *,obs_source_t *)->void *{return new int(1);}; type.destroy=[](void *p){delete static_cast<int *>(p);};
-		obs_register_source(&type);
-	}
 	for (const char *kind : {"color_filter", "mask_filter"}) {
 		obs_source_info type{};type.id=kind;type.type=OBS_SOURCE_TYPE_FILTER;type.output_flags=OBS_SOURCE_VIDEO;
 		type.get_name=[](void *){return "Inert filter fixture";};type.create=[](obs_data_t *,obs_source_t *)->void *{return new int(1);};type.destroy=[](void *p){delete static_cast<int *>(p);};obs_register_source(&type);
@@ -2046,6 +2089,607 @@ static void themedBuilderTests(const obs_video_info &video)
 	obs_source_remove(generated); obs_source_remove(generatedPortrait); obs_source_remove(source); obs_canvas_remove(canvas);
 }
 
+// Generated-output checks use the real show transaction and serialized native
+// actions. The capture/browser inputs are inert and never access a device/URL.
+static QJsonArray guidedOutputEvidence;
+
+static bool collectAuditSource(void *opaque, obs_source_t *source)
+{
+	auto &sources = *static_cast<std::vector<OBSSource> *>(opaque);
+	for (const auto &existing : sources) if (existing.Get() == source) return true;
+	sources.emplace_back(source); return true;
+}
+
+static std::vector<OBSSource> auditSources()
+{
+	std::vector<OBSSource> sources;
+	obs_enum_sources(collectAuditSource, &sources);
+	obs_enum_canvases([](void *opaque, obs_canvas_t *canvas) {
+		obs_canvas_enum_scenes(canvas, collectAuditSource, opaque); return true;
+	}, &sources);
+	return sources;
+}
+
+static void removeAuditAdditions(const QSet<QString> &baseline)
+{
+	auto sources = auditSources();
+	for (auto it = sources.rbegin(); it != sources.rend(); ++it)
+		if (!baseline.contains(QString::fromUtf8(obs_source_get_uuid(*it)))) obs_source_remove(*it);
+	sources.clear(); obs_wait_for_destroy_queue();
+	check(wizardSourceIdentities() == baseline, "generated-show fixture releases every added input and both canvas scenes");
+}
+
+static QMap<QString, QByteArray> generatedFileSnapshot(const QString &directory)
+{
+	QMap<QString, QByteArray> snapshot;
+	QDirIterator files(directory, QDir::Files, QDirIterator::Subdirectories);
+	while (files.hasNext()) {
+		const QString path = files.next();
+		snapshot.insert(QDir(directory).relativeFilePath(path), QCryptographicHash::hash(readFile(path), QCryptographicHash::Sha256));
+	}
+	return snapshot;
+}
+
+static QString labelledInput(const QString &directory, const QString &name, const QSize &size, const QColor &color)
+{
+	QImage image(size, QImage::Format_ARGB32_Premultiplied); image.fill(color);
+	QPainter painter(&image); painter.setPen(QColor(255, 255, 255, 80));
+	for (int x = 0; x < size.width(); x += qMax(1, size.width() / 12)) painter.drawLine(x, 0, x, size.height());
+	for (int y = 0; y < size.height(); y += qMax(1, size.height() / 8)) painter.drawLine(0, y, size.width(), y);
+	const int marker = qMax(12, qMin(size.width(), size.height()) / 7);
+	painter.fillRect(0, 0, marker, marker, Qt::red); painter.fillRect(size.width() - marker, 0, marker, marker, Qt::green);
+	painter.fillRect(0, size.height() - marker, marker, marker, Qt::blue);
+	painter.fillRect(size.width() - marker, size.height() - marker, marker, marker, Qt::yellow);
+	QFont font = painter.font(); font.setPixelSize(qMax(24, size.height() / 10)); font.setBold(true); painter.setFont(font);
+	painter.setPen(Qt::white); painter.drawText(image.rect().adjusted(marker, marker, -marker, -marker), Qt::AlignCenter | Qt::TextWordWrap, name);
+	painter.end();
+	const QString path = QDir(directory).filePath(name + ".png"); check(image.save(path), "labelled source fixture PNG saves"); return path;
+}
+
+static QString resolvePlannedInput(const QString &id, const QJsonObject &definitions, const QString &route = {})
+{
+	if (!id.startsWith("new:")) return id;
+	const auto definition = definitions.value(id.mid(4)).toObject();
+	QString name = definition.value("name").toString();
+	if (definition.value("kind") == "browser_source" || definition.value("kind") == "setup_card") name += " · " + route;
+	OBSSourceAutoRelease source = obs_get_source_by_name(name.toUtf8().constData());
+	check(bool(source), "planned source definition resolves to its created native input");
+	return QString::fromUtf8(obs_source_get_uuid(source));
+}
+
+static QJsonObject preservedInputState(obs_source_t *source)
+{
+	OBSDataAutoRelease settings = obs_source_get_settings(source);
+	return {{"settings", QJsonDocument::fromJson(obs_data_get_json(settings)).object()},
+		{"mixers", int(obs_source_get_audio_mixers(source))}, {"muted", obs_source_muted(source)},
+		{"volume", obs_source_get_volume(source)}, {"monitoring", int(obs_source_get_monitoring_type(source))}};
+}
+
+static QSet<QString> expectedViewFeeds(const QString &view, const QString &camera, const QString &content, const QString &detail)
+{
+	if (view == "content") return {content};
+	if (view == "camera") return {camera};
+	if (view == "detail") return {detail};
+	if (view == "content-camera") return {content, camera};
+	if (view == "content-detail") return {content, detail};
+	if (view == "two-cameras") return {camera, detail};
+	if (view == "three-up") return {content, camera, detail};
+	check(false, "quality scenario names an independently understood operating view"); return {};
+}
+
+static QJsonObject checkGuidedOutput(PulseMotionEngine &engine, const PulseSetupPlan::Options &options,
+	const QJsonObject &request, const QSet<QString> &baseline)
+{
+	const auto definitions = request.value("newSources").toObject();
+	QMap<QString, QString> backgrounds;
+	QMap<QString, QSet<QByteArray>> fingerprints;
+	QSet<QString> emittedViews, emittedScreens;
+	QJsonArray actions;
+	int mainLooks = 0, screenLooks = 0, cardInputs = 0, newBrowserInputs = 0;
+	QMap<QString, QString> alertIds;
+	for (int layer = 0; layer < options.alerts.size(); ++layer) if (options.alerts[layer].enabled) {
+		for (const QString &route : {QString("horizontal"), QString("vertical")}) {
+			const QString planned = route == "horizontal" ? options.alerts[layer].horizontal : options.alerts[layer].vertical;
+			if (!planned.isEmpty()) alertIds.insert(route + QString::number(layer + 1), resolvePlannedInput(planned, definitions, route));
+		}
+	}
+	for (const auto &entry : PulseMotionEngineTestAccess::actions(engine)) {
+		const auto action = entry.toObject(); const QString stage = action.value("stage").toString();
+		if (!stage.startsWith(options.name + " · ")) continue;
+		actions.append(action);
+		const QString templateId = action.value("templateId").toString(), view = templateId.section('/', 1);
+		const bool main = templateId.startsWith("guided-main/");
+		if (main) { ++mainLooks; check(options.views.contains(view) && !emittedViews.contains(view), "each generated action belongs to one distinct selected operating view"); emittedViews.insert(view); }
+		else { ++screenLooks; const QString phase = templateId.section('/',0,0); check(!emittedScreens.contains(phase),"each lifecycle phase is created once"); emittedScreens.insert(phase); }
+		for (const QString &route : {QString("horizontal"), QString("vertical")}) {
+			const QString camera = options.sources.camera.isEmpty() ? QString() : resolvePlannedInput(options.sources.camera, definitions, route);
+			const QString content = options.sources.content.isEmpty() ? QString() : resolvePlannedInput(options.sources.content, definitions, route);
+			const QString detail = options.sources.detail.isEmpty() ? QString() : resolvePlannedInput(options.sources.detail, definitions, route);
+			QSet<QString> knownFeeds; for (const QString &id : {camera,content,detail}) if (!id.isEmpty()) knownFeeds.insert(id);
+			const bool portrait = route == "vertical"; const double width = portrait ? 1080 : 1920, height = portrait ? 1920 : 1080;
+			QSet<QString> visibleFeeds, visibleAlerts; QMap<int, QString> stack;
+			QMap<int, QJsonObject> visualFeeds; int highestPicture = -1, lowestFeed = 9999, backdropOrder = -1; bool foundPresentation = false;
+			for (const auto &targetValue : action.value("items").toArray()) {
+				const auto target = targetValue.toObject();
+				if (target.value("container").toString().endsWith(" · Portrait") != portrait) continue;
+				const auto transform = target.value("transform").toObject();
+				if (!transform.value("visible").toBool()) continue;
+				const QString id = target.value("sourceUuid").toString();
+				OBSSourceAutoRelease source = obs_get_source_by_uuid(id.toUtf8().constData());
+				check(source && (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO), "every visible generated item resolves to a real video input");
+				for (const char *field : {"positionX", "positionY", "boundsWidth", "boundsHeight", "scaleX", "scaleY", "rotation"})
+					check(transform.value(field).isDouble() && std::isfinite(transform.value(field).toDouble()), "generated transforms contain finite native numbers");
+				const double x = transform.value("positionX").toDouble(), y = transform.value("positionY").toDouble();
+				const double w = transform.value("boundsWidth").toDouble(), h = transform.value("boundsHeight").toDouble();
+				check(x >= -.01 && y >= -.01 && w > 0 && h > 0 && x + w <= width + .51 && y + h <= height + .51,
+					"generated visible panel bounds remain positive and inside the actual 16:9 or 9:16 canvas");
+				check(transform.value("scaleX").toDouble() > 0 && transform.value("scaleY").toDouble() > 0 && transform.value("rotation").toDouble() == 0,
+					"default generated panels do not introduce flips or rotation");
+				for (const char *field : {"cropLeft", "cropTop", "cropRight", "cropBottom"}) check(transform.value(field).toInt() >= 0, "generated crop values are nonnegative");
+				check(transform.value("cropLeft").toInt() + transform.value("cropRight").toInt() < int(obs_source_get_width(source)) &&
+					transform.value("cropTop").toInt() + transform.value("cropBottom").toInt() < int(obs_source_get_height(source)), "generated crop retains actual source pixels");
+				const int order = transform.value("order").toInt(); check(!stack.contains(order), "visible generated stack positions are unique"); stack.insert(order, id);
+				if (knownFeeds.contains(id)) {
+					check(!visibleFeeds.contains(id), "a selected input appears only once within a generated view and canvas"); visibleFeeds.insert(id);
+					highestPicture = qMax(highestPicture, order); lowestFeed = qMin(lowestFeed, order);
+					auto visual = transform; visual.remove("order"); visual.remove("locked");
+					visualFeeds.insert(order, QJsonObject{{"source", id}, {"transform", visual}});
+					if (id == content || (id == camera && !options.cropCamera) || (id == detail && !options.cropDetail)) {
+						check(transform.value("boundsType").toInt() == OBS_BOUNDS_SCALE_INNER && !transform.value("cropToBounds").toBool() &&
+							transform.value("cropLeft").toInt() == 0 && transform.value("cropTop").toInt() == 0 && transform.value("cropRight").toInt() == 0 && transform.value("cropBottom").toInt() == 0,
+							"fit retains all source corners including game HUD and shared-screen edges");
+					}
+					if ((id == camera && options.cropCamera) || (id == detail && options.cropDetail))
+						check(transform.value("boundsType").toInt()==OBS_BOUNDS_SCALE_OUTER&&transform.value("cropToBounds").toBool(),"explicit camera/detail cropping fills its frame rather than silently retaining Fit");
+					continue;
+				}
+				bool alert = false;
+				for (int layer = 0; layer < options.alerts.size(); ++layer) if (options.alerts[layer].enabled && alertIds.value(route + QString::number(layer + 1)) == id) {
+					check(main || options.alerts[layer].scope == "all", "a main-only alert never leaks onto Starting, Break or Ending");
+					check(!visibleAlerts.contains(id), "each shared alert slot has one visible scene item per canvas"); visibleAlerts.insert(id); alert = true;
+					check(transform.value("locked").toBool() && x == 0 && y == 0 && std::abs(w - width) < .01 && std::abs(h - height) < .01,
+						"alert layers retain locked full-canvas placement");
+				}
+				if (alert) continue;
+				const QString artwork = options.artwork.value(templateId.section('/', 0, 0)).toObject().value(route).toString();
+				if (!main && !artwork.isEmpty() && id == resolvePlannedInput(artwork, definitions, route)) {
+					check(std::strcmp(obs_source_get_unversioned_id(source), "browser_source") == 0 && x == 0 && y == 0 && std::abs(w - width) < .01 && std::abs(h - height) < .01,
+						"an explicitly chosen browser artwork source occupies its requested format's full screen");
+					foundPresentation = true; highestPicture=qMax(highestPicture,order); continue;
+				}
+				OBSDataAutoRelease metadata = obs_source_get_private_settings(source);
+				check(obs_data_get_bool(metadata, "pulseweaver.setup_card") && std::strcmp(obs_source_get_unversioned_id(source), "image_source") == 0,
+					"generated static presentation layers are actual image inputs, not hidden browsers or placeholders");
+				OBSDataAutoRelease settings = obs_source_get_settings(source);
+				const QString path = QString::fromUtf8(obs_data_get_string(settings, "file")); const QImage pixels(path);
+				check(!pixels.isNull() && pixels.size() == QSize(int(width), int(height)) && obs_source_get_width(source) == uint32_t(width) && obs_source_get_height(source) == uint32_t(height),
+					"generated PNG and actual native source dimensions match their canvas");
+				check(qAlpha(pixels.pixel(0, 0)) == 255 && qAlpha(pixels.pixel(pixels.width() - 1, pixels.height() - 1)) == 255,
+					"generated screens/backgrounds cover their frame with opaque pixels");
+				check(x == 0 && y == 0 && std::abs(w - width) < .01 && std::abs(h - height) < .01, "generated screen graphics are not squeezed into a camera panel");
+				const bool background = obs_data_get_bool(metadata, "pulseweaver.setup_card.backgroundOnly");
+				if (background) {
+					check(main, "the neutral live backdrop is not an unexplained extra layer on a holding screen"); backdropOrder = order;
+					check(!backgrounds.contains(route) || backgrounds.value(route) == id, "one generated backdrop input is reused across all live Looks on its canvas"); backgrounds.insert(route, id);
+				} else {
+					check(!main, "live operating views do not contain an unrequested holding card"); foundPresentation = true; highestPicture=qMax(highestPicture,order);
+					const QString expectedText = templateId.startsWith("guided-starting/") ? options.startingText : templateId.startsWith("guided-break/") ? options.breakText : options.endingText;
+					check(QString::fromUtf8(obs_data_get_string(metadata, "pulseweaver.setup_card.text")) == expectedText, "generated screen retains the user's own text for that phase");
+					int lightPixels = 0;
+					for (int py = pixels.height()/4; py < pixels.height()*3/4; py += 2) for (int px = pixels.width()/10; px < pixels.width()*9/10; px += 2) {
+						const QColor value = pixels.pixelColor(px, py); if (value.red() > 205 && value.green() > 205 && value.blue() > 205) ++lightPixels;
+					}
+					check(lightPixels > 50, "generated card contains visible high-contrast text pixels inside its central content area");
+				}
+				const QString evidence = qEnvironmentVariable("PULSE_GUIDED_OUTPUT_EVIDENCE_DIR");
+				if (!evidence.isEmpty()) {
+					const QString file = QDir(evidence).filePath(options.name + "-" + templateId.section('/', 0, 0) + "-" + route + (background ? "-background.png" : "-card.png"));
+					check(pixels.save(file), "actual generated PNG copied into the optional quality evidence directory");
+				}
+			}
+			if (main) {
+				check(visibleFeeds == expectedViewFeeds(view, camera, content, detail), "generated view contains exactly the feeds promised by its task label");
+				check(backdropOrder >= 0 && backdropOrder < lowestFeed, "neutral live backdrop stays below every feed");
+				QJsonArray fingerprint; for (auto visual = visualFeeds.cbegin(); visual != visualFeeds.cend(); ++visual) fingerprint.append(visual.value());
+				const QByteArray signature = QJsonDocument(fingerprint).toJson(QJsonDocument::Compact);
+				check(!fingerprints[route].contains(signature), "selected live views have genuinely different source visibility or framing on each canvas"); fingerprints[route].insert(signature);
+			} else check(foundPresentation, "each requested lifecycle phase has a usable static card or its exact explicit custom artwork");
+			QStringList expectedStack;
+			for (int layer = 0; layer < options.alerts.size(); ++layer) if (options.alerts[layer].enabled && (main || options.alerts[layer].scope == "all")) {
+				const QString id = alertIds.value(route + QString::number(layer + 1)); if (!id.isEmpty()) expectedStack.append(id);
+			}
+			QStringList actualStack;
+			for (auto item = stack.cbegin(); item != stack.cend(); ++item) if (visibleAlerts.contains(item.value())) { actualStack.append(item.value()); check(item.key() > highestPicture, "alert layers remain above live pictures and holding artwork"); }
+			check(actualStack == expectedStack && visibleAlerts.size() == expectedStack.size(), "one, two or three alert layers preserve their chosen order and scope on each canvas");
+		}
+	}
+	check(mainLooks == options.views.size(), "creation yields exactly the selected operating views without extra duplicated presets");
+	check(emittedViews==options.views,"every requested operating view is present in the final action catalogue");
+	check(screenLooks == int(options.starting) + int(options.brb) + int(options.ending), "creation yields only the requested Starting, Break and Ending phases");
+	QSet<QString> expectedScreens;if(options.starting)expectedScreens.insert("guided-starting");if(options.brb)expectedScreens.insert("guided-break");if(options.ending)expectedScreens.insert("guided-ending");
+	check(emittedScreens==expectedScreens,"every requested lifecycle phase is present with its correct phase identity");
+	QJsonArray sources;
+	for (const auto &source : auditSources()) if (!baseline.contains(QString::fromUtf8(obs_source_get_uuid(source)))) {
+		const QString type = QString::fromUtf8(obs_source_get_unversioned_id(source));
+		if (type == "image_source") ++cardInputs;
+		if (type == "browser_source") {
+			++newBrowserInputs; OBSDataAutoRelease settings = obs_source_get_settings(source);
+			check(obs_source_get_audio_mixers(source) == 0 && obs_source_get_monitoring_type(source) == OBS_MONITORING_TYPE_NONE,
+				"new browser alerts are actually silent and do not start an audio monitor");
+			check(!obs_data_get_bool(settings, "shutdown") && !obs_data_get_bool(settings, "restart_when_active") && obs_data_get_bool(settings, "reroute_audio"),
+				"new browser alerts stay warm and do not restart on Look changes");
+		}
+		OBSDataAutoRelease saved = obs_save_source(source);
+		sources.append(QJsonDocument::fromJson(obs_data_get_json(saved)).object());
+	}
+	return {{"name", options.name}, {"actions", actions}, {"createdSources", sources}, {"imageInputs", cardInputs}, {"browserInputs", newBrowserInputs}};
+}
+
+static void staticSetupCardPixelTests()
+{
+	const QString evidence = qEnvironmentVariable("PULSE_GUIDED_OUTPUT_EVIDENCE_DIR");
+	for (const QSize &size : {QSize(1920, 1080), QSize(1080, 1920)}) {
+		QSet<QByteArray> palettes;
+		for (const QString &style : {QString("navy"), QString("cyan"), QString("violet"), QString("amber")}) {
+			QJsonObject spec{{"kind", "setup_card"}, {"name", "Readable native card"}, {"text", "Starting soon"},
+				{"subtitle", "A real show screen without an external service"}, {"style", style}};
+			const QImage image = PulseSetupCards::render(spec, size);
+			check(!image.isNull() && image.size() == size, "each advertised static-card style renders at both real canvas resolutions");
+			const auto digest = QCryptographicHash::hash(QByteArray(reinterpret_cast<const char *>(image.constBits()), image.sizeInBytes()), QCryptographicHash::Sha256);
+			check(!palettes.contains(digest), "every advertised card colour style changes the actual output pixels"); palettes.insert(digest);
+			if (!evidence.isEmpty()) check(image.save(QDir(evidence).filePath("static-card-" + style + (size.height() > size.width() ? "-portrait.png" : "-landscape.png"))), "static-card pixel evidence saves");
+			if (style != "navy") continue;
+			QJsonObject altered = spec; altered.insert("text", "Thanks for watching, see you next time");
+			const QImage different = PulseSetupCards::render(altered, size);
+			check(image != different, "changing a card's message changes its real PNG pixels, not only source metadata");
+			QJsonObject longest = spec; longest.insert("text", QString(160, QChar('W'))); longest.insert("subtitle", QString(320, QChar('W')));
+			const QImage wrapped = PulseSetupCards::render(longest, size);
+			QJsonObject background = longest; background.insert("backgroundOnly", true);
+			const QImage plain = PulseSetupCards::render(background, size);
+			check(!wrapped.isNull() && !plain.isNull(), "long unbroken supported title/subtitle render without a browser");
+			int changed = 0, outside = 0;
+			const QRect safe(qRound(size.width() * .05), qRound(size.height() * .05), qRound(size.width() * .90), qRound(size.height() * .90));
+			for (int y = 0; y < size.height(); ++y) for (int x = 0; x < size.width(); ++x) {
+				if (wrapped.pixel(x, y) != plain.pixel(x, y)) { ++changed; if (!safe.contains(x, y)) ++outside; }
+			}
+			check(changed > 1000 && outside == 0, "long card text produces real visible pixels and stays within the frame's five-percent margin");
+			if (!evidence.isEmpty()) check(wrapped.save(QDir(evidence).filePath(size.height() > size.width() ? "static-card-long-portrait.png" : "static-card-long-landscape.png")), "long-text card pixel evidence saves");
+		}
+	}
+}
+
+static QPushButton *guidedButton(QWidget *root, const QString &text)
+{
+	for (auto *button : root->findChildren<QPushButton *>()) if (button->text() == text) return button;
+	check(false, qPrintable("missing guided button: " + text)); return nullptr;
+}
+static QCheckBox *guidedCheck(QWidget *root, const QString &text)
+{
+	for (auto *box : root->findChildren<QCheckBox *>()) if (box->text() == text) return box;
+	check(false, qPrintable("missing guided checkbox: " + text)); return nullptr;
+}
+static QMap<QString, QPushButton *> guidedViews(QWidget *root)
+{
+	QMap<QString, QPushButton *> result;
+	for (auto *button : root->findChildren<QPushButton *>()) if (button->property("pulseGuidedView").isValid()) result.insert(button->property("pulseGuidedView").toString(), button);
+	return result;
+}
+
+// Drive the real six-page production entry point. Draft edits, modal previews and
+// review repairs must remain side-effect free until the user chooses Create.
+static void guidedWizardInteractionTests()
+{
+	QTemporaryDir files;
+	const QString storage = files.filePath("config/obs-studio/plugin_config/pulse-weaver-core/motion.json");
+	check(QDir().mkpath(QFileInfo(storage).absolutePath()), "private task-first wizard storage");
+	writeFile(storage, QJsonDocument(QJsonObject{{"version",1},{"actions",QJsonArray{}},{"originals",QJsonArray{}},{"originalScenes",QJsonObject{}},{"auditSentinel","unchanged"}}).toJson());
+	const auto createImage = [&](const QString &name, const QSize &size) {
+		OBSDataAutoRelease settings = obs_data_create();
+		const auto path = labelledInput(files.path(), name, size, QColor("#286b80")); obs_data_set_string(settings, "file", path.toUtf8().constData());
+		OBSSourceAutoRelease source = obs_source_create("image_source", name.toUtf8().constData(), settings, nullptr); return OBSSource(source);
+	};
+	OBSSource content = createImage("Wizard game input", {1920,1080}), detail = createImage("Wizard detail input", {900,1600}), card = createImage("Forbidden generated setup card", {1920,1080});
+	OBSDataAutoRelease cardMetadata = obs_source_get_private_settings(card); obs_data_set_bool(cardMetadata,"pulseweaver.setup_card",true);
+	OBSDataAutoRelease nativeSettings = obs_data_create();obs_data_set_int(nativeSettings,"width",1920);obs_data_set_int(nativeSettings,"height",1080);obs_data_set_string(nativeSettings,"url","http://127.0.0.1:18754/overlay/audit-token");
+	OBSSourceAutoRelease native = obs_source_create("browser_source","Forbidden native overlay feed",nativeSettings,nullptr);
+	OBSDataAutoRelease priorAlertSettings=obs_data_create();obs_data_set_int(priorAlertSettings,"width",1920);obs_data_set_int(priorAlertSettings,"height",1080);obs_data_set_string(priorAlertSettings,"url","https://example.invalid/existing-show-alert");
+	OBSSourceAutoRelease priorAlert=obs_source_create("browser_source","Alert layer 1 · landscape · horizontal",priorAlertSettings,nullptr);
+	const QString contentId = obs_source_get_uuid(content), detailId = obs_source_get_uuid(detail);
+	const auto beforeSources = wizardSourceIdentities(); const auto beforeFiles = generatedFileSnapshot(files.path());
+	PulseMotionEngine engine(nullptr, storage); bool completed = false;
+	QTimer::singleShot(0, [&] {
+		auto *wizard = dynamic_cast<PulseGuidedWizard *>(QApplication::activeModalWidget());
+		check(wizard && wizard->property("pulseTaskFirst").toBool(), "default production entry opens the task-first wizard"); settleWizard();
+		check(wizard->pageIds() == QList<int>{0,1,2,3,4,5} && wizard->currentId() == 0, "task-first flow has six focused phases");
+		check(!wizard->currentPage()->isComplete() && !wizard->button(QWizard::NextButton)->isEnabled(), "activity selection is required before choosing inputs");
+		captureWizardWindow(wizard, "guided-0-activity");
+		QPushButton *gaming = nullptr;
+		for (auto *button : wizard->findChildren<QPushButton *>()) if (button->property("pulseGuidedActivity") == "gaming") gaming = button;
+		check(gaming, "Games activity is visible as a direct choice"); gaming->click(); settleWizard();
+		check(wizard->currentId() == 1 && !wizard->currentPage()->isComplete(), "activity choice advances directly to real inputs and blocks a blank game show");
+		const auto reuse = [&](const QString &role, const QString &name) {
+			QTimer::singleShot(0, [&] {
+				auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog && dialog->objectName() == "PulseGuidedChooseInput", "input selection opens a two-action choice");
+				QTimer::singleShot(0, [&] {
+					auto *picker = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(picker && picker->objectName() == "PulseWeaverSetupChoiceDialog", "reuse uses the production click-through chooser");
+					for(auto *button:picker->findChildren<QPushButton *>("PulseWeaverSetupChoiceCard"))check(button->accessibleName()!="Forbidden generated setup card"&&button->accessibleName()!="Forbidden native overlay feed","feed chooser excludes presentation-only native overlays and generated cards rejected by the backend");
+					setupField<QPushButton>(picker, name)->click();
+				});
+				guidedButton(dialog, "Use an existing input")->click();
+			});
+			setupField<QPushButton>(wizard, "Choose " + role + " input")->click(); settleWizard();
+		};
+		reuse("content", "Wizard game input"); check(wizard->options().sources.content == contentId && wizard->options().sources.camera.isEmpty(), "one content binding is enough without a mandatory camera");
+		wizard->next(); settleWizard();
+		check(wizard->currentId() == 2 && guidedViews(wizard->page(2)).keys() == QStringList{"content"} && wizard->options().views == QSet<QString>{"content"}, "one input yields one usable view with no empty pretend alternatives");
+		captureWizardWindow(wizard, "guided-2-single-input"); wizard->back(); settleWizard();
+		QTimer::singleShot(0, [&] {
+			auto *choice = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(choice && choice->objectName() == "PulseGuidedChooseInput", "new input has the same clear entry point");
+			captureWizardWindow(choice, "guided-input-entry");
+			QTimer::singleShot(0, [&] {
+				auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog && dialog->objectName() == "PulseGuidedSourceDialog", "new source is configured in a focused draft editor");
+				auto *type = setupField<QComboBox>(dialog, "Input type"); check(type->findData("image_source") >= 0, "registered image input is offered");
+				type->setCurrentIndex(type->findData("browser_source"));setupField<QLineEdit>(dialog,"Input browser link")->setText("http://127.0.0.1:18754/overlay/audit-token");settleWizard();check(!guidedButton(dialog,"Use this input")->isEnabled(),"native presentation URL cannot be drafted as a feed the backend rejects");
+				type->setCurrentIndex(type->findData("image_source"));
+				setupField<QLineEdit>(dialog, "Input name")->setText("Draft camera with a deliberately longer meaningful name");
+				setupField<QLineEdit>(dialog, "Input file")->setText(labelledInput(files.path(), "Draft-camera-file", {1200,900}, QColor("#754d80")));
+				settleWizard(); captureWizardWindow(dialog, "guided-input-draft");
+				check(guidedButton(dialog, "Use this input")->isEnabled(), "complete file draft can be selected"); guidedButton(dialog, "Use this input")->click();
+			}); guidedButton(choice, "Add a new input")->click();
+		}); setupField<QPushButton>(wizard, "Choose camera input")->click(); settleWizard();
+		check(wizard->options().sources.camera.startsWith("new:") && wizardSourceIdentities() == beforeSources, "new camera remains a draft without opening native inputs");
+		reuse("detail", "Wizard detail input"); check(wizard->options().sources.detail == detailId, "third independent input is bound once");
+		captureWizardWindow(wizard, "guided-1-three-inputs"); wizard->next(); settleWizard();
+		check(guidedViews(wizard->page(2)).size() == 7 && wizard->options().views == QSet<QString>{"content","content-camera","camera"}, "three inputs offer seven functional views and a small useful initial set");
+		for(auto *button:guidedViews(wizard->page(2)))if(button->isChecked())button->click();
+		check(!wizard->currentPage()->isComplete(),"deliberately clearing every view blocks continuation");wizard->back();wizard->next();settleWizard();
+		check(wizard->options().views.isEmpty()&&!wizard->currentPage()->isComplete(),"Back and Next preserve an intentionally empty view selection instead of undoing the user's decision");
+		guidedViews(wizard->page(2)).value("camera")->click();check(!wizard->currentPage()->isComplete(),"Games cannot continue with only a camera view that hides the chosen game");
+		guidedViews(wizard->page(2)).value("content")->click();guidedViews(wizard->page(2)).value("content-camera")->click();check(wizard->currentPage()->isComplete(),"restoring a content-visible view repairs the decision on the same page");
+		const auto viewsBeforePreview = wizard->options().views;
+		QTimer::singleShot(0, [&] {
+			auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog && dialog->objectName() == "PulseGuidedViewPreview" && setupField<QWidget>(dialog,"Landscape and portrait fit illustration"), "view preview explains the actual horizontal and portrait framing");
+			captureWizardWindow(dialog, "guided-view-preview"); dialog->reject();
+		});
+		for (auto *button : wizard->page(2)->findChildren<QPushButton *>()) if (button->text() == "Preview this view") { button->click(); break; }
+		check(wizard->options().views == viewsBeforePreview, "read-only view preview never adds or removes a view");
+		QTimer::singleShot(0, [&] {
+			auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog && dialog->objectName() == "PulseGuidedFraming", "cropping is one shared framing decision");
+			guidedCheck(dialog, "Crop camera to fill")->setChecked(true); captureWizardWindow(dialog, "guided-framing"); guidedButton(dialog, "Use framing")->click();
+		}); guidedButton(wizard->page(2), "Framing…")->click(); check(wizard->options().cropCamera && !wizard->options().cropDetail, "only explicitly requested camera cropping changes");
+		QTimer::singleShot(0, [&] {
+			auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog && dialog->objectName() == "PulseGuidedTransitions", "screen transitions remain available in a focused surface");
+			auto *h = setupField<QComboBox>(dialog,"horizontal screen transition"), *v = setupField<QComboBox>(dialog,"vertical screen transition"); h->setCurrentIndex(h->findData("cut"));
+			auto *tabs = dialog->findChild<QTabWidget *>(); check(tabs && tabs->count() == 2, "transition formats remain independent");
+			for (int i=0;i<2;++i) { tabs->setCurrentIndex(i); settleWizard(); captureWizardWindow(dialog,"guided-transitions-"+QString::number(i)); }
+			check(v->currentData() == "fade", "editing landscape does not overwrite portrait transition"); guidedButton(dialog,"Use transitions")->click();
+		}); guidedButton(wizard->page(2), "Screen transitions…")->click();
+		captureWizardWindow(wizard,"guided-2-views"); wizard->next(); settleWizard(); check(wizard->currentId()==3,"views advance to surrounding screens");
+		setupField<QLineEdit>(wizard,"Show name")->setText("Cancelled task-first test");
+		auto *startText=setupField<QLineEdit>(wizard,"Starting screen message"); startText->clear(); check(!wizard->currentPage()->isComplete(),"included built-in screen requires meaningful visible text");
+		startText->setText("We will be live shortly"); auto *brb=setupField<QCheckBox>(wizard,"Include break screen"); brb->setChecked(false); brb->setChecked(true);
+		check(setupField<QLineEdit>(wizard,"Break screen message")->text()=="Be right back","disabling a screen does not erase its message");
+		captureWizardWindow(wizard,"guided-3-screens"); wizard->next(); settleWizard(); check(wizard->currentId()==4,"screens advance to optional alerts");
+		for(int layer=1;layer<=3;++layer) {
+			QTimer::singleShot(0,[&,layer] {
+				auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget()); check(dialog&&dialog->objectName()=="PulseGuidedOverlayDialog","each alert has the same clear editor");
+				setupField<QLineEdit>(dialog,"Landscape browser link")->setText(QString("https://example.invalid/alert-%1-h").arg(layer));
+				guidedCheck(dialog,"Use the same browser link for portrait")->setChecked(layer!=2);
+				if(layer==2)setupField<QLineEdit>(dialog,"Portrait browser link")->setText("https://example.invalid/alert-2-v");
+				guidedCheck(dialog,"Show on every screen")->setChecked(layer!=1);
+				if(layer==2)captureWizardWindow(dialog,"guided-alert-editor"); guidedButton(dialog,"Use these overlays")->click();
+			}); setupField<QPushButton>(wizard,"Edit alert layer "+QString::number(layer))->click();
+		}
+		const auto planned=wizard->options(); check(planned.alerts.size()==3&&planned.alerts[0].scope=="main"&&planned.alerts[1].scope=="all"&&planned.alerts[2].enabled,"three layers preserve independent scope");
+		const QString draftedAlertName=planned.newSources.value(planned.alerts[0].horizontal.mid(4)).toObject().value("name").toString();
+		OBSSourceAutoRelease nameConflict=obs_get_source_by_name((draftedAlertName+" · horizontal").toUtf8().constData());check(!nameConflict,"a second show automatically avoids an existing browser viewport name without needing a hidden rename field");
+		check(planned.alerts[0].horizontal==planned.alerts[0].vertical&&planned.alerts[1].horizontal!=planned.alerts[1].vertical,"same-link and separate portrait choices are represented faithfully");
+		setupField<QPushButton>(wizard,"Remove alert layer 1")->click();
+		check(!PulseSetupPlan::draft(wizard->options()).value("newSources").toObject().contains(planned.alerts[0].horizontal.mid(4)),"disabled layer drafts are pruned from the generated result");
+		QTimer::singleShot(0,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());guidedButton(dialog,"Use these overlays")->click();});setupField<QPushButton>(wizard,"Edit alert layer 1")->click();
+		check(wizard->options().alerts[0].horizontal==planned.alerts[0].horizontal&&wizard->options().alerts[0].scope==planned.alerts[0].scope,"restoring a removed layer preserves its provider links and main-only scope");
+		const auto beforeCancelledOverlay=PulseSetupPlan::draft(wizard->options());
+		QTimer::singleShot(0,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());setupField<QLineEdit>(dialog,"Landscape browser link")->setText("https://example.invalid/unwanted-edit");guidedCheck(dialog,"Show on every screen")->setChecked(false);dialog->reject();});setupField<QPushButton>(wizard,"Edit alert layer 3")->click();
+		check(PulseSetupPlan::draft(wizard->options())==beforeCancelledOverlay,"cancelling an alert edit preserves its scope, bindings and source definitions");
+		captureWizardWindow(wizard,"guided-4-alerts");wizard->next();settleWizard();check(wizard->currentId()==5&&wizard->button(QWizard::FinishButton)->isEnabled()&&wizard->finalProblem().isEmpty(),"review permits a complete usable show");
+		captureWizardWindow(wizard,"guided-5-review");
+		guidedButton(wizard->page(5),"Change screens…")->click();settleWizard();check(wizard->currentId()==3,"review repairs return directly to the screen decision");
+		const auto artworkButton=[&]{return guidedButton(startText->parentWidget(),"Use my own browser artwork…");};
+		QTimer::singleShot(0,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());guidedCheck(dialog,"Use the same browser link for portrait")->setChecked(false);setupField<QLineEdit>(dialog,"Landscape browser link")->setText("https://example.invalid/starting");guidedButton(dialog,"Use these overlays")->click();});artworkButton()->click();
+		check(wizard->options().artwork.value("guided-starting").toObject().value("vertical").toString().isEmpty(),"custom landscape retains a real built-in portrait fallback");
+		startText->clear();check(!wizard->currentPage()->isComplete(),"mixed custom/static screen still requires its fallback message");startText->setText("Portrait fallback");
+		QTimer::singleShot(0,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());check(!guidedCheck(dialog,"Use the same browser link for portrait")->isChecked(),"reopening one-format artwork preserves its separate format choice");guidedButton(dialog,"Use these overlays")->click();});artworkButton()->click();
+		check(wizard->options().artwork.value("guided-starting").toObject().value("vertical").toString().isEmpty(),"accepting unchanged artwork does not fill the absent format");
+		QTimer::singleShot(0,[&]{auto *dialog=qobject_cast<QDialog *>(QApplication::activeModalWidget());guidedCheck(dialog,"Use the same browser link for portrait")->setChecked(true);guidedButton(dialog,"Use these overlays")->click();});artworkButton()->click();
+		startText->clear();check(wizard->currentPage()->isComplete(),"fully custom H/V screen does not demand an unused built-in message");
+		check(wizard->button(QWizard::CustomButton1)->isVisibleTo(wizard),"editing after Review exposes a clear return action");wizard->button(QWizard::CustomButton1)->click();settleWizard();check(wizard->currentId()==5&&wizard->button(QWizard::FinishButton)->isEnabled(),"review return preserves the repaired custom artwork");
+		guidedButton(wizard->page(5),"Change inputs…")->click();settleWizard();setupField<QPushButton>(wizard,"Remove detail input")->click();wizard->next();settleWizard();
+		check(guidedViews(wizard->page(2)).size()==3&&!guidedViews(wizard->page(2)).contains("three-up"),"removing an input removes unsupported views instead of leaving blanks");
+		check(wizardSourceIdentities()==beforeSources,"six-page planning, preview and repair never create native sources or scenes"); completed=true;wizard->reject();
+	});
+	PulseMotionEngineTestAccess::openWizard(engine);
+	// The draft file itself is a test fixture; no product-generated PNG or state is allowed.
+	check(completed&&wizardSourceIdentities()==beforeSources,"task-first wizard completes cancellation without native graph changes");
+	check(QCryptographicHash::hash(readFile(storage),QCryptographicHash::Sha256)==beforeFiles.value(QDir(files.path()).relativeFilePath(storage)),"cancelled task-first planning preserves persistent state byte for byte");
+	auto afterFiles=generatedFileSnapshot(files.path());afterFiles.remove("Draft-camera-file.png");
+	check(afterFiles==beforeFiles,"cancelled task-first planning adds or changes no persisted files beyond the explicit test-owned input image");
+	check(!QFileInfo::exists(QDir(QFileInfo(storage).absolutePath()).filePath("show-graphics")),"cancelled task-first wizard creates no generated artwork directory");
+	obs_source_remove(content);obs_source_remove(detail);obs_source_remove(card);obs_source_remove(native);obs_source_remove(priorAlert);content=nullptr;detail=nullptr;card=nullptr;obs_wait_for_destroy_queue();
+}
+
+static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
+{
+	obs_video_info video = initialVideo; video.base_width = video.output_width = 1920; video.base_height = video.output_height = 1080;
+	check(obs_reset_video(&video) == OBS_VIDEO_SUCCESS, "quality fixtures use a real 1920 by 1080 programme canvas");
+	obs_video_info verticalVideo = video; verticalVideo.base_width = verticalVideo.output_width = 1080; verticalVideo.base_height = verticalVideo.output_height = 1920;
+	OBSCanvasAutoRelease canvas = obs_canvas_create("Pulse Weaver Vertical", &verticalVideo, PROGRAM); check(bool(canvas), "quality fixtures use a real 1080 by 1920 portrait canvas");
+	QTemporaryDir inputs; check(inputs.isValid(), "quality source-image directory");
+	const QString cameraFile = labelledInput(inputs.path(), "PRESENTER 4x3", {1200, 900}, QColor("#533469"));
+	const QString contentFile = labelledInput(inputs.path(), "GAME HUD 16x9", {1920, 1080}, QColor("#244862"));
+	const QString wideFile = labelledInput(inputs.path(), "SLIDES ULTRAWIDE", {2520, 1080}, QColor("#37573d"));
+	const QString detailFile = labelledInput(inputs.path(), "DETAIL PORTRAIT", {900, 1600}, QColor("#673b35"));
+	auto image = [](const QString &name, const QString &file) {
+		OBSDataAutoRelease settings = obs_data_create(); obs_data_set_string(settings, "file", file.toUtf8().constData());
+		OBSSourceAutoRelease created = obs_source_create("image_source", name.toUtf8().constData(), settings, nullptr);
+		return OBSSource(created);
+	};
+	OBSSource camera = image("Quality presenter", cameraFile), content = image("Quality game", contentFile), detail = image("Quality detail", detailFile), wide = image("Quality shared screen", wideFile);
+	check(camera && content && detail && wide, "quality source images become actual native image inputs");
+	OBSDataAutoRelease callSettings = obs_data_create(); obs_data_set_int(callSettings, "width", 1920); obs_data_set_int(callSettings, "height", 1080);
+	obs_data_set_string(callSettings, "window", "audit-call-window-no-device");
+	OBSSourceAutoRelease call = obs_source_create("window_capture", "Quality guest call window", callSettings, nullptr); check(bool(call), "guest-call case uses an existing inert window capture");
+	const QString cameraId = obs_source_get_uuid(camera), contentId = obs_source_get_uuid(content), detailId = obs_source_get_uuid(detail), wideId = obs_source_get_uuid(wide), callId = obs_source_get_uuid(call);
+	std::vector<OBSSource> alerts;
+	for (int layer : {1, 3}) for (bool portrait : {false, true}) {
+		OBSDataAutoRelease settings = obs_data_create(); obs_data_set_int(settings, "width", portrait ? 1080 : 1920); obs_data_set_int(settings, "height", portrait ? 1920 : 1080);
+		const QString url = QString("https://alerts.invalid/inert/%1/%2").arg(layer).arg(portrait ? "vertical" : "horizontal"); obs_data_set_string(settings, "url", url.toUtf8().constData());
+		const QString name = QString("Quality alert %1 %2").arg(layer).arg(portrait ? "portrait" : "landscape");
+		OBSSourceAutoRelease source = obs_source_create("browser_source", name.toUtf8().constData(), settings, nullptr); check(bool(source), "existing inert alert source creates");
+		obs_source_set_audio_mixers(source, portrait ? 0 : 5); obs_source_set_volume(source, .37f); obs_source_set_muted(source, true); alerts.emplace_back(source);
+	}
+	QMap<QString, QJsonObject> preserved;
+	for (const auto &source : auditSources()) if (!obs_scene_from_source(source)) preserved.insert(obs_source_get_uuid(source), preservedInputState(source));
+	const QString evidence = qEnvironmentVariable("PULSE_GUIDED_OUTPUT_EVIDENCE_DIR");
+	if (!evidence.isEmpty()) check(QDir().mkpath(evidence), "quality evidence directory is available");
+	staticSetupCardPixelTests();
+	QVector<PulseSetupPlan::Options> cases;
+	auto add = [&](const QString &name, const QString &activity, const PulseSetupPlan::Sources &sources, const QSet<QString> &views) -> PulseSetupPlan::Options & {
+		PulseSetupPlan::Options options; options.name = name; options.activity = activity; options.sources = sources; options.views = views;
+		options.starting = options.brb = options.ending = false; cases.append(options); return cases.last();
+	};
+	add("QA 01 game only", "gaming", {{}, contentId, {}}, {"content"});
+	add("QA 02 game and presenter", "gaming", {cameraId, contentId, {}}, {"content", "content-camera", "camera"});
+	add("QA 03 conversation", "talk", {cameraId, {}, {}}, {"camera"}).cropCamera = true;
+	add("QA 04 reaction and slides", "talk", {cameraId, wideId, {}}, {"content", "content-camera", "camera"});
+	add("QA 05 making and detail", "creative", {{}, contentId, detailId}, {"content", "content-detail", "detail"});
+	add("QA 06 guest call", "guests", {cameraId, callId, {}}, {"content", "content-camera", "camera"});
+	auto &full = add("QA 07 three feeds and alerts", "creative", {cameraId, contentId, detailId}, {"content", "content-camera", "camera", "detail", "two-cameras", "three-up", "content-detail"});
+	full.starting = full.brb = full.ending = true; full.startingText = "STARTING SHORTLY"; full.breakText = "BACK IN FIVE"; full.endingText = "THANK YOU, EVERYONE";
+	full.newSources.insert("alert-two-h", QJsonObject{{"kind", "browser_source"}, {"name", "Quality new alert two landscape"}, {"url", "https://alerts.invalid/new/landscape"}});
+	full.newSources.insert("alert-two-v", QJsonObject{{"kind", "browser_source"}, {"name", "Quality new alert two portrait"}, {"url", "https://alerts.invalid/new/portrait"}});
+	full.alerts = {{true, QString::fromUtf8(obs_source_get_uuid(alerts[0])), QString::fromUtf8(obs_source_get_uuid(alerts[1])), "all"},
+		{true, "new:alert-two-h", "new:alert-two-v", "main"}, {true, QString::fromUtf8(obs_source_get_uuid(alerts[2])), QString::fromUtf8(obs_source_get_uuid(alerts[3])), "all"}};
+	auto &cards = add("QA 08 no integration cards", "talk", {cameraId, {}, {}}, {"camera"});
+	cards.starting = cards.brb = cards.ending = true; cards.startingText = "Welcome to my studio"; cards.breakText = "A quick break"; cards.endingText = "See you next time";
+	auto &mixed = add("QA 09 mixed custom artwork", "talk", {cameraId, {}, {}}, {"camera"}); mixed.starting = true;
+	mixed.artwork.insert("guided-starting", QJsonObject{{"horizontal", QString::fromUtf8(obs_source_get_uuid(alerts[0]))}});
+	auto &responsive = add("QA 10 responsive artwork", "talk", {cameraId, {}, {}}, {"camera"}); responsive.starting = true;
+	responsive.newSources.insert("responsive", QJsonObject{{"kind", "browser_source"}, {"name", "Quality responsive starting"}, {"url", "https://artwork.invalid/responsive"}});
+	responsive.artwork.insert("guided-starting", QJsonObject{{"horizontal", "new:responsive"}, {"vertical", "new:responsive"}});
+	auto &fresh = add("QA 11 reusable source drafts", "gaming", {"new:presenter", "new:game", {}}, {"content", "content-camera", "camera"});
+	fresh.starting = fresh.brb = fresh.ending = true;
+	fresh.newSources = {{"presenter", QJsonObject{{"kind", "image_source"}, {"name", "Quality drafted presenter"}, {"target", cameraFile}}},
+		{"game", QJsonObject{{"kind", "image_source"}, {"name", "Quality drafted content"}, {"target", contentFile}}}};
+	auto &oneAlert = add("QA 12 one landscape alert", "gaming", {{}, contentId, {}}, {"content"});
+	oneAlert.alerts = {{true, QString::fromUtf8(obs_source_get_uuid(alerts[0])), {}, "main"}};
+	auto &twoAlerts = add("QA 13 two scoped alerts", "talk", {cameraId, {}, {}}, {"camera"}); twoAlerts.brb = true;
+	twoAlerts.alerts = {{true, QString::fromUtf8(obs_source_get_uuid(alerts[0])), QString::fromUtf8(obs_source_get_uuid(alerts[1])), "main"},
+		{true, QString::fromUtf8(obs_source_get_uuid(alerts[2])), QString::fromUtf8(obs_source_get_uuid(alerts[3])), "all"}};
+	add("QA 14 explicit detail crop", "creative", {{}, wideId, detailId}, {"content", "content-detail", "detail"}).cropDetail = true;
+	auto &browser = add("QA 15 reusable browser content", "talk", {cameraId,"new:shared-browser",{}},{"content","content-camera","camera"});
+	browser.newSources.insert("shared-browser",QJsonObject{{"kind","browser_source"},{"name","Quality browser content"},{"url","https://example.invalid/shared-content"}});
+	for (const auto &options : cases) {
+		QTemporaryDir directory; check(QDir().mkpath(directory.filePath("plugin_config/pulse-weaver-core")), "guided scenario private storage directory");
+		const QString storage = directory.filePath("plugin_config/pulse-weaver-core/motion.json"), stages = directory.filePath("pulseweaver-stages.json"); writeFile(stages, "[]");
+		const auto baseline = wizardSourceIdentities();
+		{
+			PulseMotionEngine engine(nullptr, storage);
+			const QString problem = PulseSetupPlan::problem(options); check(problem.isEmpty(), qPrintable(options.name + " must be a complete task plan: " + problem));
+			const auto request = PulseSetupPlan::draft(options); check(!request.isEmpty(), "complete task plan produces a draft");
+			const auto result = engine.createGuidedShow(request); check(result.value("ok").toBool(), qPrintable(options.name + " generated show failed: " + result.value("message").toString()));
+			guidedOutputEvidence.append(checkGuidedOutput(engine, options, request, baseline));
+			for (auto it = preserved.cbegin(); it != preserved.cend(); ++it) {
+				OBSSourceAutoRelease source = obs_get_source_by_uuid(it.key().toUtf8().constData()); check(source && preservedInputState(source) == it.value(), "creating a useful show never changes reused input settings, mixers, mute, volume or monitor mode");
+			}
+			for (const QString &id : {options.sources.camera, options.sources.content, options.sources.detail}) if (id.startsWith("new:")) {
+				const auto spec=options.newSources.value(id.mid(4)).toObject();const QString name=spec.value("name").toString();
+				for(const QString &route:spec.value("kind")=="browser_source"?QStringList{"horizontal","vertical"}:QStringList{QString()}) {
+					const QString actualName=route.isEmpty()?name:name+" · "+route;int matches=0;
+					for(const auto &source:auditSources())if(QString::fromUtf8(obs_source_get_name(source))==actualName)++matches;
+					check(matches==1,"each drafted common input creates once per required viewport and is shared across views and Stages");
+				}
+			}
+		}
+		removeAuditAdditions(baseline);
+	}
+	// Cover the real Finish -> plan -> backend -> completion connection in addition
+	// to the larger backend scenario matrix above.
+	{
+		QTemporaryDir directory;const QString storage=directory.filePath("config/obs-studio/plugin_config/pulse-weaver-core/motion.json");check(QDir().mkpath(QFileInfo(storage).absolutePath()),"finish integration private storage");
+		writeFile(storage,QJsonDocument(QJsonObject{{"version",1},{"actions",QJsonArray{}},{"originals",QJsonArray{}},{"originalScenes",QJsonObject{}}}).toJson());
+		const auto baseline=wizardSourceIdentities();PulseSetupPlan::Options chosen;QJsonObject request;bool reachedCompletion=false;
+		{
+			PulseMotionEngine engine(nullptr,storage);
+			QTimer::singleShot(0,[&]{
+				auto *wizard=dynamic_cast<PulseGuidedWizard *>(QApplication::activeModalWidget());check(wizard,"finish integration opens real guided wizard");
+				for(auto *button:wizard->findChildren<QPushButton *>())if(button->property("pulseGuidedActivity")=="gaming"){button->click();break;}
+				QTimer::singleShot(0,[&]{auto *entry=qobject_cast<QDialog *>(QApplication::activeModalWidget());check(entry&&entry->objectName()=="PulseGuidedChooseInput","finish integration chooses real existing content");
+					QTimer::singleShot(0,[&]{auto *picker=qobject_cast<QDialog *>(QApplication::activeModalWidget());setupField<QPushButton>(picker,"Quality game")->click();});guidedButton(entry,"Use an existing input")->click();
+				});setupField<QPushButton>(wizard,"Choose content input")->click();
+				wizard->next();wizard->next();settleWizard();check(wizard->currentId()==3,"finish integration reaches screen choices");
+				setupField<QLineEdit>(wizard,"Show name")->setText("QA 16 real Finish");setupField<QCheckBox>(wizard,"Include starting screen")->setChecked(false);setupField<QCheckBox>(wizard,"Include break screen")->setChecked(false);setupField<QCheckBox>(wizard,"Include ending screen")->setChecked(false);
+				wizard->next();wizard->next();settleWizard();check(wizard->currentId()==5&&wizard->button(QWizard::FinishButton)->isEnabled(),"real finish only enables after a complete valid plan");chosen=wizard->options();request=PulseSetupPlan::draft(chosen);
+				QTimer::singleShot(0,[&]{auto *completion=qobject_cast<QDialog *>(QApplication::activeModalWidget());check(completion&&completion->windowTitle()=="Your show is created","successful production Finish opens creation confirmation");captureWizardWindow(completion,"guided-created");reachedCompletion=true;guidedButton(completion,"Done")->click();});
+				wizard->button(QWizard::FinishButton)->click();
+			});
+			PulseMotionEngineTestAccess::openWizard(engine);check(reachedCompletion,"production finish wiring completes the show transaction");guidedOutputEvidence.append(checkGuidedOutput(engine,chosen,request,baseline));
+		}
+		removeAuditAdditions(baseline);
+	}
+	// Bypass the planner to prove the backend also rejects invalid guided graphs
+	// before making any source, scene, generated image or catalogue change.
+	for (const QString &fault : {QString("missing-third"), QString("duplicate-third"), QString("camera-alert"), QString("card-feed"), QString("fourth-alert"), QString("invalid-card")}) {
+		QTemporaryDir directory; check(QDir().mkpath(directory.filePath("plugin_config/pulse-weaver-core")), "invalid guided request storage");
+		const QString storage = directory.filePath("plugin_config/pulse-weaver-core/motion.json"), stagePath = directory.filePath("pulseweaver-stages.json"); writeFile(stagePath, "[]");
+		PulseMotionEngine engine(nullptr, storage); PulseSetupPlan::Options options;
+		options.name = "QA reject " + fault; options.activity = "creative"; options.sources = {cameraId, contentId, detailId}; options.views = {"three-up"};
+		options.starting = options.brb = options.ending = false;
+		auto request = PulseSetupPlan::draft(options); check(!request.isEmpty(), "negative backend test begins with a valid complete generated plan");
+		auto stages = request.value("stages").toArray(); auto stage = stages.first().toObject(); auto roles = stage.value("roles").toObject();
+		if (fault == "missing-third") roles.remove("feedC");
+		if (fault == "duplicate-third") roles.insert("feedC", roles.value("feedA"));
+		if (fault == "card-feed") roles.insert("feedA", stage.value("background"));
+		stage.insert("roles", roles); stages[0] = stage; request.insert("stages", stages);
+		if (fault == "camera-alert" || fault == "fourth-alert") request.insert("overlays", QJsonArray{QJsonObject{{"canvas", "horizontal"}, {"order", fault == "fourth-alert" ? 4 : 1},
+			{"source", fault == "camera-alert" ? cameraId : QString::fromUtf8(obs_source_get_uuid(alerts[0]))}, {"looks", QJsonArray{"guided-main/three-up"}}}});
+		if (fault == "invalid-card") {
+			auto definitions = request.value("newSources").toObject(); const QString key = stage.value("background").toString().mid(4); auto card = definitions.value(key).toObject();
+			card.insert("style", "unknown-style"); definitions.insert(key, card); request.insert("newSources", definitions);
+		}
+		const auto beforeSources = wizardSourceIdentities(); const auto beforeFiles = generatedFileSnapshot(directory.path()); const auto beforeActions = PulseMotionEngineTestAccess::actions(engine);
+		check(!engine.createGuidedShow(request).value("ok").toBool(), qPrintable("invalid generated request rejects " + fault));
+		check(wizardSourceIdentities() == beforeSources && generatedFileSnapshot(directory.path()) == beforeFiles && PulseMotionEngineTestAccess::actions(engine) == beforeActions,
+			"invalid guided request is rejected before sources, PNG files or persisted catalogues mutate");
+	}
+	for (bool preexistingArtwork : {false, true}) {
+		QTemporaryDir directory; const QString parent = directory.filePath("plugin_config/pulse-weaver-core"); check(QDir().mkpath(parent), "commit-failure fixture parent");
+		const QString storage = QDir(parent).filePath("motion.json"), assetDirectory = QDir(parent).filePath("show-graphics"), stagePath = directory.filePath("pulseweaver-stages.json"); writeFile(stagePath, "[]");
+		if (preexistingArtwork) { check(QDir().mkpath(assetDirectory), "preexisting artwork directory"); writeFile(QDir(assetDirectory).filePath("retained-artwork.bin"), "preserve this user-owned artwork exactly"); }
+		PulseMotionEngine engine(nullptr, storage);
+		// Construct with a valid absent store, then make the commit destination a
+		// directory. This forces save failure after real card PNG/source creation.
+		check(QDir().mkpath(storage), "read-only commit destination is represented by an owned directory blocker");
+		PulseSetupPlan::Options options; options.name = preexistingArtwork ? "QA rollback retained artwork" : "QA rollback new cards";
+		options.activity = "talk"; options.sources.camera = cameraId; options.views = {"camera"}; options.starting = options.brb = options.ending = true;
+		const auto beforeSources = wizardSourceIdentities();
+		const auto beforeActions = PulseMotionEngineTestAccess::actions(engine);
+		const auto beforeFiles = generatedFileSnapshot(assetDirectory); const auto beforeStages = readFile(stagePath); const int imagesBefore = imageFixtureCreates.load();
+		const auto result = engine.createGuidedShow(PulseSetupPlan::draft(options));
+		check(!result.value("ok").toBool() && result.value("message").toString().contains("save", Qt::CaseInsensitive) && imageFixtureCreates.load() > imagesBefore,
+			"forced commit failure occurs after actual generated PNG inputs were created");
+		obs_wait_for_destroy_queue();
+		check(wizardSourceIdentities() == beforeSources && PulseMotionEngineTestAccess::actions(engine) == beforeActions && readFile(stagePath) == beforeStages,
+			"failed generated-show commit rolls back both canvas scenes, inputs, in-memory actions and persistent Stages");
+		check(generatedFileSnapshot(assetDirectory) == beforeFiles && QDir(assetDirectory).exists() == preexistingArtwork,
+			"failed generated-show commit removes its new PNG files while retaining existing artwork and directory identity");
+	}
+	for (const auto &source : alerts) obs_source_remove(source);
+	obs_source_remove(call); obs_source_remove(camera); obs_source_remove(content); obs_source_remove(detail); obs_source_remove(wide);
+	obs_canvas_remove(canvas); obs_wait_for_destroy_queue();
+	obs_video_info restored = initialVideo;
+	check(obs_reset_video(&restored) == OBS_VIDEO_SUCCESS, "quality fixture restores the initial inert video dimensions");
+}
+
 int main(int argc, char **argv)
 {
 	QApplication application(argc, argv);
@@ -2069,7 +2713,12 @@ int main(int argc, char **argv)
 	video.output_format = VIDEO_FORMAT_RGBA;
 	check(obs_reset_video(&video) == OBS_VIDEO_SUCCESS, "isolated graphics startup");
 	registerInertBrowser();
-	if (qEnvironmentVariableIsSet("PULSE_WIZARD_ONLY")) {
+	registerInertImageAndCaptureInputs();
+	if (qEnvironmentVariableIsSet("PULSE_GUIDED_OUTPUT_ONLY")) {
+		guidedGeneratedOutputTests(video);
+	} else if (qEnvironmentVariableIsSet("PULSE_GUIDED_UI_ONLY")) {
+		guidedWizardInteractionTests();
+	} else if (qEnvironmentVariableIsSet("PULSE_WIZARD_ONLY")) {
 		OBSDataAutoRelease settings = obs_data_create();
 		obs_data_set_int(settings, "width", 1920); obs_data_set_int(settings, "height", 1080);
 		obs_data_set_string(settings, "url", "https://overlays.lumiastream.com/audit/inert-landscape");
@@ -2086,10 +2735,14 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "Motion audit: scene isolation\n"); sceneTests(); obs_wait_for_destroy_queue();
 		std::fprintf(stderr, "Motion audit: reference builder\n"); referenceBuilderTests(video); obs_wait_for_destroy_queue();
 		std::fprintf(stderr, "Motion audit: setup wizard\n"); setupBuilderTests(video); obs_wait_for_destroy_queue();
-		std::fprintf(stderr, "Motion audit: themed builder\n"); themedBuilderTests(video);
+		std::fprintf(stderr, "Motion audit: themed builder\n"); themedBuilderTests(video); obs_wait_for_destroy_queue();
+		std::fprintf(stderr, "Motion audit: generated task-first outputs\n"); guidedGeneratedOutputTests(video);
+		std::fprintf(stderr, "Motion audit: task-first interaction and geometry\n"); guidedWizardInteractionTests();
 	}
 	const QString evidence = qEnvironmentVariable("PULSE_WIZARD_EVIDENCE_DIR");
 	if (!evidence.isEmpty()) writeFile(QDir(evidence).filePath("wizard-layout-state-evidence.json"), QJsonDocument(wizardRenderEvidence).toJson());
+	const QString outputEvidence = qEnvironmentVariable("PULSE_GUIDED_OUTPUT_EVIDENCE_DIR");
+	if (!outputEvidence.isEmpty()) writeFile(QDir(outputEvidence).filePath("generated-output-state.json"), QJsonDocument(guidedOutputEvidence).toJson());
 	obs_wait_for_destroy_queue();
 	obs_shutdown();
 	check(runtimeErrors == 0, "no unexpected OBS runtime errors");

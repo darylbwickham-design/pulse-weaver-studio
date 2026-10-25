@@ -1,5 +1,7 @@
 # Setup wizard rebuild · 25 October 2026
 
+Historical description of unstable 4's five-phase builder. The subsequent task-first revision is documented in [current setup instructions](SETUP-WIZARD-GUIDE.md), [academic research](SETUP-WIZARD-TASK-FIRST-RESEARCH-2026-10-25.md), [stream workflow research](SETUP-WIZARD-STREAM-WORKFLOWS-2026-10-25.md) and [implementation/verification notes](SETUP-WIZARD-TASK-FIRST-IMPLEMENTATION-2026-10-25.md).
+
 The setup wizard has been rebuilt around five named phases: **Start → Sections → Looks → Sources → Review**. The design uses focused click-through choices and the main application's rounded, raised control style. The earlier audit describes the pre-rebuild baseline; this document describes the implementation.
 
 ## What changed

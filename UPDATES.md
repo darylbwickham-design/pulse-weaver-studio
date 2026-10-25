@@ -46,7 +46,7 @@ left in the user's temporary folder so setup can finish after the app exits.
 
 ## Release/bootstrap requirements
 
-The 2.0 unstable line publishes two installer families under the same versioned prerelease. For `v2.0.0-unstable.4`, ordinary unstable opt-ins select `PulseWeaver-Setup-2.0.0-unstable.4.exe`; installations with `product: "studio2-preview"` select only `PulseWeaver-2-Preview-Setup-2.0.0-unstable.4.exe`. The regular payload omits the product marker. Existing profile and updater identities remain separate. The published GitHub Releases catalogue, exact asset names and SHA-256 digests are the update feed; there is no separate feed file to edit.
+The 2.0 unstable line publishes two installer families under the same versioned prerelease. For `v2.0.0-unstable.5`, ordinary unstable opt-ins select `PulseWeaver-Setup-2.0.0-unstable.5.exe`; installations with `product: "studio2-preview"` select only `PulseWeaver-2-Preview-Setup-2.0.0-unstable.5.exe`. The regular payload omits the product marker. Existing profile and updater identities remain separate. The published GitHub Releases catalogue, exact asset names and SHA-256 digests are the update feed; there is no separate feed file to edit.
 
 Existing 1.12.1 and Mac alpha 1 installations need one manual installation of a
 new build containing the updater. They cannot acquire this feature retroactively.
