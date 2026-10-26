@@ -1,14 +1,14 @@
 # Pulse Weaver 2.0 preview
 
-Version: **2.0.0-unstable.5**. Windows native interface and local-controls preview.
+Version: **2.0.0-unstable.6**. Windows native interface and local-controls preview.
 
 This build brings the main workspaces forward, gives programme previews more room and uses a consistent tactile style for operating controls. Within each task, choose a category, open its focused page and use Back to return. It retains the native Qt/OBS engine, Stage/Look system, landscape and portrait outputs, native Move, stingers, audio mixer and account connections. It is an unstable preview for testing before using it for an important broadcast.
 
 ## What changes
 
-This revision rebuilds **Build my show** around six click-through steps: **Activity → Inputs → Views → Screens → Alerts → Review**. Start with games, conversation/shared content, creative/teaching work, or cameras/guests. Assign the actual camera/content inputs once, then choose views that change which subjects are visible. Only views supported by distinct assigned inputs are offered. The detailed builder remains available for saved layouts and specialist work.
+This revision simplifies **Build my show** to two required pages: choose the layouts/screens you need, then provide their relevant inputs and build. Game, screen, presenter and activity inputs are separate assignments shared across selected Looks and both formats. Holding-only shows ask for no captures. The detailed builder remains available for saved layouts and specialist work.
 
-Starting, Break and Ending can use built-in static artwork with editable messages; external artwork links are optional for either format. The optional Alerts step exposes **three numbered layers**, each with landscape/portrait assignments and Main-only or all-screen placement. Review shows the actual assignments and supports focused corrections without discarding other answers. Framing and landscape/portrait transitions, including stingers, have focused editors. The wizard uses the main UI's raised navy/cyan controls, with wrapping and visible actions checked at three window sizes. See [Create your show](SETUP-WIZARD-GUIDE.md) and the [research, output coverage and verification boundaries](SETUP-WIZARD-TASK-FIRST-IMPLEMENTATION-2026-10-25.md).
+Framing/colour, stingers, up to three alert layers and screen artwork are optional focused editors. Existing source filters and audio settings are retained; monochrome belongs to a native wrapper reusing the original capture. Built-in holding screens are static images with editable messages; provider browser artwork can replace either format for countdowns or animation. See [Create your show](SETUP-WIZARD-GUIDE.md) and the [corrected Q3 coverage and design rationale](SETUP-WIZARD-SELECTION-FIRST-2026-10-26.md).
 
 The Show output/status and broadcast controls now sit above the programme previews and mixer. The compact mixer retains its content-based expanded height, and the unused portrait bitrate control for landscape-only Kick stays hidden.
 

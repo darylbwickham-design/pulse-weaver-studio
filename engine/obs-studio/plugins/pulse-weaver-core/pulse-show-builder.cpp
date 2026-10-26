@@ -1690,11 +1690,11 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 			}
 			const QSet<QString> allowed{"dshow_input",  "monitor_capture", "window_capture",
 						    "game_capture", "browser_source", "builtin_graphic", "setup_card", "ffmpeg_source", "image_source"};
-			if (!allowed.contains(kind) ||
+			if (!allowed.contains(kind) || (!guided && (
 			    ((role == "presenter" || role == "activity" || role == "detail") && kind != "dshow_input" &&
 			     kind != "window_capture") ||
 			    (role == "screen" && kind != "monitor_capture" && kind != "window_capture") ||
-			    (role == "game" && kind != "game_capture" && kind != "window_capture")) {
+			    (role == "game" && kind != "game_capture" && kind != "window_capture")))) {
 				validationError = "Incompatible new source type for " + PulseShow::roleName(role) + ".";
 				return false;
 			}
@@ -1747,7 +1747,9 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				return false;
 			}
 		}
-		if (!compatible(source, role)) {
+		// Guided role names describe the job of a picture, while the input
+		// editor also permits file / browser camera and content substitutes.
+		if (!compatible(source, guided && !browserOnlyRole ? QString("feed") : role)) {
 			validationError = "The selected " + PulseShow::roleName(role) +
 					  " is missing or incompatible. Choose it again.";
 			return false;
@@ -2221,6 +2223,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 		};
 		std::vector<Item> horizontalItems, verticalItems;
 		QMap<QString, OBSSource> treatedSources;
+		QMap<QString, OBSSource> monochromeSources;
 		for (const auto &id : stage.value("looks").toArray()) {
 			const auto *look = PulseShow::look(*theme, id.toString());
 			const QJsonObject roleIds = PulseShow::rolesForLook(stage, look->id);
@@ -2293,6 +2296,31 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 						token += "/" + PulseShow::graphicVariant(lookKey);
 					}
 					savedRoles.insert(panel.role + "/" + route, obs_source_get_uuid(source));
+					if ((panel.role == "presenter" || panel.role == "activity") &&
+					    settings.value(panel.role + "Monochrome").toBool()) {
+						const QString key = panel.role + "/" + route;
+						if (!monochromeSources.contains(key)) {
+							OBSCanvasAutoRelease canvas = obs_source_get_canvas(obs_scene_get_source(scene));
+							OBSSceneAutoRelease wrapper = obs_canvas_scene_create(canvas,
+								(name + " · " + PulseShow::roleName(panel.role) + " · monochrome · " + route).toUtf8().constData());
+							if (!wrapper) return fail("Could not create the camera colour view.");
+							created.emplace_back(obs_scene_get_source(wrapper));
+							// Keep native source geometry so one wrapper can be shared by
+							// every Look. Apply framing to the outer scene item as usual.
+							const int sw = obs_source_get_width(source) ? obs_source_get_width(source) : 1920;
+							const int sh = obs_source_get_height(source) ? obs_source_get_height(source) : 1080;
+							sizeScene(wrapper, sw, sh);
+							auto *item = obs_scene_add(wrapper, source);
+							if (!item) return fail("Could not reuse the camera in its colour view.");
+							position(item, {panel.role, {0, 0, 1, 1}, false, false}, sw, sh);
+							OBSDataAutoRelease filterSettings = obs_data_create(); obs_data_set_double(filterSettings, "saturation", -1.0);
+							OBSSourceAutoRelease filter = obs_source_create_private("color_filter", "Setup monochrome", filterSettings);
+							if (!filter) return fail("The camera colour filter is unavailable. Keep existing colour and try again.");
+							obs_source_filter_add(obs_scene_get_source(wrapper), filter);
+							monochromeSources.insert(key, obs_scene_get_source(wrapper));
+						}
+						source = monochromeSources.value(key); token += "/monochrome";
+					}
 					if (panel.treated) {
 						const QString treatmentKey = panel.role + "/" + route;
 						if (!treatedSources.contains(treatmentKey)) {

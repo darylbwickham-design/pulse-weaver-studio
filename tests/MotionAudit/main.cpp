@@ -4,7 +4,7 @@
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-flexible.hpp"
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-plan.hpp"
 #include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-cards.hpp"
-#include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-guided.hpp"
+#include "../../engine/obs-studio/plugins/pulse-weaver-core/pulse-setup-select.hpp"
 
 #include <QApplication>
 #include <QComboBox>
@@ -2376,7 +2376,7 @@ static QMap<QString, QPushButton *> guidedViews(QWidget *root)
 	return result;
 }
 
-// Drive the real six-page production entry point. Draft edits, modal previews and
+// Retain compatibility coverage for the previous six-page editor. Draft edits, modal previews and
 // review repairs must remain side-effect free until the user chooses Create.
 static void guidedWizardInteractionTests()
 {
@@ -2400,7 +2400,7 @@ static void guidedWizardInteractionTests()
 	PulseMotionEngine engine(nullptr, storage); bool completed = false;
 	QTimer::singleShot(0, [&] {
 		auto *wizard = dynamic_cast<PulseGuidedWizard *>(QApplication::activeModalWidget());
-		check(wizard && wizard->property("pulseTaskFirst").toBool(), "default production entry opens the task-first wizard"); settleWizard();
+		check(wizard && wizard->property("pulseTaskFirst").toBool(), "legacy task-first wizard remains compatible"); settleWizard();
 		check(wizard->pageIds() == QList<int>{0,1,2,3,4,5} && wizard->currentId() == 0, "task-first flow has six focused phases");
 		check(!wizard->currentPage()->isComplete() && !wizard->button(QWizard::NextButton)->isEnabled(), "activity selection is required before choosing inputs");
 		captureWizardWindow(wizard, "guided-0-activity");
@@ -2508,7 +2508,7 @@ static void guidedWizardInteractionTests()
 		check(guidedViews(wizard->page(2)).size()==3&&!guidedViews(wizard->page(2)).contains("three-up"),"removing an input removes unsupported views instead of leaving blanks");
 		check(wizardSourceIdentities()==beforeSources,"six-page planning, preview and repair never create native sources or scenes"); completed=true;wizard->reject();
 	});
-	PulseMotionEngineTestAccess::openWizard(engine);
+	PulseGuidedWizard legacy(nullptr, {}); legacy.exec();
 	// The draft file itself is a test fixture; no product-generated PNG or state is allowed.
 	check(completed&&wizardSourceIdentities()==beforeSources,"task-first wizard completes cancellation without native graph changes");
 	check(QCryptographicHash::hash(readFile(storage),QCryptographicHash::Sha256)==beforeFiles.value(QDir(files.path()).relativeFilePath(storage)),"cancelled task-first planning preserves persistent state byte for byte");
@@ -2614,40 +2614,6 @@ static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
 		}
 		removeAuditAdditions(baseline);
 	}
-	// Cover the real Finish -> plan -> backend -> completion connection in addition
-	// to the larger backend scenario matrix above.
-	{
-		QTemporaryDir directory;const QString storage=directory.filePath("config/obs-studio/plugin_config/pulse-weaver-core/motion.json");check(QDir().mkpath(QFileInfo(storage).absolutePath()),"finish integration private storage");
-		writeFile(storage,QJsonDocument(QJsonObject{{"version",1},{"actions",QJsonArray{}},{"originals",QJsonArray{}},{"originalScenes",QJsonObject{}}}).toJson());
-		// Every normal frontend installation already has a Stage catalogue. Keep
-		// a real unrelated show here so the production wrapper opens that file,
-		// then must release its read handle before QSaveFile replaces it.
-		OBSSceneAutoRelease retainedH=obs_scene_create("Retained existing show"),retainedV=obs_canvas_scene_create(canvas,"Retained existing show · Portrait");
-		check(retainedH&&retainedV,"existing show fixture has real landscape and portrait scenes");obs_scene_add(retainedH,content);obs_scene_add(retainedV,content);
-		const QJsonObject retainedStage{{"name","Retained existing show"},{"horizontal","Retained existing show"},{"vertical","Retained existing show · Portrait"},{"themeId","custom"},{"horizontalTransition","cut"},{"verticalTransition","fade"},{"verticalDurationMs",640},{"sourceRoles",QJsonObject{{"shared",contentId}}},{"auditSentinel",QJsonObject{{"keep","all existing fields"}}}};
-		const QString stagePath=QDir::cleanPath(QDir(QFileInfo(storage).absolutePath()).filePath("../../pulseweaver-stages.json"));
-		writeFile(stagePath,QJsonDocument(QJsonArray{retainedStage}).toJson());
-		const auto baseline=wizardSourceIdentities();PulseSetupPlan::Options chosen;QJsonObject request;bool reachedCompletion=false;
-		{
-			PulseMotionEngine engine(nullptr,storage);
-			QTimer::singleShot(0,[&]{
-				auto *wizard=dynamic_cast<PulseGuidedWizard *>(QApplication::activeModalWidget());check(wizard,"finish integration opens real guided wizard");
-				for(auto *button:wizard->findChildren<QPushButton *>())if(button->property("pulseGuidedActivity")=="gaming"){button->click();break;}
-				QTimer::singleShot(0,[&]{auto *entry=qobject_cast<QDialog *>(QApplication::activeModalWidget());check(entry&&entry->objectName()=="PulseGuidedChooseInput","finish integration chooses real existing content");
-					QTimer::singleShot(0,[&]{auto *picker=qobject_cast<QDialog *>(QApplication::activeModalWidget());setupField<QPushButton>(picker,"Quality game")->click();});guidedButton(entry,"Use an existing input")->click();
-				});setupField<QPushButton>(wizard,"Choose content input")->click();
-				wizard->next();wizard->next();settleWizard();check(wizard->currentId()==3,"finish integration reaches screen choices");
-				setupField<QLineEdit>(wizard,"Show name")->setText("QA 16 real Finish");setupField<QCheckBox>(wizard,"Include starting screen")->setChecked(false);setupField<QCheckBox>(wizard,"Include break screen")->setChecked(false);setupField<QCheckBox>(wizard,"Include ending screen")->setChecked(false);
-				wizard->next();wizard->next();settleWizard();check(wizard->currentId()==5&&wizard->button(QWizard::FinishButton)->isEnabled(),"real finish only enables after a complete valid plan");chosen=wizard->options();request=PulseSetupPlan::draft(chosen);
-				QTimer::singleShot(0,[&]{auto *completion=qobject_cast<QDialog *>(QApplication::activeModalWidget());if(auto *error=qobject_cast<QMessageBox *>(completion))std::fprintf(stderr,"Real Finish error with pre-existing Stage catalogue: %s\n",error->text().toUtf8().constData());check(completion&&completion->windowTitle()=="Your show is created","production Finish atomically replaces a pre-existing Stage catalogue and opens creation confirmation");captureWizardWindow(completion,"guided-created");reachedCompletion=true;guidedButton(completion,"Done")->click();});
-				wizard->button(QWizard::FinishButton)->click();
-			});
-			PulseMotionEngineTestAccess::openWizard(engine);check(reachedCompletion,"production finish wiring completes the show transaction");guidedOutputEvidence.append(checkGuidedOutput(engine,chosen,request,baseline));
-			const auto savedStages=QJsonDocument::fromJson(readFile(stagePath)).array();check(savedStages.size()==2&&savedStages.first().toObject()==retainedStage&&savedStages.last().toObject().value("name")==chosen.name+" · Main","real Finish retains every field of the existing Stage and appends the requested new Stage");
-		}
-		removeAuditAdditions(baseline);
-		obs_source_remove(obs_scene_get_source(retainedH));obs_source_remove(obs_scene_get_source(retainedV));
-	}
 	// Bypass the planner to prove the backend also rejects invalid guided graphs
 	// before making any source, scene, generated image or catalogue change.
 	if(!finishOnly)for (const QString &fault : {QString("missing-third"), QString("duplicate-third"), QString("camera-alert"), QString("card-feed"), QString("fourth-alert"), QString("invalid-card")}) {
@@ -2702,6 +2668,8 @@ static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
 	check(obs_reset_video(&restored) == OBS_VIDEO_SUCCESS, "quality fixture restores the initial inert video dimensions");
 }
 
+#include "select-wizard-tests.hpp"
+
 int main(int argc, char **argv)
 {
 	QApplication application(argc, argv);
@@ -2728,7 +2696,10 @@ int main(int argc, char **argv)
 	registerInertImageAndCaptureInputs();
 	if (qEnvironmentVariableIsSet("PULSE_GUIDED_OUTPUT_ONLY")||qEnvironmentVariableIsSet("PULSE_GUIDED_FINISH_ONLY")) {
 		guidedGeneratedOutputTests(video);
+	} else if (qEnvironmentVariableIsSet("PULSE_SELECT_ONLY")) {
+		selectionFirstTests(video);
 	} else if (qEnvironmentVariableIsSet("PULSE_GUIDED_UI_ONLY")) {
+		selectionFirstTests(video);
 		guidedWizardInteractionTests();
 	} else if (qEnvironmentVariableIsSet("PULSE_WIZARD_ONLY")) {
 		OBSDataAutoRelease settings = obs_data_create();
@@ -2748,6 +2719,7 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "Motion audit: reference builder\n"); referenceBuilderTests(video); obs_wait_for_destroy_queue();
 		std::fprintf(stderr, "Motion audit: setup wizard\n"); setupBuilderTests(video); obs_wait_for_destroy_queue();
 		std::fprintf(stderr, "Motion audit: themed builder\n"); themedBuilderTests(video); obs_wait_for_destroy_queue();
+		std::fprintf(stderr, "Motion audit: selection-first outputs and Finish\n"); selectionFirstTests(video);
 		std::fprintf(stderr, "Motion audit: generated task-first outputs\n"); guidedGeneratedOutputTests(video);
 		std::fprintf(stderr, "Motion audit: task-first interaction and geometry\n"); guidedWizardInteractionTests();
 	}

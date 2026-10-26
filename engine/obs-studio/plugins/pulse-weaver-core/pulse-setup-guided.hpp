@@ -52,6 +52,7 @@ public:
 class PulseGuidedDiagram final : public QWidget {
 	const PulseShow::Look *look_ = nullptr;
 	QJsonObject framing_;
+	bool support_ = true;
 	QMap<QString, QString> names_;
 	QMap<QString, QSize> sizes_;
 public:
@@ -60,8 +61,8 @@ public:
 		setAccessibleName("Landscape and portrait fit illustration");
 	}
 	QSize sizeHint() const override { return {800, 310}; }
-	void setView(const PulseShow::Look *look, const QJsonObject &framing, const QMap<QString, QString> &names, const QMap<QString, QSize> &sizes) {
-		look_ = look; framing_ = framing; names_ = names; sizes_ = sizes; update();
+	void setView(const PulseShow::Look *look, const QJsonObject &framing, const QMap<QString, QString> &names, const QMap<QString, QSize> &sizes, bool support = true) {
+		look_ = look; support_ = support; framing_ = framing; names_ = names; sizes_ = sizes; update();
 	}
 protected:
 	void paintEvent(QPaintEvent *) override {
@@ -76,7 +77,7 @@ protected:
 			QLinearGradient bg(canvas.topLeft(), canvas.bottomRight()); bg.setColorAt(0, QColor("#243B51")); bg.setColorAt(1, QColor("#101C2C"));
 			p.fillRect(canvas, bg); p.setPen(QColor("#B8D3E6"));
 			p.drawText(QRectF(canvas.left(), 0, canvas.width(), 22), Qt::AlignCenter, format ? "Portrait · 9:16" : "Landscape · 16:9");
-			for (const auto &panel : PulseShow::layout(*look_, format == 1, true, framing_)) {
+			for (const auto &panel : PulseShow::layout(*look_, format == 1, support_, framing_)) {
 				QRectF bounds(canvas.x() + panel.rect.x() * canvas.width(), canvas.y() + panel.rect.y() * canvas.height(), panel.rect.width() * canvas.width(), panel.rect.height() * canvas.height());
 				const QString route = format ? "vertical/" : "horizontal/";
 				const QSize size = sizes_.value(route + panel.role, QSize(1920, 1080));
@@ -87,7 +88,7 @@ protected:
 					picture = QRectF(QPointF(bounds.center().x() - fitted.width() / 2, bounds.center().y() - fitted.height() / 2), fitted);
 				}
 				p.save(); p.setClipRect(bounds);
-				p.fillRect(picture, panel.role == "feedB" ? QColor("#28566D") : panel.role == "feedC" ? QColor("#66517B") : QColor("#446679"));
+				p.fillRect(picture, (panel.role == "feedB" || panel.role == "game" || panel.role == "screen") ? QColor("#28566D") : (panel.role == "feedC" || panel.role == "activity") ? QColor("#66517B") : QColor("#446679"));
 				p.setPen(QPen(QColor("#77D9E6"), 1.5)); p.drawRect(picture.adjusted(1, 1, -1, -1));
 				QFont label = font(); label.setPixelSize(qBound(9, int(picture.width() / 16), 14)); p.setFont(label); p.setPen(Qt::white);
 				p.drawText(picture.adjusted(5, 3, -5, -3), Qt::AlignCenter | Qt::TextWordWrap, names_.value(panel.role, panel.role));

@@ -139,6 +139,22 @@ inline const std::vector<Theme> &guidedCatalogue()
 		{"guided-ending", "Ending", {{"card", "Ending screen", "A readable local closing message", "graphic", {}, "guided-full"}}}};
 	return groups;
 }
+// Selection-first setup binds different content kinds once, then shares them
+// between Looks. Cosmetic framing choices do not create duplicate presets.
+inline const std::vector<Theme> &selectCatalogue()
+{
+	static const std::vector<Theme> groups{
+		{"select-main", "Main", {
+			{"camera", "Camera", "Talk directly to viewers", "presenter", {}, "select-full"},
+			{"camera-activity", "Face + activity", "Your face leads; keep a work area or second camera visible", "presenter", "activity", "select-pip"},
+			{"activity-camera", "Activity + face", "The work area, instrument, pet or demonstration leads", "activity", "presenter", "select-pip", true},
+			{"screen-camera", "Screen share", "Show a window or display, with an optional face camera", "screen", "presenter", "select-pip", true},
+			{"screen-cameras", "Screen + two cameras", "Show the screen, your face and an activity together", "screen", "presenter", "select-three", false, .30, "top-left", "activity"},
+			{"game-camera", "Gameplay", "Show your game, with an optional face camera", "game", "presenter", "select-pip", true},
+			{"game-cameras", "Game + two cameras", "Keep the game, your face and an activity visible", "game", "presenter", "select-three", false, .30, "top-left", "activity"}}},
+		{"select-celebration", "Celebration", {{"announcement", "Celebration / announcement", "A message or your own artwork, with an optional face camera", "graphic", "presenter", "select-pip", true}}}};
+	return groups;
+}
 inline const Theme *theme(const QString &id)
 {
 	for (const auto &value : catalogue()) {
@@ -148,6 +164,7 @@ inline const Theme *theme(const QString &id)
 	}
 	for (const auto &value : setupCatalogue()) if (value.id == id) return &value;
 	for (const auto &value : guidedCatalogue()) if (value.id == id) return &value;
+	for (const auto &value : selectCatalogue()) if (value.id == id) return &value;
 	return nullptr;
 }
 inline const Look *look(const Theme &theme, const QString &id)
@@ -218,6 +235,34 @@ struct Panel {
 };
 inline std::vector<Panel> layout(const Look &look, bool portrait, bool support, const QJsonObject &options = {})
 {
+	if (look.layout.startsWith("select-")) {
+		std::vector<Panel> result{{look.main, {0, 0, 1, 1}, false, false}};
+		if (support && !look.support.isEmpty()) {
+			const double size = qBound(.18, options.value("cameraSize").toDouble(.27), .40);
+			const double top = qBound(.22, options.value("portraitCamera").toDouble(.32), .45);
+			const bool three = look.layout == "select-three";
+			if (portrait) {
+				result[0].rect = {0, top, 1, three ? 1 - top * 2 : 1 - top};
+				result.push_back({look.support, {0, 0, 1, top}, false, false});
+				if (three) result.push_back({look.third, {0, 1 - top, 1, top}, false, false});
+			} else if (three) {
+				result[0].rect = {0, 0, .72, 1};
+				result.push_back({look.support, {.73, 0, .27, .5}, false, false});
+				result.push_back({look.third, {.73, .5, .27, .5}, false, false});
+			} else {
+				const auto corner = options.value("corner").toString("bottom-right");
+				const double height = size; // 16:9 inset on a 16:9 canvas.
+				result.push_back({look.support, {corner.endsWith("right") ? .97 - size : .03,
+					corner.startsWith("bottom") ? .97 - height : .03, size, height}, false, false});
+			}
+		}
+		for (auto &panel : result) {
+			// Screens and games always fit; camera cropping is an explicit choice.
+			if (panel.role == "presenter" || panel.role == "activity")
+				panel.fill = options.value(panel.role + "Fill").toBool();
+		}
+		return result;
+	}
 	if (look.layout.startsWith("guided-")) {
 		// These are panel bounds, not promises that a fitted source fills them.
 		// In particular a wide content feed remains letterboxed in portrait.

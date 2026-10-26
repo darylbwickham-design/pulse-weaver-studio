@@ -27,7 +27,7 @@
 #include <QWizardPage>
 #include <functional>
 #include "pulse-setup-flexible.hpp"
-#include "pulse-setup-guided.hpp"
+#include "pulse-setup-select.hpp"
 #include "../../shared/qt/PulseInstructions.hpp"
 #include "../../shared/qt/PulseOutputActivity.hpp"
 
@@ -226,17 +226,19 @@ void PulseMotionEngine::openShowWizard()
 		QFile stagesFile(QDir(QFileInfo(storagePath).absolutePath()).filePath("../../pulseweaver-stages.json"));
 		if (stagesFile.open(QIODevice::ReadOnly)) savedStages = QJsonDocument::fromJson(stagesFile.readAll()).array();
 	} // Release the reader before show creation atomically replaces the catalogue.
-	PulseGuidedWizard wizard(editor, savedStages);
+	PulseSelectWizard wizard(editor, savedStages);
 	while (wizard.exec() == QDialog::Accepted) {
 		const QString issue = wizard.finalProblem();
 		if (!issue.isEmpty()) { QMessageBox::warning(&wizard, "Your show needs attention", issue + "\nYour choices are preserved."); continue; }
-		const auto request = PulseSetupPlan::draft(wizard.options());
-		if (request.isEmpty()) { QMessageBox::warning(&wizard, "Your show needs attention", "Check your inputs and included views. Your choices are preserved."); continue; }
+		const auto request = PulseSelectPlan::draft(wizard.options());
+		if (request.isEmpty()) { QMessageBox::warning(&wizard, "Your show needs attention", "Check your selected layouts and inputs. Your choices are preserved."); continue; }
 		const auto result = createGuidedShow(request);
 		if (!result.value("ok").toBool()) { QMessageBox::warning(&wizard, "Show not created", result.value("message").toString() + "\nYour choices are preserved."); continue; }
-		selectEditorStage(wizard.options().name.trimmed() + " · Main");
+		const auto stages = request.value("stages").toArray();
+		const auto *firstTheme = PulseShow::theme(stages.first().toObject().value("theme").toString());
+		selectEditorStage(wizard.options().name.trimmed() + " · " + firstTheme->name);
 		setStatus(result.value("message").toString());
-		showSetupCompletion(editor, "Created “" + wizard.options().name.trimmed() + "”. Main contains your chosen views. In Control, screens are called Stages and views are called Looks. Check the actual pictures and one intended alert-audio copy before streaming.");
+		showSetupCompletion(editor, "Created “" + wizard.options().name.trimmed() + "”. Your selected screens and layouts are ready to edit. In Control, screens are called Stages and layouts are called Looks. Check the actual pictures and one intended alert-audio copy before streaming.");
 		return;
 	}
 	if (wizard.advancedRequested()) openDetailedShowWizard();
