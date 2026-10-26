@@ -2,12 +2,43 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QRectF>
 #include <QStringList>
 #include <QUrl>
 #include <vector>
+#include <algorithm>
 
 namespace PulseShow {
+// Generated Looks control the complete shared scene. A layer hidden in one
+// Look can retain the index it had in another, colliding with a visible layer.
+// Give hidden layers distinct trailing indices before applying the whole stack.
+// Visible order, geometry, filters and audio are left exactly as requested.
+inline QJsonArray orderedSetupTargets(const QJsonArray &targets)
+{
+	QMap<QString, int> nextHidden;
+	for (const auto &value : targets) {
+		const auto item=value.toObject(), transform=item.value("transform").toObject();
+		if (transform.value("visible").toBool()) {
+			const auto container=item.value("container").toString();
+			nextHidden[container]=qMax(nextHidden.value(container),transform.value("order").toInt()+1);
+		}
+	}
+	std::vector<QJsonObject> ordered;
+	for (const auto &value : targets) {
+		auto item=value.toObject(), transform=item.value("transform").toObject();
+		if (!transform.value("visible").toBool()) {
+			transform.insert("order",nextHidden[item.value("container").toString()]++);
+			item.insert("transform",transform);
+		}
+		ordered.push_back(item);
+	}
+	std::stable_sort(ordered.begin(),ordered.end(),[](const auto &a,const auto &b) {
+		const auto ac=a.value("container").toString(),bc=b.value("container").toString();
+		return ac==bc ? a.value("transform").toObject().value("order").toInt()<b.value("transform").toObject().value("order").toInt() : ac<bc;
+	});
+	QJsonArray result; for (const auto &item : ordered) result.append(item); return result;
+}
 inline QString browserLinkProblem(const QString &value)
 {
 	const QUrl url(value.trimmed());

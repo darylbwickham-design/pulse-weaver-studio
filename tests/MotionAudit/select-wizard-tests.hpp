@@ -50,6 +50,7 @@ static void selectionFirstTests(const obs_video_info &initialVideo)
 		QSet<QString> emitted;
 		for (const auto &entry : actions) {
 			const auto action = entry.toObject(); const auto key = action.value("templateId").toString(); check(options.selected.contains(key) && !emitted.contains(key), "no cosmetic or unselected Looks are generated"); emitted.insert(key);
+			PulseMotionEngineTestAccess::settleLayout(engine,action);
 			const auto *look = PulseSelectPlan::look(key);
 			for (const auto &route : {QString("horizontal"), QString("vertical")}) {
 				QSet<QString> visible, expected;

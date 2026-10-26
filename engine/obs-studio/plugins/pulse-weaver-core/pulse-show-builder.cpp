@@ -2440,7 +2440,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 					}
 				}
 			}
-			action.insert("items", targets);
+			action.insert("items", guided ? PulseShow::orderedSetupTargets(targets) : targets);
 			newActions[i] = action;
 		}
 		for (const auto &value : newActions[firstLook].toObject().value("items").toArray()) {

@@ -145,6 +145,16 @@ struct PulseMotionEngineTestAccess {
 	static bool save(PulseMotionEngine &engine) { return engine.save(); }
 	static bool valid(PulseMotionEngine &engine) { return engine.originalStoreValid; }
 	static QJsonArray actions(PulseMotionEngine &engine) { return engine.actions; }
+	static void settleLayout(PulseMotionEngine &engine, const QJsonObject &action) {
+		PulseMotionEngine::Execution execution; execution.action=action; QString error;
+		// The headless harness has no frontend Stage switcher. Keep the real
+		// saved item/scene resolution and final movement path under test.
+		execution.action.insert("policy","current"); execution.action.remove("collection");
+		check(engine.prepareExecution(execution,error),"generated Look prepares through the real runtime");
+		for(auto &track:execution.tracks) engine.apply(track.item,track.target,true);
+		for(const auto &track:execution.tracks) if(track.target.visible)
+			check(engine.capture(track.item).order==track.target.order,"settled visible layers retain their requested stack after hidden layers are applied");
+	}
 	static QJsonObject frame(obs_sceneitem_t *item) { return PulseMotionEngine::serialize(PulseMotionEngine::capture(item)); }
 	static bool graphic(PulseMotionEngine &engine, const QJsonObject &action) {
 		PulseMotionEngine::Execution execution; execution.action = action;

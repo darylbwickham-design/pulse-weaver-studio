@@ -7,6 +7,7 @@ Build my show now has **two required pages: choose your layouts, then set up and
 - Set camera fit/crop, landscape inset size/corner and portrait camera height. Optional monochrome uses a native filtered wrapper without changing the original camera's filters or opening another capture.
 - Keep separate landscape/portrait stingers and up to three paired alert layers. New browser copies start with output audio off; select one intended audible copy and rehearse. Existing audio and monitoring remain unchanged.
 - Use editable static holding messages, or supply your provider's browser artwork for countdowns and animated scenes. The built-in Starting screen is a static image, not a timer.
+- Correct generated layer ordering when switching Looks. Hidden layers no longer push a full-size picture over its intended inset; existing guided/selection-first targets are corrected in memory when they run.
 - Back retains selections and assignments. Cancelling an optional editor restores its prior answers. Create appends an editable show while preserving existing catalogue entries. Saved layouts remain available through detailed setup.
 
 The coverage review used the whole Q3 command group, rather than misreading Q3 as a count of three. Printer arrangements become general activity-camera layouts; bespoke Yu-Gi-Oh layouts and stream-specific graphics are not wizard templates. See the [design rationale and coverage mapping](SETUP-WIZARD-SELECTION-FIRST-2026-10-26.md) and [setup guide](SETUP-WIZARD-GUIDE.md).

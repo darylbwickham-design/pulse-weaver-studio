@@ -1,6 +1,7 @@
 #include "pulse-motion-engine.hpp"
 
 #include "pulse-scene-item-ref.hpp"
+#include "pulse-show-templates.hpp"
 
 #include <obs.h>
 
@@ -5013,7 +5014,11 @@ bool PulseMotionEngine::prepareExecution(Execution &execution, QString &error)
 			action.value("focusX").toDouble(0.5), action.value("focusY").toDouble(0.42));
 		execution.tracks.push_back(std::move(track));
 	} else if (kind == "layout") {
-		for (const QJsonValue &value : action.value("items").toArray()) {
+		QJsonArray targets=action.value("items").toArray();
+		const auto recipe=action.value("templateId").toString();
+		if (recipe.startsWith("guided-") || recipe.startsWith("select-"))
+			targets=PulseShow::orderedSetupTargets(targets);
+		for (const QJsonValue &value : targets) {
 			const QJsonObject saved = value.toObject();
 			const QString container = saved.value("container").toString(action.value("container").toString());
 			const qint64 itemId = saved.value("itemId").toString().toLongLong();
