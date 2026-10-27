@@ -5005,7 +5005,7 @@ PulseMotionEngine::Transform PulseMotionEngine::reflowFrame(const Track &track, 
 	Transform start = visualTransform(from, width, height), finish = visualTransform(to, width, height);
 	if (start.boundsType != OBS_BOUNDS_NONE || finish.boundsType != OBS_BOUNDS_NONE)
 		return transitionFrame(from, to, progress, canvasWidth);
-	const uint seed = qHash(track.sourceUuid.isEmpty() ? track.sourceName : track.sourceUuid);
+	const size_t seed = qHash(track.sourceUuid.isEmpty() ? track.sourceName : track.sourceUuid);
 	const double delay = double(seed % 3) * 0.035;
 	const double phase = std::clamp((progress - delay) / (1.0 - delay), 0.0, 1.0);
 	const double t = phase * phase * phase * (phase * (phase * 6.0 - 15.0) + 10.0);
