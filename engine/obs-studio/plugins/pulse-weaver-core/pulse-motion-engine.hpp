@@ -85,7 +85,7 @@ private:
 	};
 	struct Execution {
 		struct CoveragePair {
-			enum class Kind { FullInset, PortraitSplit, InsetColumn } kind;
+			enum class Kind { FullInset, PortraitSplit, InsetColumn, RevealRegion } kind;
 			std::size_t incoming = 0;
 			std::size_t outgoing = 0;
 			float width = 0.0f;
@@ -243,6 +243,11 @@ private:
 	static Transform deserialize(const QJsonObject &value);
 	static Transform interpolate(const Transform &from, const Transform &to, double progress);
 	static Transform transitionFrame(const Transform &from, const Transform &to, double progress, float canvasWidth);
+	static Transform visualTransform(const Transform &value, uint32_t sourceWidth, uint32_t sourceHeight);
+	static Transform coverageTransform(const Transform &value, uint32_t sourceWidth, uint32_t sourceHeight);
+	static Transform blendVisual(const Transform &from, const Transform &to, double progress, uint32_t sourceWidth, uint32_t sourceHeight);
+	static bool usesReflow(const QJsonObject &action);
+	static Transform reflowFrame(const Track &track, double progress, float canvasWidth, float canvasHeight);
 	static void apply(obs_sceneitem_t *item, const Transform &value, bool finalFrame = false);
 	static Transform punchTarget(obs_sceneitem_t *item, const Transform &original, double zoom, double focusX, double focusY);
 	OBSSceneItem resolveItem(const QString &container, qint64 itemId, const QString &sourceName, bool recursive = true,

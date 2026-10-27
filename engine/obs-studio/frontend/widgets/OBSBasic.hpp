@@ -1537,8 +1537,10 @@ public:
 	bool IsPulsePortraitEditing() const { return pulsePortraitEditing.load(); }
 	bool GetEditorVideoInfo(obs_video_info *info);
 	static bool IsPulsePortraitScene(obs_source_t *source);
+	static bool IsPulseCameraSceneAvailable(obs_source_t *source, bool portrait);
 	void SelectPulsePortraitScene(obs_source_t *source);
 	void RefreshPulseCameraScenes();
+	void RefreshPulseCameraPreview();
 
 	inline OBSSource GetCurrentSceneSource()
 	{

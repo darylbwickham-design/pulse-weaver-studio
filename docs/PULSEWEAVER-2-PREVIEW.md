@@ -1,12 +1,14 @@
 # Pulse Weaver 2.0 preview
 
-Version: **2.0.0-unstable.6**. Windows native interface and local-controls preview.
+Version: **2.0.0-unstable.7**. Windows native interface and local-controls preview.
 
 This build brings the main workspaces forward, gives programme previews more room and uses a consistent tactile style for operating controls. Within each task, choose a category, open its focused page and use Back to return. It retains the native Qt/OBS engine, Stage/Look system, landscape and portrait outputs, native Move, stingers, audio mixer and account connections. It is an unstable preview for testing before using it for an important broadcast.
 
 ## What changes
 
-This revision simplifies **Build my show** to two required pages: choose the layouts/screens you need, then provide their relevant inputs and build. Game, screen, presenter and activity inputs are separate assignments shared across selected Looks and both formats. Holding-only shows ask for no captures. The detailed builder remains available for saved layouts and specialist work.
+Layout Looks now use smooth camera reflow by default, including existing saved Looks. Individual cameras move and resize with coordinated handoffs; alerts and chat retain their framing. New movement defaults to 1,050 ms, while explicit saved timings remain authoritative. Camera close-ups retain their existing behaviour. The Camera page also places portrait-only helpers in Portrait, shared helpers in both tabs, and shows custom-sized camera scenes without clipping their editing area. See [revision 7](RELEASE-2.0.0-unstable.7.md).
+
+**Build my show** retains two required pages: choose the layouts/screens you need, then provide their relevant inputs and build. Game, screen, presenter and activity inputs are separate assignments shared across selected Looks and both formats. Holding-only shows ask for no captures. The detailed builder remains available for saved layouts and specialist work.
 
 Framing/colour, stingers, up to three alert layers and screen artwork are optional focused editors. Existing source filters and audio settings are retained; monochrome belongs to a native wrapper reusing the original capture. Built-in holding screens are static images with editable messages; provider browser artwork can replace either format for countdowns or animation. See [Create your show](SETUP-WIZARD-GUIDE.md) and the [corrected Q3 coverage and design rationale](SETUP-WIZARD-SELECTION-FIRST-2026-10-26.md).
 

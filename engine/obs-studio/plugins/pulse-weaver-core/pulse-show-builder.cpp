@@ -1266,7 +1266,7 @@ void PulseMotionEngine::openLegacyShowWizard()
 			qMax(0, corner->findData(settings.value("corner").toString(look ? look->corner : "top-left"))));
 		corner->setEnabled(route->currentData().toString() == "horizontal" && look &&
 				   (look->layout == "corner" || look->layout == "reaction"));
-		movement->setValue(options.value(key + "/horizontal").value("durationMs").toInt(850));
+		movement->setValue(options.value(key + "/horizontal").value("durationMs").toInt(PulseShow::DefaultMovementDurationMs));
 		const QString previousFrom = motionFrom->currentData().toString();
 		motionFrom->clear();
 		for (const QString &selected : selectedLookKeys()) {
@@ -2404,7 +2404,7 @@ QJsonObject PulseMotionEngine::createThemedShow(const QJsonObject &choices)
 				{"activateScene", true},
 				{"durationMs",
 				 qBound(0,
-					framing.value(look->id + "/horizontal").toObject().value("durationMs").toInt(850),
+					framing.value(look->id + "/horizontal").toObject().value("durationMs").toInt(PulseShow::DefaultMovementDurationMs),
 					3000)},
 				{"restore", false},
 				{"items", targets},

@@ -110,6 +110,8 @@ bool motionGraphicSwitch(const QString &sourceName, obs_source_t *source = nullp
 	}
 	const QString name = sourceName.toLower();
 	if (name.endsWith("backdrop")) return true;
+	if (source && std::strcmp(obs_source_get_id(source),"browser_source")==0 &&
+	    (name.contains("alert") || name.contains("sticker"))) return true;
 	static const QSet<QString> graphics{
 		"brb scene", "stream ended", "lumia startiing", "lumia overlay",
 		"chatty", "vert chatty", "whodatpalalerts", "whodatpallb",
@@ -918,7 +920,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	zoomField->setSuffix(" %");
 	durationField = new QSpinBox;
 	durationField->setRange(0, 15000);
-	durationField->setValue(750);
+	durationField->setValue(PulseShow::DefaultMovementDurationMs);
 	durationField->setSuffix(" ms");
 	holdField = new QSpinBox;
 	holdField->setRange(0, 60000);
@@ -1865,7 +1867,7 @@ void PulseMotionEngine::loadActionIntoEditor(const QJsonObject &action)
 	}
 	if (sourceRow >= 0) sourceField->setCurrentIndex(sourceRow);
 	zoomField->setValue(action.value("zoomPercent").toInt(150));
-	durationField->setValue(action.value("durationMs").toInt(action.value("kind") == "punch" ? 250 : 750));
+	durationField->setValue(action.value("durationMs").toInt(action.value("kind") == "punch" ? 250 : PulseShow::DefaultMovementDurationMs));
 	holdField->setValue(action.value("holdMs").toInt(5000));
 	restoreField->setChecked(action.value("restore").toBool(action.value("kind") == "punch"));
 	returnStageField->setChecked(action.value("returnStage").toBool());
@@ -1923,11 +1925,15 @@ QJsonObject PulseMotionEngine::editorAction() const
 		{"zoomPercent", zoomField ? zoomField->value() : 150},
 		{"focusX", editorFocus.x()},
 		{"focusY", editorFocus.y()},
-		{"durationMs", durationField ? durationField->value() : 750},
+		{"durationMs", durationField ? durationField->value() : PulseShow::DefaultMovementDurationMs},
 		{"holdMs", holdField ? holdField->value() : 5000},
 		{"restore", restoreField && restoreField->isChecked()},
 		{"returnStage", returnStageField && returnStageField->isChecked()},
 		{"repeat", "restart"}};
+	// Editing an imported/newer Look must not silently replace its movement
+	// profile with the legacy slide when the operator saves its arrangement.
+	if (action.value("kind").toString() == "layout")
+		action.insert("motionStyle", actionByIdentity(editingId).value("motionStyle").toString() == "legacy" ? "legacy" : "reflow");
 	if (sourceField) {
 		const QStringList target = sourceField->currentData().toString().split('|');
 		action.insert("itemId", target.value(0));
@@ -2977,6 +2983,8 @@ void PulseMotionEngine::previewDraft(int progress)
 		}
 	}
 	Execution rehearsal;
+	rehearsal.action = actionByIdentity(editingId);
+	rehearsal.action.insert("kind", "layout");
 	auto addPreviewTrack = [&](const QString &container, qint64 id, obs_sceneitem_t *target, obs_sceneitem_t *preview) {
 		if (!target || !preview) return;
 		obs_source_t *source = obs_sceneitem_get_source(target);
@@ -2985,6 +2993,9 @@ void PulseMotionEngine::previewDraft(int progress)
 		if (!live) return;
 		Track track;
 		track.container = container;
+		track.sourceName = sourceName;
+		track.sourceUuid = QString::fromUtf8(obs_source_get_uuid(source));
+		track.itemId = id;
 		track.item = preview;
 		track.from = capture(live);
 		previewStartTransform(container, target, id, track.from);
@@ -3013,7 +3024,10 @@ void PulseMotionEngine::previewDraft(int progress)
 	});
 	for (const Track &track : rehearsal.tracks) {
 		const float width = float(obs_source_get_width(obs_scene_get_source(obs_sceneitem_get_scene(track.item))));
-		Transform start = track.graphic ? track.from : transitionFrame(track.from, track.target, 0.0, width);
+		const float height = float(obs_source_get_height(obs_scene_get_source(obs_sceneitem_get_scene(track.item))));
+		Transform start = track.graphic ? track.from :
+			(usesReflow(rehearsal.action) ? reflowFrame(track, 0.0, width, height) :
+			 transitionFrame(track.from, track.target, 0.0, width));
 		if (!track.graphic) {
 			start.visible = track.from.visible || track.target.visible;
 			if (!track.from.visible && track.target.visible) start.order = track.target.order;
@@ -3108,7 +3122,7 @@ void PulseMotionEngine::createStarterStage()
 		if (firstId.isEmpty()) firstId = id;
 		actions.append(QJsonObject{{"version", 1}, {"id", id}, {"name", sceneName + " · " + label}, {"kind", "layout"},
 			{"collection", collectionName}, {"container", sceneName}, {"policy", "current"}, {"activateScene", true},
-			{"durationMs", 750}, {"restore", false}, {"items", targets}, {"summary", "Animate " + sceneName + " into its " + label + " look."}});
+			{"durationMs", PulseShow::DefaultMovementDurationMs}, {"restore", false}, {"items", targets}, {"summary", "Animate " + sceneName + " into its " + label + " look."}});
 	}
 	obs_frontend_save();
 	if (!save()) return;
@@ -3698,7 +3712,7 @@ QJsonObject PulseMotionEngine::createReferencedShow(const QJsonObject &choices)
 		if (setupWizard && (wanted.isEmpty() || found.size() != wanted.size()))
 			return {{"ok", false}, {"message", "Choose valid saved Looks for " + suffix + "."}};
 		if (looks.isEmpty()) looks.append(QJsonObject{{"name", "Current composition"}, {"kind", "layout"},
-			{"durationMs", 750}, {"items", QJsonArray{}}});
+			{"durationMs", PulseShow::DefaultMovementDurationMs}, {"items", QJsonArray{}}});
 		plans.push_back({name, reference, OBSSource(horizontal), OBSSource(portrait), looks});
 	}
 	const QJsonArray oldActions = actions;
@@ -4477,7 +4491,7 @@ QJsonObject PulseMotionEngine::createGuidedShow(const QJsonObject &choices)
 			newActions.append(QJsonObject{{"version", 1}, {"id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
 				{"name", name + " · " + look.name}, {"kind", "layout"}, {"collection", collection},
 				{"container", name}, {"policy", "switch"}, {"stage", name}, {"activateScene", true},
-				{"durationMs", 750}, {"restore", false}, {"items", targets},
+				{"durationMs", PulseShow::DefaultMovementDurationMs}, {"restore", false}, {"items", targets},
 				{"summary", "Move " + name + " to " + look.name + "."}});
 		}
 		const QJsonArray initial = newActions.at(firstLook).toObject().value("items").toArray();
@@ -4722,7 +4736,7 @@ void PulseMotionEngine::createLook(const QString &name, bool duplicate)
 	if (!duplicate) action.remove("items");
 	action.remove("id"); action.insert("kind", "layout"); action.insert("name", name);
 	action.insert("restore", false);
-	action.insert("durationMs", durationField ? durationField->value() : 750);
+	action.insert("durationMs", durationField ? durationField->value() : PulseShow::DefaultMovementDurationMs);
 	if (!mainContainer.isEmpty()) action.insert("container", mainContainer);
 	loadActionIntoEditor(action);
 	if (!duplicate && itemTree) {
@@ -4827,6 +4841,215 @@ PulseMotionEngine::Transform PulseMotionEngine::transitionFrame(const Transform 
 		}
 	}
 	return interpolate(entrance, exit, progress);
+}
+
+PulseMotionEngine::Transform PulseMotionEngine::visualTransform(const Transform &value, uint32_t sourceWidth, uint32_t sourceHeight)
+{
+	// Resolve bounds and their implicit crop into one raw-scale representation.
+	// This follows libobs' bounds/alignment rules, including its integer crop
+	// rounding. Interpolation can then cross bounds modes without switching the
+	// meaning of its scale/size on the last frame. Saved endpoints stay intact.
+	Transform result = value;
+	const int croppedWidth = int(sourceWidth) - value.crop.left - value.crop.right;
+	const int croppedHeight = int(sourceHeight) - value.crop.top - value.crop.bottom;
+	if (croppedWidth <= 0 || croppedHeight <= 0 || !std::isfinite(value.scale.x) ||
+	    !std::isfinite(value.scale.y) || value.scale.x == 0 || value.scale.y == 0)
+		return result;
+	vec2 scale = value.scale, origin{};
+	int width = croppedWidth, height = croppedHeight;
+	auto align = [](vec2 &v, uint32_t alignment, int cx, int cy) {
+		if (alignment & OBS_ALIGN_RIGHT) v.x += float(cx);
+		else if (!(alignment & OBS_ALIGN_LEFT)) v.x += float(cx / 2);
+		if (alignment & OBS_ALIGN_BOTTOM) v.y += float(cy);
+		else if (!(alignment & OBS_ALIGN_TOP)) v.y += float(cy / 2);
+	};
+	if (value.boundsType != OBS_BOUNDS_NONE) {
+		if (value.bounds.x <= 0 || value.bounds.y <= 0)
+			return result;
+		float drawnWidth = float(width) * std::abs(scale.x), drawnHeight = float(height) * std::abs(scale.y);
+		obs_bounds_type type = value.boundsType;
+		if (type == OBS_BOUNDS_MAX_ONLY && (drawnWidth > value.bounds.x || drawnHeight > value.bounds.y))
+			type = OBS_BOUNDS_SCALE_INNER;
+		if (type == OBS_BOUNDS_SCALE_INNER || type == OBS_BOUNDS_SCALE_OUTER) {
+			bool useWidth = value.bounds.x / value.bounds.y < drawnWidth / drawnHeight;
+			if (type == OBS_BOUNDS_SCALE_OUTER) useWidth = !useWidth;
+			const float factor = useWidth ? value.bounds.x / drawnWidth : value.bounds.y / drawnHeight;
+			scale.x *= factor; scale.y *= factor;
+		} else if (type == OBS_BOUNDS_SCALE_TO_WIDTH) {
+			const float factor = value.bounds.x / drawnWidth; scale.x *= factor; scale.y *= factor;
+		} else if (type == OBS_BOUNDS_SCALE_TO_HEIGHT) {
+			const float factor = value.bounds.y / drawnHeight; scale.x *= factor; scale.y *= factor;
+		} else if (type == OBS_BOUNDS_STRETCH) {
+			scale.x = std::copysign(value.bounds.x / float(width), scale.x);
+			scale.y = std::copysign(value.bounds.y / float(height), scale.y);
+		}
+		drawnWidth = float(width) * scale.x; drawnHeight = float(height) * scale.y;
+		const float widthDifference = value.bounds.x - std::abs(drawnWidth);
+		const float heightDifference = value.bounds.y - std::abs(drawnHeight);
+		align(origin, value.boundsAlignment, int(-widthDifference), int(-heightDifference));
+		const bool boundsCrop = value.boundsCrop && (value.boundsType == OBS_BOUNDS_SCALE_OUTER ||
+			value.boundsType == OBS_BOUNDS_SCALE_TO_WIDTH || value.boundsType == OBS_BOUNDS_SCALE_TO_HEIGHT);
+		if (boundsCrop && (widthDifference < -0.1f || heightDifference < -0.1f)) {
+			const bool cropWidth = widthDifference < -0.1f;
+			const bool flipped = cropWidth ? drawnWidth < 0 : drawnHeight < 0;
+			const float difference = cropWidth ? widthDifference : heightDifference;
+			const float axisScale = cropWidth ? scale.x : scale.y;
+			float cropOrigin = cropWidth ? origin.x : origin.y;
+			const uint32_t mask = cropWidth ? OBS_ALIGN_LEFT | OBS_ALIGN_RIGHT : OBS_ALIGN_TOP | OBS_ALIGN_BOTTOM;
+			const uint32_t alignment = value.boundsAlignment & mask;
+			const float overdraw = std::abs(difference / axisScale);
+			const float leading = alignment & (OBS_ALIGN_TOP | OBS_ALIGN_LEFT) ? 0 :
+				(alignment & (OBS_ALIGN_BOTTOM | OBS_ALIGN_RIGHT) ? overdraw : overdraw / 2);
+			const float trailing = overdraw - leading;
+			int leadingCrop, trailingCrop;
+			if (flipped) {
+				if (alignment == OBS_ALIGN_CENTER) cropOrigin *= 2;
+				else if (alignment & (OBS_ALIGN_TOP | OBS_ALIGN_LEFT)) cropOrigin -= difference;
+				trailingCrop = int(std::round(leading)); leadingCrop = int(std::round(trailing));
+			} else {
+				cropOrigin = 0;
+				trailingCrop = int(std::round(trailing)); leadingCrop = int(std::round(leading));
+			}
+			if (cropWidth) {
+				result.crop.left += leadingCrop; result.crop.right += trailingCrop; origin.x = cropOrigin;
+			} else {
+				result.crop.top += leadingCrop; result.crop.bottom += trailingCrop; origin.y = cropOrigin;
+			}
+		}
+		origin.x += drawnWidth < 0 ? drawnWidth : 0;
+		origin.y += drawnHeight < 0 ? drawnHeight : 0;
+		width = int(value.bounds.x); height = int(value.bounds.y);
+	} else {
+		width = int(uint32_t(float(width) * scale.x)); height = int(uint32_t(float(height) * scale.y));
+	}
+	align(origin, value.alignment, width, height);
+	matrix4 draw{};matrix4_identity(&draw);
+	matrix4_scale3f(&draw,&draw,scale.x,scale.y,1);
+	matrix4_translate3f(&draw,&draw,-origin.x,-origin.y,0);
+	matrix4_rotate_aa4f(&draw,&draw,0,0,1,RAD(value.rotation));
+	matrix4_translate3f(&draw,&draw,value.pos.x,value.pos.y,0);
+	result.pos={draw.t.x,draw.t.y};
+	result.scale = scale;
+	result.bounds = {};
+	result.boundsType = OBS_BOUNDS_NONE;
+	result.boundsAlignment = 0;
+	result.boundsCrop = false;
+	result.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+	return result;
+}
+
+bool PulseMotionEngine::usesReflow(const QJsonObject &action)
+{
+	return action.value("kind").toString() == "layout" && action.value("motionStyle").toString() != "legacy";
+}
+
+PulseMotionEngine::Transform PulseMotionEngine::coverageTransform(const Transform &value, uint32_t sourceWidth, uint32_t sourceHeight)
+{
+	Transform result = visualTransform(value, sourceWidth, sourceHeight);
+	if (result.boundsType != OBS_BOUNDS_NONE || result.rotation != 0 || result.scale.x <= 0 || result.scale.y <= 0) {
+		// Coverage choreography requires an axis-aligned, positive rectangle.
+		// Never mistake unsupported geometry's original bounds for that rectangle.
+		result.boundsType = OBS_BOUNDS_NONE;
+		result.bounds = {};
+		return result;
+	}
+	result.bounds = {float(int(sourceWidth)-result.crop.left-result.crop.right)*result.scale.x,
+		float(int(sourceHeight)-result.crop.top-result.crop.bottom)*result.scale.y};
+	result.boundsType = OBS_BOUNDS_STRETCH;
+	return result;
+}
+
+PulseMotionEngine::Transform PulseMotionEngine::blendVisual(const Transform &from, const Transform &to, double progress, uint32_t width, uint32_t height)
+{
+	if (progress <= 0) return from;
+	if (progress >= 1) return to;
+	const Transform start = visualTransform(from,width,height), finish = visualTransform(to,width,height);
+	const double p = std::clamp(progress,0.0,1.0);
+	const double t = p*p*p*(p*(p*6.0-15.0)+10.0);
+	auto between = [t](double a,double b) { return float(a+(b-a)*t); };
+	Transform result = start;
+	result.pos = {between(start.pos.x,finish.pos.x),between(start.pos.y,finish.pos.y)};
+	result.rotation = between(start.rotation,finish.rotation);
+	result.crop.left = int(std::lround(between(start.crop.left,finish.crop.left)));
+	result.crop.right = int(std::lround(between(start.crop.right,finish.crop.right)));
+	result.crop.top = int(std::lround(between(start.crop.top,finish.crop.top)));
+	result.crop.bottom = int(std::lround(between(start.crop.bottom,finish.crop.bottom)));
+	// Interpolate the visible rectangle, not scale and crop independently;
+	// otherwise a changing portrait crop can briefly open a background seam.
+	const float visibleWidth = between((int(width)-start.crop.left-start.crop.right)*start.scale.x,
+		(int(width)-finish.crop.left-finish.crop.right)*finish.scale.x);
+	const float visibleHeight = between((int(height)-start.crop.top-start.crop.bottom)*start.scale.y,
+		(int(height)-finish.crop.top-finish.crop.bottom)*finish.scale.y);
+	result.scale.x = visibleWidth / float(std::max(1,int(width)-result.crop.left-result.crop.right));
+	result.scale.y = visibleHeight / float(std::max(1,int(height)-result.crop.top-result.crop.bottom));
+	result.visible = from.visible || to.visible;
+	return result;
+}
+
+PulseMotionEngine::Transform PulseMotionEngine::reflowFrame(const Track &track, double progress, float canvasWidth, float canvasHeight)
+{
+	const Transform &from = track.from, &to = track.target;
+	if (progress >= 1.0) return to;
+	if (!from.visible && !to.visible) return from;
+	// Alerts, chat and other unchanged artwork must not subtly drift or zoom
+	// merely because the cameras are reflowing underneath them.
+	const bool sameGeometry = from.pos.x == to.pos.x && from.pos.y == to.pos.y &&
+		from.scale.x == to.scale.x && from.scale.y == to.scale.y && from.bounds.x == to.bounds.x &&
+		from.bounds.y == to.bounds.y && from.rotation == to.rotation && from.crop.left == to.crop.left &&
+		from.crop.right == to.crop.right && from.crop.top == to.crop.top && from.crop.bottom == to.crop.bottom &&
+		from.boundsType == to.boundsType && from.alignment == to.alignment &&
+		from.boundsAlignment == to.boundsAlignment && from.boundsCrop == to.boundsCrop;
+	if (sameGeometry && from.visible == to.visible) return from;
+	obs_source_t *source = obs_sceneitem_get_source(track.item);
+	const uint32_t width = obs_source_get_width(source), height = obs_source_get_height(source);
+	Transform start = visualTransform(from, width, height), finish = visualTransform(to, width, height);
+	if (start.boundsType != OBS_BOUNDS_NONE || finish.boundsType != OBS_BOUNDS_NONE)
+		return transitionFrame(from, to, progress, canvasWidth);
+	const uint seed = qHash(track.sourceUuid.isEmpty() ? track.sourceName : track.sourceUuid);
+	const double delay = double(seed % 3) * 0.035;
+	const double phase = std::clamp((progress - delay) / (1.0 - delay), 0.0, 1.0);
+	const double t = phase * phase * phase * (phase * (phase * 6.0 - 15.0) + 10.0);
+	auto park = [width, height, canvasWidth, canvasHeight, seed](Transform frame, bool entering) {
+		const float oldWidth = float(int(width) - frame.crop.left - frame.crop.right) * frame.scale.x;
+		const float oldHeight = float(int(height) - frame.crop.top - frame.crop.bottom) * frame.scale.y;
+		const float factor = entering ? 0.78f : 0.86f;
+		matrix4 rotation{};matrix4_identity(&rotation);matrix4_rotate_aa4f(&rotation,&rotation,0,0,1,RAD(frame.rotation));
+		const float cosine=rotation.x.x,sine=rotation.x.y;
+		const float centerX = frame.pos.x+(oldWidth*cosine-oldHeight*sine)/2;
+		const float centerY = frame.pos.y+(oldWidth*sine+oldHeight*cosine)/2;
+		frame.scale.x *= factor; frame.scale.y *= factor;
+		const float w = oldWidth * factor, h = oldHeight * factor;
+		frame.pos.x = centerX-(w*cosine-h*sine)/2;
+		frame.pos.y = centerY-(w*sine+h*cosine)/2;
+		const float xs[]{frame.pos.x,frame.pos.x+w*cosine,frame.pos.x-h*sine,frame.pos.x+w*cosine-h*sine};
+		const float ys[]{frame.pos.y,frame.pos.y+w*sine,frame.pos.y+h*cosine,frame.pos.y+w*sine+h*cosine};
+		const float left=*std::min_element(xs,xs+4),right=*std::max_element(xs,xs+4);
+		const float top=*std::min_element(ys,ys+4),bottom=*std::max_element(ys,ys+4);
+		const float margin = std::max(24.0f, std::min(canvasWidth, canvasHeight) * 0.04f);
+		if (canvasHeight > canvasWidth * 1.2f && (centerY < canvasHeight * 0.34f || centerY > canvasHeight * 0.66f))
+			frame.pos.y += centerY < canvasHeight / 2 ? -bottom-margin : canvasHeight+margin-top;
+		else if (centerX < canvasWidth * 0.42f || centerX > canvasWidth * 0.58f)
+			frame.pos.x += centerX < canvasWidth / 2 ? -right-margin : canvasWidth+margin-left;
+		else if (seed & 1)
+			frame.pos.y += centerY < canvasHeight / 2 ? -bottom-margin : canvasHeight+margin-top;
+		else
+			frame.pos.x += entering ? -right-margin : canvasWidth+margin-left;
+		frame.visible = true;
+		return frame;
+	};
+	if (!from.visible && to.visible) start = park(finish, true);
+	if (from.visible && !to.visible) finish = park(start, false);
+	if (progress <= 0.0 && from.visible && to.visible) return from;
+	Transform frame = blendVisual(start,finish,phase,width,height);
+	const float dx = finish.pos.x - start.pos.x, dy = finish.pos.y - start.pos.y;
+	const float distance = std::hypot(dx, dy);
+	if (distance > 1 && canvasWidth > 0 && canvasHeight > 0) {
+		const double wave = std::sin(3.14159265358979323846 * t);
+		const float arc = float(wave) * std::min(distance * 0.06f, std::min(canvasWidth, canvasHeight) * 0.035f) * ((seed & 1) ? 1 : -1);
+		frame.pos.x -= dy / distance * arc; frame.pos.y += dx / distance * arc;
+	}
+	frame.visible = from.visible || to.visible;
+	return frame;
 }
 
 void PulseMotionEngine::apply(obs_sceneitem_t *item, const Transform &value, bool finalFrame)
@@ -4991,7 +5214,7 @@ bool PulseMotionEngine::prepareExecution(Execution &execution, QString &error)
 	}
 	execution.previousStage = activeStageName();
 	execution.actionStage = policy == "current" ? execution.previousStage : assignedStage;
-	execution.durationMs = std::clamp(action.value("durationMs").toInt(750), 0, 15000);
+	execution.durationMs = std::clamp(action.value("durationMs").toInt(action.value("kind") == "punch" ? 250 : PulseShow::DefaultMovementDurationMs), 0, 15000);
 	const QString kind = action.value("kind").toString();
 	if (kind == "punch") {
 		QString container = action.value("container").toString();
@@ -5174,16 +5397,50 @@ QJsonObject PulseMotionEngine::restoreOriginals()
 void PulseMotionEngine::prepareCoveragePairs(Execution &execution)
 {
 	execution.coveragePairs.clear();
+	const bool reflow = usesReflow(execution.action);
 	std::vector<bool> paired(execution.tracks.size(), false);
 	for (std::size_t i = 0; i < execution.tracks.size(); ++i) {
 		if (paired[i]) continue;
-		const Track &a = execution.tracks[i];
-		if (!a.from.visible || !a.target.visible) continue;
+		Track a = execution.tracks[i];
+		if (reflow && a.graphic) continue;
 		obs_scene_t *scene = obs_sceneitem_get_scene(a.item);
 		obs_source_t *owner = scene ? obs_scene_get_source(scene) : nullptr;
 		const float width = owner ? float(obs_source_get_width(owner)) : 0.0f;
 		const float height = owner ? float(obs_source_get_height(owner)) : 0.0f;
 		if (width <= 0.0f || height <= 0.0f) continue;
+		if (reflow) {
+			obs_source_t *source = obs_sceneitem_get_source(a.item);
+			a.from = coverageTransform(a.from,obs_source_get_width(source),obs_source_get_height(source));
+			a.target = coverageTransform(a.target,obs_source_get_width(source),obs_source_get_height(source));
+			if (!a.from.visible && a.target.visible && a.target.rotation == 0 && a.target.boundsType != OBS_BOUNDS_NONE) {
+				auto clipped = [width,height](const Transform &value) {
+				return QRectF(value.pos.x,value.pos.y,value.bounds.x,value.bounds.y).intersected(QRectF(0,0,width,height));
+				};
+				const QRectF arriving = clipped(a.target);
+				if (arriving.width()*arriving.height() >= width*height*0.24f)
+					for (std::size_t j = 0; j < execution.tracks.size(); ++j) {
+						if (j == i || paired[j]) continue;
+						const Track &other = execution.tracks[j];
+						if (other.graphic || other.container != a.container || !other.from.visible) continue;
+						obs_source_t *otherSource=obs_sceneitem_get_source(other.item);
+						const Transform leaving=coverageTransform(other.from,obs_source_get_width(otherSource),obs_source_get_height(otherSource));
+						const Transform destination=coverageTransform(other.target,obs_source_get_width(otherSource),obs_source_get_height(otherSource));
+						if (leaving.rotation != 0 || leaving.boundsType == OBS_BOUNDS_NONE) continue;
+						if (other.target.visible && destination.boundsType == OBS_BOUNDS_NONE) continue;
+						const QRectF old = clipped(leaving);
+						const float tolerance=std::max(8.0f,std::min(width,height)*0.015f);
+						const bool sameRegion=std::abs(old.left()-arriving.left())<=tolerance && std::abs(old.right()-arriving.right())<=tolerance &&
+							std::abs(old.top()-arriving.top())<=tolerance && std::abs(old.bottom()-arriving.bottom())<=tolerance;
+						const bool shrinking=!other.target.visible || destination.bounds.x*destination.bounds.y < leaving.bounds.x*leaving.bounds.y*0.75f;
+						if (!sameRegion || !shrinking) continue;
+						execution.coveragePairs.push_back({Execution::CoveragePair::Kind::RevealRegion,i,j,width,height});
+						paired[i]=paired[j]=true;
+						break;
+					}
+			}
+			if (paired[i]) continue;
+		}
+		if (!a.from.visible || !a.target.visible) continue;
 		const auto full = [width, height](const Transform &t) {
 			return t.boundsType != OBS_BOUNDS_NONE && t.pos.x < width * 0.08f &&
 				t.pos.y < height * 0.08f && t.bounds.x >= width * 0.9f &&
@@ -5204,7 +5461,7 @@ void PulseMotionEngine::prepareCoveragePairs(Execution &execution)
 				t.bounds.x >= width * 0.9f && t.bounds.y > height * 0.5f &&
 				t.pos.y + t.bounds.y >= height * 0.9f;
 		};
-		const auto insetColumn = [width, height](const Track &camera, const Track &content) {
+		const auto insetColumn = [width, height, reflow](const Track &camera, const Track &content) {
 			if (width <= height * 1.2f || camera.graphic || content.graphic) return false;
 			const auto rectangle = [](const Transform &t) {
 				return t.boundsType != OBS_BOUNDS_NONE && t.alignment == (OBS_ALIGN_TOP | OBS_ALIGN_LEFT) &&
@@ -5213,8 +5470,8 @@ void PulseMotionEngine::prepareCoveragePairs(Execution &execution)
 			const auto matches = [&](const Transform &inset, const Transform &full,
 						const Transform &column, const Transform &panel) {
 				return rectangle(inset) && rectangle(full) && rectangle(column) && rectangle(panel) &&
-					inset.boundsType == OBS_BOUNDS_SCALE_OUTER && inset.boundsCrop &&
-					column.boundsType == OBS_BOUNDS_SCALE_OUTER && column.boundsCrop &&
+					(reflow || (inset.boundsType == OBS_BOUNDS_SCALE_OUTER && inset.boundsCrop &&
+					 column.boundsType == OBS_BOUNDS_SCALE_OUTER && column.boundsCrop)) &&
 					inset.pos.x >= 0 && inset.pos.x < width * 0.2f &&
 					inset.bounds.x > 0 && inset.bounds.x <= width * 0.45f &&
 					inset.bounds.y > 0 && inset.bounds.y <= height * 0.5f &&
@@ -5232,7 +5489,13 @@ void PulseMotionEngine::prepareCoveragePairs(Execution &execution)
 		};
 		for (std::size_t j = i + 1; j < execution.tracks.size(); ++j) {
 			if (paired[j]) continue;
-			const Track &b = execution.tracks[j];
+			Track b = execution.tracks[j];
+			if (reflow && b.graphic) continue;
+			if (reflow) {
+				obs_source_t *source=obs_sceneitem_get_source(b.item);
+				b.from=coverageTransform(b.from,obs_source_get_width(source),obs_source_get_height(source));
+				b.target=coverageTransform(b.target,obs_source_get_width(source),obs_source_get_height(source));
+			}
 			if (a.container != b.container || !b.from.visible || !b.target.visible) continue;
 			if (width > height * 1.2f && full(a.from) && inset(a.target) &&
 			    inset(b.from) && full(b.target)) {
@@ -5358,7 +5621,9 @@ void PulseMotionEngine::beginAfterStage()
 		    track.from.visible != track.target.visible)
 			continue;
 		// Place entering layers outside the canvas before revealing them.
-		apply(track.item, transitionFrame(track.from, track.target, 0.0, width));
+		const float height = scene ? float(obs_source_get_height(obs_scene_get_source(scene))) : 0.0f;
+		apply(track.item, usesReflow(active->action) ?
+			reflowFrame(track, 0.0, width, height) : transitionFrame(track.from, track.target, 0.0, width));
 		if (active->action.value("kind") == "layout" && !track.from.visible && track.target.visible)
 			obs_sceneitem_set_order_position(track.item, track.target.order);
 		obs_sceneitem_set_visible(track.item, track.from.visible || track.target.visible);
@@ -5398,6 +5663,89 @@ void PulseMotionEngine::applyMovementFrame(Execution &execution, double progress
 			if (!covered[&track - execution.tracks.data()] && track.from.visible && track.target.visible)
 				obs_sceneitem_set_order_position(track.item, track.target.order);
 		execution.orderCommitted = true;
+	}
+	if (usesReflow(execution.action)) {
+		if (progress >= 1.0) {
+			std::vector<Track *> ordered;
+			for (Track &track : execution.tracks) ordered.push_back(&track);
+			std::stable_sort(ordered.begin(), ordered.end(), [](const Track *left, const Track *right) {
+				return left->target.order < right->target.order;
+			});
+			for (Track *track : ordered) apply(track->item, track->target, true);
+			return;
+		}
+		for (Execution::CoveragePair &pair : execution.coveragePairs) {
+			if (execution.restoring) break;
+			Track &incoming=execution.tracks[pair.incoming], &outgoing=execution.tracks[pair.outgoing];
+			obs_source_t *enterSource=obs_sceneitem_get_source(incoming.item), *leaveSource=obs_sceneitem_get_source(outgoing.item);
+			auto setOrder=[](obs_sceneitem_t *item,int order) {
+				if(obs_sceneitem_get_order_position(item)!=order)obs_sceneitem_set_order_position(item,order);
+			};
+			auto enterAboveLeaving=[&] {
+				const int leavingOrder=obs_sceneitem_get_order_position(outgoing.item);
+				const int enteringOrder=obs_sceneitem_get_order_position(incoming.item);
+				setOrder(incoming.item,enteringOrder<leavingOrder ? leavingOrder : leavingOrder+1);
+			};
+			auto enterBlend=[&](const Transform &from,const Transform &to,double phase) {
+				return blendVisual(from,to,phase,obs_source_get_width(enterSource),obs_source_get_height(enterSource));
+			};
+			auto leaveBlend=[&](const Transform &from,const Transform &to,double phase) {
+				return blendVisual(from,to,phase,obs_source_get_width(leaveSource),obs_source_get_height(leaveSource));
+			};
+			Transform enterFrame,leaveFrame;
+			if (pair.kind == Execution::CoveragePair::Kind::RevealRegion || pair.kind == Execution::CoveragePair::Kind::FullInset) {
+				if (progress < 0.65) {
+					enterFrame=pair.kind == Execution::CoveragePair::Kind::RevealRegion ?
+						reflowFrame(incoming,progress/0.65,pair.width,pair.height) : enterBlend(incoming.from,incoming.target,progress/0.65);
+					leaveFrame=outgoing.from;
+					enterAboveLeaving();
+				} else {
+					enterFrame=incoming.target;
+					if (outgoing.target.visible) {
+						Transform tiny=visualTransform(outgoing.target,obs_source_get_width(leaveSource),obs_source_get_height(leaveSource));
+						const float w=(int(obs_source_get_width(leaveSource))-tiny.crop.left-tiny.crop.right)*tiny.scale.x;
+						const float h=(int(obs_source_get_height(leaveSource))-tiny.crop.top-tiny.crop.bottom)*tiny.scale.y;
+						tiny.pos.x+=w*0.49f;tiny.pos.y+=h*0.49f;tiny.scale.x*=0.02f;tiny.scale.y*=0.02f;
+						leaveFrame=leaveBlend(tiny,outgoing.target,(progress-0.65)/0.35);
+						setOrder(incoming.item,incoming.target.order);
+						setOrder(outgoing.item,outgoing.target.order);
+					} else {
+						leaveFrame=reflowFrame(outgoing,(progress-0.65)/0.35,pair.width,pair.height);
+						enterAboveLeaving();
+					}
+				}
+			} else if (pair.kind == Execution::CoveragePair::Kind::InsetColumn) {
+				const auto fromRect=coverageTransform(incoming.from,obs_source_get_width(enterSource),obs_source_get_height(enterSource));
+				const auto toRect=coverageTransform(incoming.target,obs_source_get_width(enterSource),obs_source_get_height(enterSource));
+				const bool expanding=toRect.bounds.y>fromRect.bounds.y;
+				const double camera=expanding ? std::min(1.0,progress/0.65) : std::max(0.0,(progress-0.35)/0.65);
+				const double content=expanding ? std::max(0.0,(progress-0.65)/0.35) : std::min(1.0,progress/0.35);
+				enterFrame=enterBlend(incoming.from,incoming.target,camera);leaveFrame=leaveBlend(outgoing.from,outgoing.target,content);
+				setOrder(outgoing.item,std::min(incoming.from.order,outgoing.from.order));
+				setOrder(incoming.item,std::max(incoming.from.order,outgoing.from.order));
+			} else {
+				auto full=[&pair](Transform value) {
+					value.pos={0,0};value.bounds={pair.width,pair.height};value.boundsType=OBS_BOUNDS_SCALE_OUTER;
+					value.boundsCrop=true;value.boundsAlignment=0;value.alignment=5;return value;
+				};
+				const Transform enterFull=full(incoming.from),leaveFull=full(outgoing.from);
+				if (progress<0.4) {enterFrame=enterBlend(incoming.from,enterFull,progress/0.4);leaveFrame=outgoing.from;}
+				else if (progress<0.7) {enterFrame=enterFull;leaveFrame=leaveBlend(outgoing.from,leaveFull,(progress-0.4)/0.3);}
+				else {enterFrame=enterBlend(enterFull,incoming.target,(progress-0.7)/0.3);leaveFrame=leaveBlend(leaveFull,outgoing.target,(progress-0.7)/0.3);}
+			}
+			apply(incoming.item,enterFrame);apply(outgoing.item,leaveFrame);
+		}
+		for (Track &track : execution.tracks) {
+			if (covered[&track-execution.tracks.data()]) continue;
+			if (!execution.restoring && track.graphic && track.from.visible != track.target.visible)
+				continue;
+			obs_scene_t *scene = obs_sceneitem_get_scene(track.item);
+			obs_source_t *owner = scene ? obs_scene_get_source(scene) : nullptr;
+			const float width = owner ? float(obs_source_get_width(owner)) : 0;
+			const float height = owner ? float(obs_source_get_height(owner)) : 0;
+			apply(track.item, reflowFrame(track, progress, width, height));
+		}
+		return;
 	}
 	if (!execution.restoring) {
 		for (Execution::CoveragePair &pair : execution.coveragePairs) {
@@ -5751,7 +6099,7 @@ QJsonArray PulseMotionEngine::importLumiaLayouts(const QJsonObject &document, QJ
 			const QString name = baseName + " · State " + stateName;
 			imported.append(QJsonObject{{"version", 1}, {"id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
 				{"name", name}, {"kind", "layout"}, {"policy", "only"}, {"stage", QString()}, {"container", sceneName},
-				{"durationMs", layout.value("durationMs").toInt(750)}, {"restore", false}, {"draft", true},
+				{"durationMs", layout.value("durationMs").toInt(PulseShow::DefaultMovementDurationMs)}, {"restore", false}, {"draft", true},
 				{"items", items}, {"import", QJsonObject{{"source", "lumia_multistate"}, {"slot", iterator.key()}, {"state", stateName}}},
 				{"summary", "Imported Lumia layout State " + stateName + "; choose its Stage and review source matches."}});
 			issues.append(QJsonObject{{"name", name}, {"status", "needs_review"},
@@ -5796,7 +6144,7 @@ QJsonArray PulseMotionEngine::importMoveFilters(const QJsonObject &document, QJs
 					{"originalName", object.value("name")}, {"settings", settings}};
 				imported.append(QJsonObject{{"version", 1}, {"id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
 					{"name", filterName}, {"kind", "layout"}, {"policy", "current"}, {"container", owner},
-					{"durationMs", settings.value("duration").toInt(settings.value("duration_ms").toInt(750))},
+					{"durationMs", settings.value("duration").toInt(settings.value("duration_ms").toInt(PulseShow::DefaultMovementDurationMs))},
 					{"restore", false}, {"draft", true}, {"items", QJsonArray{saved}}, {"import", compatibility},
 					{"summary", "Imported Move Source draft; review target, timing and triggers."}});
 				issues.append(QJsonObject{{"name", filterName}, {"status", "needs_review"},

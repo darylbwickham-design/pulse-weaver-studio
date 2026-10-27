@@ -735,7 +735,9 @@ void OBSBasic::SetCurrentScene(obs_scene_t *scene, bool force)
 
 void OBSBasic::SetCurrentScene(OBSSource scene, bool force)
 {
-	if (IsPulsePortraitScene(scene)) {
+	if (IsPulsePortraitScene(scene) ||
+	    (IsPulseCameraSceneAvailable(scene, true) &&
+	     (IsPulsePortraitEditing() || !IsPulseCameraSceneAvailable(scene, false)))) {
 		SetPulseWeaverCameraOutput(true);
 		SelectPulsePortraitScene(scene);
 		return;
@@ -780,6 +782,7 @@ void OBSBasic::SetCurrentScene(OBSSource scene, bool force)
 	}
 
 	UpdateContextBar(true);
+	RefreshPulseCameraPreview();
 	UpdatePreviewProgramIndicators();
 
 	if (scene) {

@@ -2995,7 +2995,7 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *outputHint = new QLabel;
 	outputHint->setProperty("pulseCanvasHint", true);
 	outputHint->setObjectName("PulseWeaverMuted");
-    outputHint->setToolTip("The black boundary marks the program area.");
+    outputHint->setToolTip("The border marks the selected scene's full editing area.");
 	outputHint->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 	outputSelector->addWidget(outputHint);
 	auto updateCanvasHint = [this, outputHint](bool vertical) {
@@ -3050,16 +3050,16 @@ void OBSBasic::InitPulseWeaverShell()
 	ui->preview->SetDisplayBackgroundColor(QColor("#0A0B0F"));
 	pulseCameraDockHost->setCentralWidget(pulseCameraEditors);
 	cameraLayout->addWidget(pulseCameraDockHost, 1);
-	connect(horizontalOutput, &QPushButton::toggled, this, [this, updateCanvasHint](bool checked) {
+	connect(horizontalOutput, &QPushButton::toggled, this, [this](bool checked) {
 		if (checked) {
 			SetPulseWeaverCameraOutput(false);
-			updateCanvasHint(false);
+			RefreshPulseCameraPreview();
 		}
 	});
-	connect(verticalOutput, &QPushButton::toggled, this, [this, updateCanvasHint](bool checked) {
+	connect(verticalOutput, &QPushButton::toggled, this, [this](bool checked) {
 		if (checked) {
 			SetPulseWeaverCameraOutput(true);
-			updateCanvasHint(true);
+			RefreshPulseCameraPreview();
 		}
 	});
 	pulsePages->addWidget(pulseCameraPage);
@@ -3903,6 +3903,8 @@ void OBSBasic::SetPulseWeaverWorkspace(int index)
 	if (ui->previewLabel)
 		ui->previewLabel->setVisible(false);
 	if (camera) {
+		RefreshPulseCameraScenes();
+		RefreshPulseCameraPreview();
 		/* Camera is an editor, so its canvas must always follow the available
 		 * panel rather than retaining OBS's last manual zoom percentage. */
 		setPreviewScalingWindow();
@@ -3943,21 +3945,18 @@ void OBSBasic::SetPulseWeaverCameraOutput(bool vertical)
 			button->setChecked(button->property("pulseCanvasPortrait").toBool() == vertical);
 		}
 	}
-	obs_video_info editorInfo{};
-	GetEditorVideoInfo(&editorInfo);
-	for (auto *label : pulseCameraPage->findChildren<QLabel *>())
-		if (label->property("pulseCanvasHint").toBool())
-			label->setText(QString("%1 · %2 × %3").arg(vertical ? "Portrait" : "Landscape")
-				.arg(editorInfo.base_width).arg(editorInfo.base_height));
 	RefreshPulseCameraScenes();
 	if (vertical) {
 		OBSSource source = obs_scene_get_source(pulsePortraitPreview.Get());
-		if (!source || obs_source_removed(source)) {
+		if (!source || obs_source_removed(source) || !IsPulseCameraSceneAvailable(source, true)) {
 			obs_canvas_t *canvas = PulseWeaverGetVerticalCanvas();
 			source = OBSSourceAutoRelease(canvas ? obs_canvas_get_channel(canvas, 0) : nullptr);
 			obs_canvas_release(canvas);
+			if (source && obs_source_get_type(source) == OBS_SOURCE_TYPE_TRANSITION)
+				source = OBSSourceAutoRelease(obs_transition_get_active_source(source));
 		}
-		if (!obs_source_is_scene(source)) {
+		if (!obs_source_is_scene(source) || !IsPulseCameraSceneAvailable(source, true)) {
+			source = nullptr;
 			for (int i = 0; i < ui->scenes->count(); ++i) {
 				if (!ui->scenes->item(i)->isHidden()) {
 					source = obs_scene_get_source(GetOBSRef<OBSScene>(ui->scenes->item(i)));
@@ -3975,6 +3974,7 @@ void OBSBasic::SetPulseWeaverCameraOutput(bool vertical)
 		OnEvent(OBS_FRONTEND_EVENT_PREVIEW_SCENE_CHANGED);
 		UpdateContextBar(true);
 	}
+	RefreshPulseCameraPreview();
 	setPreviewScalingWindow();
 	if (pulsePages && pulsePages->currentIndex() == 2)
 		SetPulseWeaverWorkspace(2);
@@ -3985,9 +3985,37 @@ bool OBSBasic::IsPulsePortraitScene(obs_source_t *source)
 	return PulseEditor::IsPortrait(source);
 }
 
+bool OBSBasic::IsPulseCameraSceneAvailable(obs_source_t *source, bool portrait)
+{
+	return PulseEditor::IsAvailableInEditor(source, portrait);
+}
+
 bool OBSBasic::GetEditorVideoInfo(obs_video_info *info)
 {
-	return PulseEditor::VideoInfo(IsPulsePortraitEditing(), info);
+	OBSScene selected = GetCurrentScene();
+	return PulseEditor::VideoInfo(IsPulsePortraitEditing(), info, obs_scene_get_source(selected));
+}
+
+void OBSBasic::RefreshPulseCameraPreview()
+{
+	if (!pulseCameraPage)
+		return;
+	obs_video_info info{};
+	if (!GetEditorVideoInfo(&info))
+		return;
+	OBSScene selected = GetCurrentScene();
+	OBSDataAutoRelease settings = obs_source_get_settings(obs_scene_get_source(selected));
+	const bool customSize = settings && obs_data_get_bool(settings, "custom_size");
+	for (auto *label : pulseCameraPage->findChildren<QLabel *>())
+		if (label->property("pulseCanvasHint").toBool())
+			label->setText(QString("%1 · %2 × %3")
+				.arg(customSize ? "Scene" : (IsPulsePortraitEditing() ? "Portrait" : "Landscape"))
+				.arg(info.base_width).arg(info.base_height));
+	const QSize size(int(info.base_width), int(info.base_height));
+	if (property("pulseCameraPreviewSize").toSize() != size) {
+		setProperty("pulseCameraPreviewSize", size);
+		setPreviewScalingWindow();
+	}
 }
 
 void OBSBasic::RefreshPulseCameraScenes()
@@ -4003,14 +4031,14 @@ void OBSBasic::RefreshPulseCameraScenes()
 	QSignalBlocker blocker(ui->scenes);
 	for (int i = 0; i < ui->scenes->count(); ++i) {
 		auto *item = ui->scenes->item(i);
-		item->setHidden(IsPulsePortraitScene(obs_scene_get_source(GetOBSRef<OBSScene>(item))) !=
-				IsPulsePortraitEditing());
+		item->setHidden(!IsPulseCameraSceneAvailable(obs_scene_get_source(GetOBSRef<OBSScene>(item)),
+						   IsPulsePortraitEditing()));
 	}
 }
 
 void OBSBasic::SelectPulsePortraitScene(obs_source_t *source)
 {
-	if (source && (!IsPulsePortraitScene(source) || obs_source_removed(source)))
+	if (source && (!IsPulseCameraSceneAvailable(source, true) || obs_source_removed(source)))
 		return;
 	setProperty("pulseCameraPortraitSceneUuid",
 		    source ? QString::fromUtf8(obs_source_get_uuid(source)) : QString());
@@ -4024,6 +4052,7 @@ void OBSBasic::SelectPulsePortraitScene(obs_source_t *source)
 	/* Only the editor observes this change. Never set the programme channel. */
 	OnEvent(OBS_FRONTEND_EVENT_PREVIEW_SCENE_CHANGED);
 	UpdateContextBar(true);
+	RefreshPulseCameraPreview();
 	SaveProject();
 }
 

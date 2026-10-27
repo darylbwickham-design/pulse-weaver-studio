@@ -10,6 +10,8 @@
 #include <algorithm>
 
 namespace PulseShow {
+inline constexpr int DefaultMovementDurationMs = 1050;
+
 // Generated Looks control the complete shared scene. A layer hidden in one
 // Look can retain the index it had in another, colliding with a visible layer.
 // Give hidden layers distinct trailing indices before applying the whole stack.

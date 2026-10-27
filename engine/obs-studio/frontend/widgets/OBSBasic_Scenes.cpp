@@ -121,7 +121,7 @@ void OBSBasic::AddScene(OBSSource source)
 	QListWidgetItem *item = new QListWidgetItem(QT_UTF8(name));
 	SetOBSRef(item, OBSScene(scene));
 	ui->scenes->insertItem(ui->scenes->currentRow() + 1, item);
-	item->setHidden(IsPulsePortraitScene(source) != IsPulsePortraitEditing());
+	item->setHidden(!IsPulseCameraSceneAvailable(source, IsPulsePortraitEditing()));
 
 	obs_hotkey_register_source(
 		source, "OBSBasic.SelectScene", Str("Basic.Hotkeys.SelectScene"),

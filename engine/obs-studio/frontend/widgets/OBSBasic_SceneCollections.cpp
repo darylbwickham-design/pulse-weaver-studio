@@ -1396,7 +1396,7 @@ retryScene:
 	SetCurrentScene(curScene.Get(), true);
 	{
 		OBSSourceAutoRelease savedPortrait = obs_get_source_by_uuid(obs_data_get_string(data, "pulseweaver_portrait_preview_uuid"));
-		if (IsPulsePortraitScene(savedPortrait))
+		if (IsPulseCameraSceneAvailable(savedPortrait, true))
 			pulsePortraitPreview.Select(obs_scene_from_source(savedPortrait));
 	}
 

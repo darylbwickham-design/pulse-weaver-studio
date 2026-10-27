@@ -4,6 +4,14 @@ This suite compiles the production `pulse-motion-engine.cpp` and uses private sy
 
 Coverage includes unsupported/malformed storage, unknown JSON retention, failed import/delete rollback, grouped source UUID lookup after rename, source resizing and flipped/cropped transforms, editor/live transform consistency, and collection-change timer/reference cleanup.
 
+Default reflow coverage renders real D3D11 pixels across bounds modes, alignment,
+cropping, flips and rotation. It checks mixed-mode continuity, exact native final
+fields, varied entrances, stationary artwork, graphic midpoint changes, and
+main-view coverage through full/inset, portrait-panel, inset/column and new-camera
+handoffs in both directions. Pixel samples wait for a native video tick because
+OBS caches cropped item textures between frames. Explicit legacy style, camera
+close-ups, default timing and editor/runtime rehearsal consistency are retained.
+
 Wizard coverage checks independent native canvas ownership for generated camera wrappers and recursive saved-layout units, local coordinate sizes, nested crops and frames, native save/reload, and stable source/item identities across Looks. Browser creation is tested with distinct landscape and portrait dimensions and shared-source caching within each format. Existing artwork must match its assigned format; square and unknown-size sources retain compatible fallback.
 
 The real flexible wizard widgets are exercised without showing a window: artwork starts unassigned for each Look and canvas, Lumia browser choices and creation are filtered, required answers are validated, and independent browser definitions survive navigation. Wizard requests reject native Pulse Weaver artwork, including hidden overlays nested inside saved layouts, before changing the show. Saved native artwork requires a Lumia replacement with matching orientation. Local Lumia Chat Physics links remain supported. Regression checks cover single-Look overlay targeting, deselected targets, rejected Lumia import URLs, and BRB/Ending artwork visibility in both directions. Unmarked legacy API requests retain native title/countdown compatibility.

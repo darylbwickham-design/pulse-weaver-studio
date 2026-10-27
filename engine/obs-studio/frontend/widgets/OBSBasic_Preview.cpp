@@ -186,13 +186,15 @@ void OBSBasic::RenderMain(void *data, uint32_t, uint32_t)
 	gs_ortho(0.0f, float(ovi.base_width), 0.0f, float(ovi.base_height), -100.0f, 100.0f);
 	gs_set_viewport(window->previewX, window->previewY, window->previewCX, window->previewCY);
 
-	if (window->IsPreviewProgramMode() || window->IsPulsePortraitEditing()) {
+	OBSScene selectedScene = window->GetCurrentScene();
+	obs_source_t *selectedSource = obs_scene_get_source(selectedScene);
+	OBSDataAutoRelease selectedSettings = obs_source_get_settings(selectedSource);
+	const bool customScene = selectedSettings && obs_data_get_bool(selectedSettings, "custom_size");
+	if (window->IsPreviewProgramMode() || window->IsPulsePortraitEditing() || customScene) {
 		window->DrawBackdrop(float(ovi.base_width), float(ovi.base_height));
 
-		OBSScene scene = window->GetCurrentScene();
-		obs_source_t *source = obs_scene_get_source(scene);
-		if (source) {
-			obs_source_video_render(source);
+		if (selectedSource) {
+			obs_source_video_render(selectedSource);
 		}
 	} else {
 		obs_render_main_texture_src_color_only();

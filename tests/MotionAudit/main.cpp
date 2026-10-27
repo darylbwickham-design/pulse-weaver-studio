@@ -135,6 +135,52 @@ static void wizardOverlayPolicyTests()
 }
 
 struct PulseMotionEngineTestAccess {
+	static QJsonObject canonicalTransform(const QJsonObject &value) {return PulseMotionEngine::serialize(PulseMotionEngine::deserialize(value));}
+	static QJsonObject visualTransform(const QJsonObject &value, uint32_t width, uint32_t height) {
+		return PulseMotionEngine::serialize(PulseMotionEngine::visualTransform(PulseMotionEngine::deserialize(value), width, height));
+	}
+	static QJsonObject reflowFrame(obs_sceneitem_t *item, const QJsonObject &from, const QJsonObject &to, double progress, float width, float height) {
+		PulseMotionEngine::Track track; track.item = item;
+		track.sourceUuid = QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item)));
+		track.from = PulseMotionEngine::deserialize(from); track.target = PulseMotionEngine::deserialize(to);
+		return PulseMotionEngine::serialize(PulseMotionEngine::reflowFrame(track, progress, width, height));
+	}
+	static void applyTransform(obs_sceneitem_t *item, const QJsonObject &value, bool final = true) {
+		PulseMotionEngine::apply(item, PulseMotionEngine::deserialize(value), final);
+	}
+	static void movementFrame(obs_sceneitem_t *item, const QJsonObject &from, const QJsonObject &to, double progress, bool reflow) {
+		PulseMotionEngine::Execution execution; execution.action.insert("kind", "layout");
+		if (!reflow) execution.action.insert("motionStyle", "legacy");
+		PulseMotionEngine::Track track; track.item = item;
+		track.sourceUuid = QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item)));
+		track.from = PulseMotionEngine::deserialize(from); track.target = PulseMotionEngine::deserialize(to);
+		execution.tracks.push_back(track);
+		PulseMotionEngine::apply(item, track.from, true);
+		obs_sceneitem_set_visible(item, track.from.visible || track.target.visible);
+		PulseMotionEngine::applyMovementFrame(execution, progress);
+	}
+	static QString editorStyle(PulseMotionEngine &engine, const QString &style) {
+		engine.editingId = "reflow-editor-fixture";
+		engine.actions = QJsonArray{QJsonObject{{"id",engine.editingId},{"motionStyle",style}}};
+		QComboBox kind; kind.addItem("Layout","layout");engine.kindField=&kind;
+		const QString result=engine.editorAction().value("motionStyle").toString();engine.kindField=nullptr;return result;
+	}
+	static int reflowCoverageFrame(PulseMotionEngine &engine, const std::vector<obs_sceneitem_t *> &items,
+		const QJsonArray &from, const QJsonArray &to, double progress) {
+		PulseMotionEngine::Execution execution;execution.action.insert("kind","layout");
+		for(size_t i=0;i<items.size();++i) {
+			PulseMotionEngine::Track track;track.item=items[i];track.container="coverage";track.graphic=i==items.size()-1;
+			track.sourceUuid=QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(items[i])));
+			track.from=PulseMotionEngine::deserialize(from[int(i)].toObject());track.target=PulseMotionEngine::deserialize(to[int(i)].toObject());
+			PulseMotionEngine::apply(items[i],track.from,true);
+			if(!track.graphic || track.from.visible==track.target.visible)
+				obs_sceneitem_set_visible(items[i],track.from.visible||track.target.visible);
+			execution.tracks.push_back(track);
+		}
+		engine.prepareCoveragePairs(execution);PulseMotionEngine::applyMovementFrame(execution,progress);
+		for(auto *item:items)obs_sceneitem_force_update_transform(item);
+		return int(execution.coveragePairs.size());
+	}
 	static void openWizard(PulseMotionEngine &engine) { engine.openShowWizard(); }
 	static void openDetailedWizard(PulseMotionEngine &engine) { engine.openDetailedShowWizard(); }
 	static QString selectedStage(PulseMotionEngine &engine, const QString &stage) {
@@ -164,9 +210,13 @@ struct PulseMotionEngineTestAccess {
 	}
 	static void movement(PulseMotionEngine &engine, const QJsonObject &from, const QJsonObject &to)
 	{
+		const auto actionsBefore=engine.actions;const auto editingBefore=engine.editingId;
+		auto legacy=to;legacy.insert("motionStyle","legacy");engine.editingId=to.value("id").toString();
+		for(int i=0;i<engine.actions.size();++i) if(engine.actions[i].toObject().value("id")==to.value("id"))engine.actions[i]=legacy;
 		const QString container = to.value("container").toString();
 		OBSSceneAutoRelease scene = obs_scene_create_private("Inert movement preview");
 		PulseMotionEngine::Execution execution;
+		execution.action=legacy;
 		QHash<qint64, QJsonObject> liveBefore;
 		for (const auto &value : to.value("items").toArray()) {
 			const auto row = value.toObject();
@@ -252,6 +302,7 @@ struct PulseMotionEngineTestAccess {
 		}
 		engine.previewScene = nullptr; engine.pairedPreviews.clear(); engine.previewIds.clear();
 		engine.draftScene = nullptr; engine.draftIds.clear(); engine.kindField = nullptr; engine.previewFromLook = nullptr;
+		engine.actions=actionsBefore;engine.editingId=editingBefore;
 		for (const auto &track : execution.tracks) {
 			OBSSceneItem live = engine.resolveItem(container, track.itemId, {}, false);
 			check(live && frame(live) == liveBefore.value(track.itemId), "offline preview never changes the live scene");
@@ -1762,7 +1813,7 @@ static void themedBuilderTests(const obs_video_info &video)
 	QSet<QString> graphicSources,treatedCameras;
 	for(const auto &value:PulseMotionEngineTestAccess::actions(engine)){
 		const auto action=value.toObject();if(action.value("stage").toString()!="Shared Countdown · Starting")continue;
-		check(action.value("durationMs").toInt()==850,"new Looks use visible 850 ms movement");
+		check(action.value("durationMs").toInt()==PulseShow::DefaultMovementDurationMs,"new Looks use the shared smooth movement duration");
 		for(const auto &value:action.value("items").toArray()){
 			const auto item=value.toObject();if(item.value("source").toString().startsWith("Shared countdown fixture"))graphicSources.insert(item.value("sourceUuid").toString());
 			else treatedCameras.insert(item.value("sourceUuid").toString());
@@ -2679,6 +2730,7 @@ static void guidedGeneratedOutputTests(const obs_video_info &initialVideo)
 }
 
 #include "select-wizard-tests.hpp"
+#include "reflow-motion-tests.hpp"
 
 int main(int argc, char **argv)
 {
@@ -2704,7 +2756,9 @@ int main(int argc, char **argv)
 	check(obs_reset_video(&video) == OBS_VIDEO_SUCCESS, "isolated graphics startup");
 	registerInertBrowser();
 	registerInertImageAndCaptureInputs();
-	if (qEnvironmentVariableIsSet("PULSE_GUIDED_OUTPUT_ONLY")||qEnvironmentVariableIsSet("PULSE_GUIDED_FINISH_ONLY")) {
+	if (qEnvironmentVariableIsSet("PULSE_REFLOW_ONLY")) {
+		reflowMotionTests();
+	} else if (qEnvironmentVariableIsSet("PULSE_GUIDED_OUTPUT_ONLY")||qEnvironmentVariableIsSet("PULSE_GUIDED_FINISH_ONLY")) {
 		guidedGeneratedOutputTests(video);
 	} else if (qEnvironmentVariableIsSet("PULSE_SELECT_ONLY")) {
 		selectionFirstTests(video);
@@ -2723,6 +2777,7 @@ int main(int argc, char **argv)
 		setupWizardRoundTripTests(horizontal, vertical);
 		obs_source_remove(horizontal); obs_source_remove(vertical);
 	} else {
+		std::fprintf(stderr, "Motion audit: reflow geometry and movement\n"); reflowMotionTests(); obs_wait_for_destroy_queue();
 		wizardOverlayPolicyTests();
 		std::fprintf(stderr, "Motion audit: storage preservation\n"); storageTests();
 		std::fprintf(stderr, "Motion audit: scene isolation\n"); sceneTests(); obs_wait_for_destroy_queue();

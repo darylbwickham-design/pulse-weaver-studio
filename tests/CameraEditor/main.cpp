@@ -194,6 +194,91 @@ static void check(bool ok, const char *message)
 	if (!ok) { std::fprintf(stderr, "FAIL: %s\n", message); std::exit(1); }
 }
 
+static void checkEditorSceneAvailability(obs_canvas_t *portraitCanvas)
+{
+	OBSSceneAutoRelease landscape = obs_scene_create("Availability same name");
+	OBSSceneAutoRelease portrait = obs_canvas_scene_create(portraitCanvas, "Availability same name");
+	OBSSceneAutoRelease portraitHelper = obs_scene_create("Camera helper without an aspect name");
+	OBSSceneAutoRelease portraitMask = obs_scene_create("Nested camera mask");
+	OBSSceneAutoRelease shared = obs_scene_create("Shared camera helper");
+	OBSSceneAutoRelease landscapeHelper = obs_scene_create("Misleading Portrait VERT helper name");
+	OBSSceneAutoRelease orphan = obs_scene_create("Unused helper still editable");
+	obs_scene_add(landscape, obs_scene_get_source(landscapeHelper));
+	obs_scene_add(landscape, obs_scene_get_source(shared));
+	obs_sceneitem_t *groupItem = obs_scene_add_group(portrait, "Availability nested group");
+	check(groupItem != nullptr, "portrait dependency group created");
+	OBSSource group = obs_sceneitem_get_source(groupItem);
+	obs_sceneitem_t *hidden = obs_scene_add(obs_sceneitem_group_get_scene(groupItem), obs_scene_get_source(portraitHelper));
+	obs_sceneitem_set_visible(hidden, false);
+	obs_scene_add(portraitHelper, obs_scene_get_source(portraitMask));
+	obs_scene_add(portrait, obs_scene_get_source(shared));
+	OBSDataAutoRelease before = obs_save_source(obs_scene_get_source(portrait));
+	const auto beforeJson = QJsonDocument::fromJson(obs_data_get_json(before));
+	const std::string portraitHelperUuid = obs_source_get_uuid(obs_scene_get_source(portraitHelper));
+	check(!PulseEditor::IsPortrait(obs_scene_get_source(portraitHelper)), "portrait helper retains actual main-canvas ownership");
+	check(PulseEditor::IsAvailableInEditor(obs_scene_get_source(portraitHelper), true) &&
+	      !PulseEditor::IsAvailableInEditor(obs_scene_get_source(portraitHelper), false),
+	      "hidden Main-owned helper is available through actual portrait group ancestry");
+	check(PulseEditor::IsAvailableInEditor(obs_scene_get_source(portraitMask), true) &&
+	      !PulseEditor::IsAvailableInEditor(obs_scene_get_source(portraitMask), false),
+	      "portrait usage reaches nested mask helpers");
+	check(PulseEditor::IsAvailableInEditor(obs_scene_get_source(shared), false) &&
+	      PulseEditor::IsAvailableInEditor(obs_scene_get_source(shared), true),
+	      "shared camera helper is available in both editor tabs");
+	check(PulseEditor::IsAvailableInEditor(obs_scene_get_source(landscapeHelper), false) &&
+	      !PulseEditor::IsAvailableInEditor(obs_scene_get_source(landscapeHelper), true),
+	      "scene names do not decide portrait availability");
+	check(PulseEditor::IsAvailableInEditor(obs_scene_get_source(landscape), false) &&
+	      !PulseEditor::IsAvailableInEditor(obs_scene_get_source(landscape), true) &&
+	      PulseEditor::IsAvailableInEditor(obs_scene_get_source(portrait), true) &&
+	      !PulseEditor::IsAvailableInEditor(obs_scene_get_source(portrait), false),
+	      "same-name root scenes retain distinct canvas availability");
+	check(PulseEditor::IsAvailableInEditor(obs_scene_get_source(orphan), false) &&
+	      !PulseEditor::IsAvailableInEditor(obs_scene_get_source(orphan), true),
+	      "unreferenced Main scene remains editable in landscape");
+	check(!PulseEditor::IsAvailableInEditor(nullptr, true), "null editor source is unavailable");
+	obs_source_remove(obs_scene_get_source(orphan));
+	check(!PulseEditor::IsAvailableInEditor(obs_scene_get_source(orphan), false), "removed source cannot remain available");
+	OBSDataAutoRelease after = obs_save_source(obs_scene_get_source(portrait));
+	check(QJsonDocument::fromJson(obs_data_get_json(after)) == beforeJson &&
+	      portraitHelperUuid == obs_source_get_uuid(obs_scene_get_source(portraitHelper)),
+	      "tab classification preserves complete scene graph, transforms and source identities");
+
+	OBSDataAutoRelease customData = obs_data_create_from_json(R"({"id":"scene","name":"Custom camera native dimensions","settings":{"custom_size":true,"cx":2560,"cy":1440}})");
+	OBSSourceAutoRelease custom = obs_load_source(customData);
+	obs_source_load2(custom);
+	obs_video_info info{};
+	check(PulseEditor::VideoInfo(false, &info, custom) && info.base_width == 2560 && info.base_height == 1440,
+	      "landscape editor uses complete custom camera scene dimensions");
+	check(PulseEditor::VideoInfo(true, &info, custom) && info.base_width == 2560 && info.base_height == 1440,
+	      "custom helper dimensions remain native when edited from portrait");
+	check(PulseEditor::VideoInfo(true, &info, obs_scene_get_source(landscape)) &&
+	      info.base_width == 1080 && info.base_height == 1920,
+	      "ordinary scene without custom size keeps selected editor canvas dimensions");
+	obs_video_info mainInfo{}, portraitInfo{};
+	check(obs_get_video_info(&mainInfo) && mainInfo.base_width == 1920 && mainInfo.base_height == 1080 &&
+	      obs_canvas_get_video_info(portraitCanvas, &portraitInfo) && portraitInfo.base_width == 1080 && portraitInfo.base_height == 1920,
+	      "reading custom editor dimensions does not change either broadcast resolution");
+	/* The frontend removes collection sources before dropping its references.
+	 * Do the same for this cross-canvas/nested fixture, rather than leaving its
+	 * canvas-owned scene graph for global OBS shutdown to dismantle. */
+	for (obs_source_t *source : {obs_scene_get_source(landscape), obs_scene_get_source(portrait),
+		obs_scene_get_source(portraitHelper), obs_scene_get_source(portraitMask), obs_scene_get_source(shared),
+		obs_scene_get_source(landscapeHelper), obs_scene_get_source(orphan), group.Get(), custom.Get()})
+		if (!obs_source_removed(source))
+			obs_source_remove(source);
+	landscape = nullptr;
+	portrait = nullptr;
+	portraitHelper = nullptr;
+	portraitMask = nullptr;
+	shared = nullptr;
+	landscapeHelper = nullptr;
+	orphan = nullptr;
+	group = nullptr;
+	custom = nullptr;
+	obs_wait_for_destroy_queue();
+}
+
 int main(int argc, char **argv)
 {
 	QCoreApplication application(argc, argv);
@@ -236,6 +321,7 @@ int main(int argc, char **argv)
 		check(runtimeErrors==0,"no native errors in copied-profile test"); return 0;
 	}
 	checkManagedMigration(canvas);
+	checkEditorSceneAvailability(canvas);
 	{
 		OBSSceneAutoRelease landscape = obs_scene_create("Same name");
 		OBSSceneAutoRelease live = obs_canvas_scene_create(canvas, "Portrait programme");
