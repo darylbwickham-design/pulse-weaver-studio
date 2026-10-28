@@ -259,7 +259,11 @@ void OBSBasic::SetPreviewProgramMode(bool enabled)
 			programWidget->hide();
 		}
 
-		sizeObserver = new PreviewProgramSizeObserver(ui->preview, program, this);
+		/* Pulse Weaver displays only the editor here. The upstream observer
+		 * divides the space between preview and programme even when programme
+		 * is hidden, leaving a narrow black workspace floating in the panel. */
+		if (!pulsePages)
+			sizeObserver = new PreviewProgramSizeObserver(ui->preview, program, this);
 
 		OnEvent(OBS_FRONTEND_EVENT_STUDIO_MODE_ENABLED);
 
@@ -279,7 +283,7 @@ void OBSBasic::SetPreviewProgramMode(bool enabled)
 		delete program;
 		delete programLabel;
 		delete programWidget;
-		sizeObserver->deleteLater();
+		if (sizeObserver) sizeObserver->deleteLater();
 
 		if (lastScene) {
 			OBSSource actualLastScene = OBSGetStrongRef(lastScene);

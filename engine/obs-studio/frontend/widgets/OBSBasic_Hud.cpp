@@ -60,8 +60,8 @@ void OBSBasic::UpdatePulseHudControls()
 	}
 	if (pulseHudScreenChoice) {
 		const auto screen = PulseHudOutput::Describe(pulseHudScreen);
-		const int index = QGuiApplication::screens().indexOf(pulseHudScreen) + 1;
-		pulseHudScreenChoice->setText(screen.valid() ? QString("Display %1…").arg(index) : "Choose display…");
+		const QString model = pulseHudScreen ? (pulseHudScreen->model().isEmpty() ? pulseHudScreen->name() : pulseHudScreen->model()) : QString();
+		pulseHudScreenChoice->setText(screen.valid() ? pulseHudScreenChoice->fontMetrics().elidedText("Screen: " + model, Qt::ElideRight, 140) : "Choose screen…");
 		pulseHudScreenChoice->setToolTip(screen.valid() ? QString("HUD display · %1 × %2\nClick to choose another display")
 			.arg(screen.pixels.width()).arg(screen.pixels.height()) : "Choose the display that sets the HUD canvas size");
 	}
@@ -112,8 +112,8 @@ bool OBSBasic::ChoosePulseHudScreen()
 		const auto description = PulseHudOutput::Describe(screen);
 		if (!description.valid()) continue;
 		const QString model = screen->model().isEmpty() ? screen->name() : screen->model();
-		auto *tile = new QPushButton(QString("Display %1 · %2\n%3 × %4 · %5")
-			.arg(index + 1).arg(model).arg(description.pixels.width()).arg(description.pixels.height())
+		auto *tile = new QPushButton(QString("%1%2\n%3 × %4 · %5")
+			.arg(model).arg(screen == QGuiApplication::primaryScreen() ? " · Main" : "").arg(description.pixels.width()).arg(description.pixels.height())
 			.arg(description.pixels.width() >= description.pixels.height() ? "Landscape" : "Portrait"));
 		tile->setObjectName("PulseWeaverHudScreenCard");
 		/* Toolbar controls have a compact themed height. These two-line cards

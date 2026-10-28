@@ -2973,7 +2973,7 @@ void OBSBasic::InitPulseWeaverShell()
 	horizontalOutput->setChecked(true);
 	pulseHudScreenChoice = new QPushButton("Choose HUD display…");
 	pulseHudScreenChoice->setObjectName("PulseWeaverControl");
-	pulseHudScreenChoice->setMaximumWidth(140);
+	pulseHudScreenChoice->setMaximumWidth(180);
 	pulseHudScreenChoice->hide();
 	connect(pulseHudScreenChoice, &QPushButton::clicked, this, [this] { ChoosePulseHudScreen(); });
 	outputSelector->addWidget(pulseHudScreenChoice);
