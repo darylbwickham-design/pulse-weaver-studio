@@ -3,6 +3,9 @@
 Camera now has **Landscape · 16:9**, **Portrait · 9:16**, and **HUD** workspaces.
 Choose a display in HUD; its current physical pixel dimensions determine the
 canvas size. Add and arrange sources with the native Camera editor.
+The screen selector identifies the monitor by model/name. Camera's black editor
+workspace, including its zoom controls, fills the available panel in all three
+modes; each canvas inside it retains its own aspect ratio.
 New HUD browser sources start with that display's dimensions and a blank page
 ready for an effects URL. Existing and shared sources retain their settings.
 
