@@ -2,6 +2,7 @@
 
 #include "pulse-scene-item-ref.hpp"
 #include "pulse-show-templates.hpp"
+#include "../../shared/qt/PulseEditorCanvas.hpp"
 
 #include <obs.h>
 
@@ -1665,6 +1666,7 @@ QJsonArray PulseMotionEngine::sceneCatalogue() const
 	obs_frontend_get_scenes(&scenes);
 	for (size_t index = 0; index < scenes.sources.num; ++index) {
 		obs_source_t *source = scenes.sources.array[index];
+		if (PulseEditor::IsHud(source)) continue;
 		const QString name = QString::fromUtf8(obs_source_get_name(source));
 		if (!name.isEmpty() && !known.contains(name)) {
 			known.insert(name);
@@ -1675,7 +1677,7 @@ QJsonArray PulseMotionEngine::sceneCatalogue() const
 	QPair<QJsonArray *, QSet<QString> *> context(&result, &known);
 	obs_enum_all_sources([](void *data, obs_source_t *source) {
 		auto *pair = static_cast<QPair<QJsonArray *, QSet<QString> *> *>(data);
-		if (!obs_scene_from_source(source)) return true;
+		if (!obs_scene_from_source(source) || PulseEditor::IsHud(source)) return true;
 		const QString name = QString::fromUtf8(obs_source_get_name(source));
 		if (!name.isEmpty() && !pair->second->contains(name)) {
 			pair->second->insert(name);
@@ -1685,7 +1687,7 @@ QJsonArray PulseMotionEngine::sceneCatalogue() const
 	}, &context);
 	obs_enum_all_sources([](void *data, obs_source_t *source) {
 		auto *pair = static_cast<QPair<QJsonArray *, QSet<QString> *> *>(data);
-		if (!obs_group_from_source(source)) return true;
+		if (!obs_group_from_source(source) || PulseEditor::IsHud(source)) return true;
 		const QString name = QString::fromUtf8(obs_source_get_name(source));
 		if (!name.isEmpty() && !pair->second->contains(name)) {
 			pair->second->insert(name);

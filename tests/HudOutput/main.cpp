@@ -133,6 +133,20 @@ int main(int argc, char **argv)
 		check(WindowFromPoint(at) != hwnd, "Windows routes input to the window underneath HUD effects");
 		check(OBSSourceAutoRelease(obs_get_output_source(0)) == obs_scene_get_source(mainScene), "main programme unchanged");
 		check(OBSSourceAutoRelease(obs_canvas_get_channel(portrait, 0)) == obs_scene_get_source(portraitScene), "portrait programme unchanged");
+		{
+			OBSSceneAutoRelease otherStage = obs_scene_create("Another stage or Look");
+			obs_scene_add(otherStage, green);
+			obs_set_output_source(0, obs_scene_get_source(otherStage));
+			obs_canvas_set_channel(portrait, 0, nullptr);
+			const auto previous = hud.FramesForTest(); events(100);
+			check(hud.Running() && hud.FramesForTest() > previous, "stage and Look programme changes leave the same HUD running");
+			const auto unchanged = hud.ReadbackForTest();
+			check(qAlpha(unchanged.pixel(40, 24)) >= 126 && qAlpha(unchanged.pixel(0, 0)) == 0,
+			      "broadcast programme changes do not replace HUD effects or transparency");
+			obs_set_output_source(0, obs_scene_get_source(mainScene));
+			obs_canvas_set_channel(portrait, 0, obs_scene_get_source(portraitScene));
+			obs_source_remove(obs_scene_get_source(otherStage));
+		}
 		const auto before = hud.FramesForTest(); events(250);
 		check(hud.FramesForTest() - before <= 10, "multiple video mixes do not multiply HUD presentation rate");
 		hud.Stop(); const auto stopped = hud.FramesForTest(); events(100);

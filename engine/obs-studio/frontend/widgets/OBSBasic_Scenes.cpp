@@ -271,7 +271,7 @@ void OBSBasic::AddSceneItem(OBSSceneItem item)
 void OBSBasic::DuplicateSelectedScene()
 {
 	OBSScene scene = GetCurrentScene();
-	if (!scene)
+	if (!scene || PulseEditor::IsHud(obs_scene_get_source(scene)))
 		return;
 	OBSSource source = obs_scene_get_source(scene);
 	obs_canvas_t *canvas = obs_source_get_canvas(source);
@@ -364,7 +364,7 @@ void OBSBasic::RemoveSelectedScene()
 	OBSScene scene = GetCurrentScene();
 	obs_source_t *source = obs_scene_get_source(scene);
 
-	if (!source || !QueryRemoveSource(source)) {
+	if (!source || PulseEditor::IsHud(source) || !QueryRemoveSource(source)) {
 		return;
 	}
 
@@ -563,6 +563,7 @@ void OBSBasic::on_scenes_currentItemChanged(QListWidgetItem *current, QListWidge
 
 void OBSBasic::EditSceneName()
 {
+	if (pulseHudEditing) return;
 	ui->scenesDock->removeAction(renameScene);
 	QListWidgetItem *item = ui->scenes->currentItem();
 	Qt::ItemFlags flags = item->flags();
@@ -574,6 +575,7 @@ void OBSBasic::EditSceneName()
 
 void OBSBasic::on_scenes_customContextMenuRequested(const QPoint &pos)
 {
+	if (pulseHudEditing) return;
 	QListWidgetItem *item = ui->scenes->itemAt(pos);
 
 	QMenu popup(this);
@@ -718,8 +720,8 @@ void OBSBasic::GridActionClicked()
 
 void OBSBasic::on_actionAddScene_triggered()
 {
-	obs_canvas_t *canvas = pulseHudEditing ? obs_get_canvas_by_name("Pulse Weaver HUD") :
-		(IsPulsePortraitEditing() ? obs_get_canvas_by_name("Pulse Weaver Vertical") : obs_get_main_canvas());
+	if (pulseHudEditing) return;
+	obs_canvas_t *canvas = IsPulsePortraitEditing() ? obs_get_canvas_by_name("Pulse Weaver Vertical") : obs_get_main_canvas();
 	if (!canvas)
 		return;
 	QString suggestion = QTStr("Basic.Main.DefaultSceneName.Text").arg(2);
@@ -986,6 +988,7 @@ static void RenameListItem(OBSBasic *parent, QListWidget *listWidget, obs_source
 
 void OBSBasic::SceneNameEdited(QWidget *editor)
 {
+	if (pulseHudEditing) return;
 	OBSScene scene = GetCurrentScene();
 	QLineEdit *edit = qobject_cast<QLineEdit *>(editor);
 	string text = edit->text().trimmed().toStdString();

@@ -12,9 +12,10 @@ after the first frame is presented. The output is borderless, stays above normal
 desktop windows and passes mouse input through to the application underneath.
 HUD output starts off on application launch; the selected display is remembered.
 
-The HUD has its own canvas and scenes. Switching editors does not move a HUD
-scene into either broadcast programme. Editing a different HUD scene selects
-that scene for the desktop output. Removing its active scene, disconnecting the
+There is one HUD composition, independent from stages and Looks, with an on/off
+monitor control. Changing stages, Looks or Camera tabs leaves its output alone.
+HUD editing shows its layers without a scene picker or transition controls, and
+the HUD is excluded from broadcast scene and Look catalogues. Disconnecting the
 display, changing collections or resetting the graphics device stops the HUD.
 Changing display resolution resizes its canvas; changing the target display
 recreates the output on the explicitly chosen screen.

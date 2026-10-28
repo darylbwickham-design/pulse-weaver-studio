@@ -165,28 +165,16 @@ bool OBSBasic::EnsurePulseHudCanvas()
 		canvas = obs_get_canvas_by_name("Pulse Weaver HUD");
 		if (!canvas) { QMessageBox::warning(this, "HUD", "The HUD canvas could not be created."); return false; }
 	}
-	OBSSourceAutoRelease source = obs_source_get_ref(obs_scene_get_source(pulseHudPreview.Get()));
-	if (!source || obs_source_removed(source) || !PulseEditor::IsHud(source)) {
-		source = nullptr;
-		obs_source_t *first = nullptr;
-		obs_canvas_enum_scenes(canvas, [](void *opaque, obs_source_t *scene) {
-			*static_cast<obs_source_t **>(opaque) = obs_source_get_ref(scene); return false;
-		}, &first);
-		source = first;
-		if (!source) {
-			OBSSceneAutoRelease scene = obs_canvas_scene_create(canvas, "HUD");
-			if (!scene) return false;
-			source = obs_source_get_ref(obs_scene_get_source(scene));
-			AddScene(source.Get());
-		}
-		pulseHudPreview.Select(obs_scene_from_source(source));
+	/* One fixed effects composition, never a stage, Look or scene picker. */
+	OBSSourceAutoRelease source = obs_canvas_get_source_by_name(canvas, "HUD");
+	if (!source) {
+		OBSSceneAutoRelease scene = obs_canvas_scene_create(canvas, "HUD");
+		if (!scene) return false;
+		source = obs_source_get_ref(obs_scene_get_source(scene));
+		AddScene(source.Get());
 	}
-	struct Size { int width; int height; } size{screen.pixels.width(), screen.pixels.height()};
-	obs_canvas_enum_scenes(canvas, [](void *opaque, obs_source_t *scene) {
-		const auto &size = *static_cast<Size *>(opaque);
-		obs_scene_set_custom_size(obs_scene_from_source(scene), uint32_t(size.width), uint32_t(size.height));
-		return true;
-	}, &size);
+	pulseHudPreview.Select(obs_scene_from_source(source));
+	obs_scene_set_custom_size(obs_scene_from_source(source), uint32_t(screen.pixels.width()), uint32_t(screen.pixels.height()));
 	SaveProject();
 	return true;
 }

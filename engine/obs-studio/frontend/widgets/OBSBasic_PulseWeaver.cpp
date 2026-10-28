@@ -2954,7 +2954,7 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *verticalOutput = new QPushButton("Portrait · 9:16");
 	auto *hudOutput = new QPushButton("HUD");
 	hudOutput->setProperty("pulseCanvasHud", true);
-	hudOutput->setToolTip("Edit transparent effects for your selected display");
+	hudOutput->setToolTip("Edit your one independent HUD. Stages and Looks do not change it; the monitor icon turns it on or off.");
 	pulseIcon(hudOutput, "horizontal");
 	horizontalOutput->setProperty("pulseCanvasPortrait", false);
 	verticalOutput->setProperty("pulseCanvasPortrait", true);
@@ -3020,6 +3020,7 @@ void OBSBasic::InitPulseWeaverShell()
 	});
 	outputSelector->addWidget(resetDocks);
 	auto *importObs = new QPushButton("Import from OBS");
+	importObs->setProperty("pulseCanvasBroadcastOnly", true);
 	importObs->setObjectName("PulseWeaverControl");
     pulseIcon(importObs, "import");
 	importObs->setToolTip("Copy profiles, scenes, sources, filters and settings from normal OBS into Pulse Weaver");
@@ -3928,6 +3929,8 @@ void OBSBasic::SetPulseWeaverWorkspace(int index)
 	}
 	UpdatePulseWeaverPreviewVisibility();
 	const bool camera = index == 2;
+	if (pulseCameraPage) for (auto *button : pulseCameraPage->findChildren<QPushButton *>())
+		if (button->property("pulseCanvasBroadcastOnly").toBool()) button->setVisible(!pulseHudEditing);
 	/* Studio Mode remains active underneath Camera so scene selection is
 	 * preview-only, but its duplicate programme surface belongs in Show
 	 * Control, not beside the selected editor canvas. */
@@ -3945,11 +3948,11 @@ void OBSBasic::SetPulseWeaverWorkspace(int index)
 		setPreviewScalingWindow();
 	}
 	if (ui->scenesDock)
-		ui->scenesDock->setVisible(camera);
+		ui->scenesDock->setVisible(camera && !pulseHudEditing);
 	if (ui->sourcesDock)
 		ui->sourcesDock->setVisible(camera);
 	if (ui->transitionsDock)
-		ui->transitionsDock->setVisible(camera);
+		ui->transitionsDock->setVisible(camera && !pulseHudEditing);
 	if (ui->mixerDock) {
 		ui->mixerDock->setMinimumHeight(0);
 		ui->mixerDock->setMaximumHeight(QWIDGETSIZE_MAX);
@@ -4029,7 +4032,8 @@ bool OBSBasic::IsPulsePortraitScene(obs_source_t *source)
 
 bool OBSBasic::IsPulseCameraSceneAvailable(obs_source_t *source, bool portrait) const
 {
-	if (PulseEditor::IsHud(source)) return portrait && pulseHudEditing;
+	if (PulseEditor::IsHud(source))
+		return portrait && pulseHudEditing && source == obs_scene_get_source(pulseHudPreview.Get());
 	if (portrait && pulseHudEditing) return false;
 	return PulseEditor::IsAvailableInEditor(source, portrait);
 }
@@ -4097,14 +4101,8 @@ void OBSBasic::SelectPulsePortraitScene(obs_source_t *source)
 	setProperty(pulseHudEditing ? "pulseCameraHudSceneUuid" : "pulseCameraPortraitSceneUuid",
 		    source ? QString::fromUtf8(obs_source_get_uuid(source)) : QString());
 	auto &selection = pulseHudEditing ? pulseHudPreview : pulsePortraitPreview;
-	const bool changedScene = selection.Get() != obs_scene_from_source(source);
 	selection.Select(obs_scene_from_source(source));
 	selection.SetShowing(!pulseHudEditing || (pulsePages && pulsePages->currentIndex() == 2));
-	if (pulseHudEditing && changedScene) {
-		const bool active = pulseHudOutput && pulseHudOutput->Active();
-		StopPulseHud();
-		if (active) TogglePulseHud();
-	}
 	QSignalBlocker blocker(ui->scenes);
 	ui->scenes->setCurrentItem(nullptr);
 	for (int i = 0; i < ui->scenes->count(); ++i)

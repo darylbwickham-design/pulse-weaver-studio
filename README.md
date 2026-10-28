@@ -2,7 +2,7 @@
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
-**2.0.0-unstable.10** adds a transparent desktop **HUD** workspace in Camera and a monitor on/off icon in Show. Choose a display to set its canvas size, then add browser, image or animated-media effects. Receive-only Discord chat and **All chats (no Discord)** from unstable.8/.9 remain included. See [the release notes](docs/RELEASE-2.0.0-unstable.10.md) and [Discord setup](docs/DISCORD-RECEIVE-ONLY.md). The latest regular Windows release remains 1.14.3.
+**2.0.0-unstable.10** adds one transparent desktop **HUD**, independent from stages and Looks. Edit its layers in Camera and use the monitor on/off icon in Show. Choose a display to set its canvas size, then add browser, image or animated-media effects. Receive-only Discord chat and **All chats (no Discord)** from unstable.8/.9 remain included. See [the release notes](docs/RELEASE-2.0.0-unstable.10.md) and [Discord setup](docs/DISCORD-RECEIVE-ONLY.md). The latest regular Windows release remains 1.14.3.
 
 Incoming YouTube chat automatically uses the web scanner in the combined chat box. Sending and moderation use the official API. No reader dropdown or API-receive fallback is exposed, and old reader preferences cannot re-enable API reception.
 

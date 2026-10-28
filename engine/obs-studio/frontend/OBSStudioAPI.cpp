@@ -46,7 +46,7 @@ void OBSStudioAPI::obs_frontend_get_scenes(struct obs_frontend_source_list *sour
 		QListWidgetItem *item = main->ui->scenes->item(i);
 		OBSScene scene = GetOBSRef<OBSScene>(item);
 		obs_source_t *source = obs_scene_get_source(scene);
-		if (OBSBasic::IsPulsePortraitScene(source))
+		if (OBSBasic::IsPulsePortraitScene(source) || PulseEditor::IsHud(source))
 			continue;
 
 		if (obs_source_get_ref(source) != nullptr) {

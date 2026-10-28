@@ -899,8 +899,6 @@ void OBSBasic::Save(SceneCollection &collection)
 	OBSScene portraitPreview = pulsePortraitPreview.Get();
 	obs_data_set_string(saveData, "pulseweaver_portrait_preview_uuid",
 		obs_source_get_uuid(obs_scene_get_source(portraitPreview)));
-	OBSScene hudPreview = pulseHudPreview.Get();
-	obs_data_set_string(saveData, "pulseweaver_hud_preview_uuid", obs_source_get_uuid(obs_scene_get_source(hudPreview)));
 
 	// Canvases
 	OBSDataArrayAutoRelease savedCanvases = OBS::Canvas::SaveCanvases(canvases);
@@ -1400,8 +1398,6 @@ retryScene:
 		OBSSourceAutoRelease savedPortrait = obs_get_source_by_uuid(obs_data_get_string(data, "pulseweaver_portrait_preview_uuid"));
 		if (IsPulseCameraSceneAvailable(savedPortrait, true))
 			pulsePortraitPreview.Select(obs_scene_from_source(savedPortrait));
-		OBSSourceAutoRelease savedHud = obs_get_source_by_uuid(obs_data_get_string(data, "pulseweaver_hud_preview_uuid"));
-		if (PulseEditor::IsHud(savedHud)) pulseHudPreview.Select(obs_scene_from_source(savedHud));
 	}
 
 	if (!curProgramScene) {

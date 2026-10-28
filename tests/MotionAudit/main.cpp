@@ -408,6 +408,16 @@ static void sceneTests()
 {
 	QTemporaryDir directory;
 	PulseMotionEngine engine(nullptr, directory.filePath("motion.json"));
+	{
+		OBSCanvasAutoRelease hudCanvas = obs_canvas_create("Pulse Weaver HUD", nullptr, SCENE_REF);
+		OBSSceneAutoRelease hud = obs_canvas_scene_create(hudCanvas, "HUD");
+		bool listed = false;
+		for (const auto &entry : engine.sceneCatalogue()) if (entry.toObject().value("name") == "HUD") listed = true;
+		check(!listed, "the independent HUD is absent from stage and Look container choices");
+		check(engine.itemCatalogue("HUD").isEmpty(), "broadcast Look actions cannot resolve the HUD container");
+		obs_source_remove(obs_scene_get_source(hud));
+		obs_canvas_remove(hudCanvas);
+	}
 	OBSSceneAutoRelease scene = obs_scene_create("Motion audit scene");
 	obs_sceneitem_t *group = obs_scene_add_group(scene, "Motion audit group");
 	obs_source_info type{};
