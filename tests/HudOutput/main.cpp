@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <string>
 
 static int checks = 0;
@@ -154,7 +155,13 @@ int main(int argc, char **argv)
 		check(hud.FramesForTest() == stopped, "off performs no background HUD renders");
 		check(!obs_source_showing(red), "off holds no visibility reference on HUD sources");
 		const int64_t stableItemId = obs_sceneitem_get_id(item);
+		obs_transform_info beforeResize{}, afterResize{};
+		obs_sceneitem_get_info2(item, &beforeResize);
 		check(obs_scene_set_custom_size(hudScene, 320, 160), "HUD can resize independently of active programme canvases");
+		obs_sceneitem_get_info2(item, &afterResize);
+		check(std::abs(afterResize.pos.x - beforeResize.pos.x) < 0.001f && std::abs(afterResize.pos.y - beforeResize.pos.y) < 0.001f &&
+		      std::abs(afterResize.scale.x - beforeResize.scale.x) < 0.001f && std::abs(afterResize.scale.y - beforeResize.scale.y) < 0.001f,
+		      "switching displays preserves the HUD layers' pixel placement and scale");
 		check(obs_scene_find_sceneitem_by_id(hudScene, stableItemId) == item && obs_sceneitem_get_source(item) == red.Get(),
 		      "HUD resize preserves item and shared input identities");
 		check(obs_scene_set_custom_size(hudScene, 256, 128), "HUD returns to selected display size");

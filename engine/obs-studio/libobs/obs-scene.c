@@ -2026,6 +2026,8 @@ obs_source_t *obs_scene_get_source(const obs_scene_t *scene)
 	return scene ? scene->source : NULL;
 }
 
+static inline void scene_item_set_info_internal(obs_sceneitem_t *item, const struct obs_transform_info *info);
+
 bool obs_scene_set_custom_size(obs_scene_t *scene, uint32_t width, uint32_t height)
 {
 	if (!scene || scene->is_group || !width || !height || width > 16384 || height > 16384)
@@ -2035,11 +2037,28 @@ bool obs_scene_set_custom_size(obs_scene_t *scene, uint32_t width, uint32_t heig
 		full_unlock(scene);
 		return true;
 	}
+	/* Relative scene coordinates are centred on the canvas. Keep each item's
+	 * pixel-space placement when resizing rather than shifting the HUD layers
+	 * with the old canvas centre. No transform callbacks run under scene locks. */
+	struct resize_item {
+		struct obs_scene_item *item;
+		struct obs_transform_info transform;
+	};
+	DARRAY(struct resize_item) items;
+	da_init(items);
+	for (struct obs_scene_item *item = scene->first_item; item; item = item->next) {
+		struct resize_item saved = {.item = item};
+		obs_sceneitem_get_info2(item, &saved.transform);
+		da_push_back(items, &saved);
+	}
 	scene->custom_size = true;
 	scene->cx = width;
 	scene->cy = height;
-	for (struct obs_scene_item *item = scene->first_item; item; item = item->next)
-		os_atomic_set_bool(&item->update_transform, true);
+	for (size_t i = 0; i < items.num; ++i) {
+		scene_item_set_info_internal(items.array[i].item, &items.array[i].transform);
+		os_atomic_set_bool(&items.array[i].item->update_transform, true);
+	}
+	da_free(items);
 	full_unlock(scene);
 	/* Source/property callbacks must stay outside the scene locks. */
 	obs_data_t *settings = obs_source_get_settings(scene->source);
