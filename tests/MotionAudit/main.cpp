@@ -135,6 +135,8 @@ static void wizardOverlayPolicyTests()
 }
 
 struct PulseMotionEngineTestAccess {
+	static QJsonArray scenes(const PulseMotionEngine &engine) { return engine.sceneCatalogue(); }
+	static QJsonArray items(const PulseMotionEngine &engine, const QString &container) { return engine.itemCatalogue(container); }
 	static QJsonObject canonicalTransform(const QJsonObject &value) {return PulseMotionEngine::serialize(PulseMotionEngine::deserialize(value));}
 	static QJsonObject visualTransform(const QJsonObject &value, uint32_t width, uint32_t height) {
 		return PulseMotionEngine::serialize(PulseMotionEngine::visualTransform(PulseMotionEngine::deserialize(value), width, height));
@@ -412,9 +414,9 @@ static void sceneTests()
 		OBSCanvasAutoRelease hudCanvas = obs_canvas_create("Pulse Weaver HUD", nullptr, SCENE_REF);
 		OBSSceneAutoRelease hud = obs_canvas_scene_create(hudCanvas, "HUD");
 		bool listed = false;
-		for (const auto &entry : engine.sceneCatalogue()) if (entry.toObject().value("name") == "HUD") listed = true;
+		for (const auto &entry : PulseMotionEngineTestAccess::scenes(engine)) if (entry.toObject().value("name") == "HUD") listed = true;
 		check(!listed, "the independent HUD is absent from stage and Look container choices");
-		check(engine.itemCatalogue("HUD").isEmpty(), "broadcast Look actions cannot resolve the HUD container");
+		check(PulseMotionEngineTestAccess::items(engine, "HUD").isEmpty(), "broadcast Look actions cannot resolve the HUD container");
 		obs_source_remove(obs_scene_get_source(hud));
 		obs_canvas_remove(hudCanvas);
 	}
