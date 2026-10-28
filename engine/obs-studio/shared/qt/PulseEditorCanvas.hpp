@@ -7,6 +7,12 @@
 #include <vector>
 
 namespace PulseEditor {
+inline bool IsHud(obs_source_t *source)
+{
+	OBSCanvasAutoRelease canvas = source ? obs_source_get_canvas(source) : nullptr;
+	return canvas && std::strcmp(obs_canvas_get_name(canvas), "Pulse Weaver HUD") == 0;
+}
+
 inline bool IsPortrait(obs_source_t *source)
 {
 	obs_canvas_t *canvas = source ? obs_source_get_canvas(source) : nullptr;
@@ -20,7 +26,7 @@ inline bool IsPortrait(obs_source_t *source)
  * those actual scene/group references without moving or duplicating sources. */
 inline bool IsAvailableInEditor(obs_source_t *source, bool portrait)
 {
-	if (!source || obs_source_removed(source) || !obs_group_or_scene_from_source(source))
+	if (!source || obs_source_removed(source) || !obs_group_or_scene_from_source(source) || IsHud(source))
 		return false;
 	struct Graph {
 		std::vector<OBSSource> sources;

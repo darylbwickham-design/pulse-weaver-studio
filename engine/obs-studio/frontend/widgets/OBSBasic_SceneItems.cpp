@@ -719,7 +719,9 @@ void OBSBasic::CreateSourcePopupMenu(int idx, bool preview)
 
 			resizeOutput->setEnabled(!obs_video_active() && !IsPulsePortraitEditing());
 			if (IsPulsePortraitEditing())
-				resizeOutput->setToolTip("Portrait uses its own 1080 × 1920 canvas. This command resizes the main output.");
+				resizeOutput->setToolTip(pulseHudEditing ?
+					"HUD size follows its selected display. This command resizes the main stream output." :
+					"Portrait uses its own 1080 × 1920 canvas. This command resizes the main output.");
 
 			if (width < 32 || height < 32) {
 				resizeOutput->setEnabled(false);

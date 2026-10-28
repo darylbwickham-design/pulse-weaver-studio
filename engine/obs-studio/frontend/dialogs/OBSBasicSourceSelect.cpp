@@ -216,7 +216,14 @@ std::optional<OBSSource> setupNewSource(QWidget *parent, const char *id, const c
 
 	const char *v_id = obs_get_latest_input_type_id(id);
 
-	source = obs_source_create(v_id, name, NULL, nullptr);
+	OBSDataAutoRelease settings;
+	if (strcmp(id, "browser_source") == 0 && PulseEditor::IsHud(obs_scene_get_source(scene))) {
+		settings = obs_data_create();
+		obs_data_set_int(settings, "width", obs_source_get_width(obs_scene_get_source(scene)));
+		obs_data_set_int(settings, "height", obs_source_get_height(obs_scene_get_source(scene)));
+		obs_data_set_string(settings, "url", "about:blank");
+	}
+	source = obs_source_create(v_id, name, settings, nullptr);
 	if (!source) {
 		return std::nullopt;
 	}

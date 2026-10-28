@@ -85,6 +85,13 @@ int main(int argc, char **argv)
 		"Opted-in alpha discovers the newest unstable package");
 	check(selectRelease(unstableReleases, unstable)->identity.tag == "v1.14.0-unstable.2",
 		"Unstable installs receive later unstable builds");
+	for (const QString &product : {QString(), QString("studio2-preview")}) {
+		const Identity installed{"windows-unstable", "v2.0.0-unstable.9", product};
+		const Identity hudRelease{"windows-unstable", "v2.0.0-unstable.10", product};
+		const auto selected = selectRelease(QJsonArray{release(installed), release(hudRelease)}, installed, true, true);
+		check(selected && selected->identity.tag == hudRelease.tag && selected->name == assetName(hudRelease),
+			"Unstable 9 detects revision 10 numerically and retains its installer family");
+	}
 	check(!selectRelease(QJsonArray{release(unstable)}, {"windows-private", "v1.14.0"}, true, true),
 		"Unstable cannot replace a same-version stable release");
 	check(!selectRelease(QJsonArray{release({"windows-unstable", "v1.14.0-unstable.0"})}, unstable),

@@ -1545,6 +1545,8 @@ void OBSBasic::applicationShutdown() noexcept
 
 	obs_enter_graphics();
 	gs_vertexbuffer_destroy(box);
+	gs_texture_destroy(pulseHudCheckerboard);
+	pulseHudCheckerboard = nullptr;
 	gs_vertexbuffer_destroy(boxLeft);
 	gs_vertexbuffer_destroy(boxTop);
 	gs_vertexbuffer_destroy(boxRight);
@@ -1652,6 +1654,7 @@ static inline enum video_colorspace GetVideoColorSpaceFromName(const char *name)
 
 int OBSBasic::ResetVideo()
 {
+	StopPulseHud();
 	if (outputHandler && outputHandler->Active()) {
 		return OBS_VIDEO_CURRENTLY_ACTIVE;
 	}

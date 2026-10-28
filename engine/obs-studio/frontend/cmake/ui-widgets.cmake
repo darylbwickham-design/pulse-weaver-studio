@@ -27,6 +27,9 @@ target_sources(
     widgets/OBSBasic_MainControls.cpp
     widgets/OBSBasic_OutputHandler.cpp
     widgets/OBSBasic_PulseWeaver.cpp
+    widgets/OBSBasic_Hud.cpp
+    widgets/PulseHudOutput.cpp
+    widgets/PulseHudOutput.hpp
     widgets/PulseVerticalEditor.cpp
     widgets/PulseVerticalEditor.hpp
     widgets/OBSBasic_Preview.cpp

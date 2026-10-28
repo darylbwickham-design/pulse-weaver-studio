@@ -1491,6 +1491,17 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *guideButtons = new QHBoxLayout(contributorGuides);
 	guideButtons->setContentsMargins(0, 0, 0, 0);
 	guideButtons->setSpacing(10);
+	pulseHudToggle = new QToolButton(contributorGuides);
+	pulseHudToggle->setObjectName("PulseWeaverHudToggle");
+	pulseHudToggle->setFixedSize(32, 34);
+	pulseHudToggle->setCheckable(true);
+	pulseHudToggle->setAccessibleName("Toggle transparent HUD");
+	pulseHudToggle->setCursor(Qt::PointingHandCursor);
+	pulseHudToggle->setStyleSheet("QToolButton#PulseWeaverHudToggle:checked { background:#176476; border:1px solid #59e6ff; border-radius:7px; }");
+	connect(pulseHudToggle, &QToolButton::clicked, this, [this] { TogglePulseHud(); });
+	connect(App(), &OBSApp::StyleChanged, this, [this] { UpdatePulseHudControls(); });
+	guideButtons->addWidget(pulseHudToggle);
+	UpdatePulseHudControls();
 	auto *lumiaGuide = new QToolButton(contributorGuides);
 	lumiaGuide->setObjectName("PulseWeaverLumiaGuide");
 	QPixmap lumiaGuideLogo;
@@ -2941,6 +2952,10 @@ void OBSBasic::InitPulseWeaverShell()
 	outputSelector->setSpacing(6);
 	auto *horizontalOutput = new QPushButton("Landscape · 16:9");
 	auto *verticalOutput = new QPushButton("Portrait · 9:16");
+	auto *hudOutput = new QPushButton("HUD");
+	hudOutput->setProperty("pulseCanvasHud", true);
+	hudOutput->setToolTip("Edit transparent effects for your selected display");
+	pulseIcon(hudOutput, "horizontal");
 	horizontalOutput->setProperty("pulseCanvasPortrait", false);
 	verticalOutput->setProperty("pulseCanvasPortrait", true);
 	horizontalOutput->setToolTip("Edit the landscape scene and its sources");
@@ -2949,13 +2964,19 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *outputGroup = new QButtonGroup(pulseCameraPage);
     pulseIcon(verticalOutput, "vertical");
 	outputGroup->setExclusive(true);
-	for (QPushButton *button : {horizontalOutput, verticalOutput}) {
+	for (QPushButton *button : {horizontalOutput, verticalOutput, hudOutput}) {
 		button->setObjectName("PulseWeaverControl");
 		button->setCheckable(true);
 		outputGroup->addButton(button);
 		outputSelector->addWidget(button);
 	}
 	horizontalOutput->setChecked(true);
+	pulseHudScreenChoice = new QPushButton("Choose HUD display…");
+	pulseHudScreenChoice->setObjectName("PulseWeaverControl");
+	pulseHudScreenChoice->setMaximumWidth(140);
+	pulseHudScreenChoice->hide();
+	connect(pulseHudScreenChoice, &QPushButton::clicked, this, [this] { ChoosePulseHudScreen(); });
+	outputSelector->addWidget(pulseHudScreenChoice);
 	auto *overlays = new QPushButton("Overlay designer");
 	overlays->setObjectName("PulseWeaverOverlayButton");
     pulseIcon(overlays, "overlay");
@@ -3074,6 +3095,7 @@ void OBSBasic::InitPulseWeaverShell()
 			RefreshPulseCameraPreview();
 		}
 	});
+	connect(hudOutput, &QPushButton::clicked, this, [this] { SetPulseHudEditing(); });
 	pulsePages->addWidget(pulseCameraPage);
 
 	/* ACTION currently exposes only working account, route and stream metadata
@@ -3859,6 +3881,7 @@ void OBSBasic::UpdatePulseWeaverPreviewVisibility()
 	const bool allowLivePreview = qApp->property("pulseLivePreviews").toBool() || !PulseHasActiveOutputs();
 	const bool show = visible && allowLivePreview && index == 0 && (!showContent || showContent->currentIndex() == 0);
 	const bool camera = visible && index == 2;
+	pulseHudPreview.SetShowing(camera && pulseHudEditing);
 	/* OBS displays continue drawing on Windows after their Qt page is hidden.
 	 * Keep only the visible workspace's preview surfaces active so streaming
 	 * outputs get the GPU time instead of rendering three hidden previews. */
@@ -3946,17 +3969,24 @@ void OBSBasic::SetPulseWeaverCameraOutput(bool vertical)
 {
 	if (!pulseCameraEditors)
 		return;
-	if (vertical == IsPulsePortraitEditing())
+	if (!pulseHudEditing && vertical == pulsePortraitEditing.load())
 		return;
 	/* Close item-bound dialogs before changing the editing context. */
 	CloseDialogs();
+	pulseHudPreview.SetShowing(false);
+	pulseHudEditing = false;
 	pulsePortraitEditing = vertical;
 	for (auto *button : pulseCameraPage->findChildren<QPushButton *>()) {
+		if (button->property("pulseCanvasHud").toBool()) {
+			QSignalBlocker blocker(button);
+			button->setChecked(false);
+		}
 		if (button->property("pulseCanvasPortrait").isValid()) {
 			QSignalBlocker blocker(button);
 			button->setChecked(button->property("pulseCanvasPortrait").toBool() == vertical);
 		}
 	}
+	if (pulseHudScreenChoice) pulseHudScreenChoice->hide();
 	RefreshPulseCameraScenes();
 	if (vertical) {
 		OBSSource source = obs_scene_get_source(pulsePortraitPreview.Get());
@@ -3997,14 +4027,22 @@ bool OBSBasic::IsPulsePortraitScene(obs_source_t *source)
 	return PulseEditor::IsPortrait(source);
 }
 
-bool OBSBasic::IsPulseCameraSceneAvailable(obs_source_t *source, bool portrait)
+bool OBSBasic::IsPulseCameraSceneAvailable(obs_source_t *source, bool portrait) const
 {
+	if (PulseEditor::IsHud(source)) return portrait && pulseHudEditing;
+	if (portrait && pulseHudEditing) return false;
 	return PulseEditor::IsAvailableInEditor(source, portrait);
 }
 
 bool OBSBasic::GetEditorVideoInfo(obs_video_info *info)
 {
 	OBSScene selected = GetCurrentScene();
+	if (pulseHudEditing) {
+		if (!obs_get_video_info(info) || !selected) return false;
+		info->base_width = info->output_width = obs_source_get_width(obs_scene_get_source(selected));
+		info->base_height = info->output_height = obs_source_get_height(obs_scene_get_source(selected));
+		return info->base_width && info->base_height;
+	}
 	return PulseEditor::VideoInfo(IsPulsePortraitEditing(), info, obs_scene_get_source(selected));
 }
 
@@ -4021,7 +4059,7 @@ void OBSBasic::RefreshPulseCameraPreview()
 	for (auto *label : pulseCameraPage->findChildren<QLabel *>())
 		if (label->property("pulseCanvasHint").toBool())
 			label->setText(QString("%1 · %2 × %3")
-				.arg(customSize ? "Scene" : (IsPulsePortraitEditing() ? "Portrait" : "Landscape"))
+				.arg(pulseHudEditing ? "HUD" : customSize ? "Scene" : (IsPulsePortraitEditing() ? "Portrait" : "Landscape"))
 				.arg(info.base_width).arg(info.base_height));
 	const QSize size(int(info.base_width), int(info.base_height));
 	if (property("pulseCameraPreviewSize").toSize() != size) {
@@ -4032,6 +4070,10 @@ void OBSBasic::RefreshPulseCameraPreview()
 
 void OBSBasic::RefreshPulseCameraScenes()
 {
+	OBSCanvasAutoRelease hud = obs_get_canvas_by_name("Pulse Weaver HUD");
+	if (hud) obs_canvas_enum_scenes(hud, [](void *data, obs_source_t *source) {
+		static_cast<OBSBasic *>(data)->AddScene(source); return true;
+	}, this);
 	obs_canvas_t *canvas = PulseWeaverGetVerticalCanvas();
 	if (canvas) {
 		obs_canvas_enum_scenes(canvas, [](void *data, obs_source_t *source) {
@@ -4052,10 +4094,17 @@ void OBSBasic::SelectPulsePortraitScene(obs_source_t *source)
 {
 	if (source && (!IsPulseCameraSceneAvailable(source, true) || obs_source_removed(source)))
 		return;
-	setProperty("pulseCameraPortraitSceneUuid",
+	setProperty(pulseHudEditing ? "pulseCameraHudSceneUuid" : "pulseCameraPortraitSceneUuid",
 		    source ? QString::fromUtf8(obs_source_get_uuid(source)) : QString());
-	pulsePortraitPreview.Select(obs_scene_from_source(source));
-	pulsePortraitPreview.SetShowing(true);
+	auto &selection = pulseHudEditing ? pulseHudPreview : pulsePortraitPreview;
+	const bool changedScene = selection.Get() != obs_scene_from_source(source);
+	selection.Select(obs_scene_from_source(source));
+	selection.SetShowing(!pulseHudEditing || (pulsePages && pulsePages->currentIndex() == 2));
+	if (pulseHudEditing && changedScene) {
+		const bool active = pulseHudOutput && pulseHudOutput->Active();
+		StopPulseHud();
+		if (active) TogglePulseHud();
+	}
 	QSignalBlocker blocker(ui->scenes);
 	ui->scenes->setCurrentItem(nullptr);
 	for (int i = 0; i < ui->scenes->count(); ++i)
@@ -4644,6 +4693,8 @@ void OBSBasic::RefreshPulseWeaverChatPanel()
 
 void OBSBasic::ShutdownPulseWeaverShell()
 {
+	StopPulseHud();
+	pulseHudPreview.SetShowing(false);
 	setProperty("pulseChatPanelShuttingDown", true);
 	pulseChatBrowserReady = false;
 	ReleasePulseWeaverChatBrowser();

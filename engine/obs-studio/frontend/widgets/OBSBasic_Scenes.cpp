@@ -104,6 +104,8 @@ void OBSBasic::LoadSceneListOrder(obs_data_array_t *array)
 
 OBSScene OBSBasic::GetCurrentScene()
 {
+	if (pulseHudEditing)
+		return pulseHudPreview.Get();
 	if (IsPulsePortraitEditing()) {
 		return pulsePortraitPreview.Get();
 	}
@@ -145,7 +147,7 @@ void OBSBasic::AddScene(OBSSource source)
 		std::make_shared<OBSSignal>(handler, "reorder", OBSBasic::SceneReordered, this),
 		std::make_shared<OBSSignal>(handler, "refresh", OBSBasic::SceneRefreshed, this),
 	});
-	if (IsPulsePortraitScene(source))
+	if (IsPulsePortraitScene(source) || PulseEditor::IsHud(source))
 		container.handlers.emplace_back(std::make_shared<OBSSignal>(handler, "rename", OBSBasic::SourceRenamed, this));
 
 	item->setData(static_cast<int>(QtDataRole::OBSSignals), QVariant::fromValue(container));
@@ -200,6 +202,10 @@ void OBSBasic::RemoveScene(OBSSource source)
 	}
 
 	if (sel != nullptr) {
+		if (scene == pulseHudPreview.Get()) {
+			StopPulseHud();
+			pulseHudPreview.Select(nullptr);
+		}
 		if (scene == pulsePortraitPreview.Get())
 			pulsePortraitPreview.Select(nullptr);
 		if (sel == ui->scenes->currentItem()) {
@@ -207,7 +213,7 @@ void OBSBasic::RemoveScene(OBSSource source)
 		}
 		delete sel;
 	}
-	if (IsPulsePortraitEditing() && !pulsePortraitPreview.Get()) {
+	if (IsPulsePortraitEditing() && !(pulseHudEditing ? pulseHudPreview.Get() : pulsePortraitPreview.Get())) {
 		for (int i = 0; i < ui->scenes->count(); ++i) {
 			auto *item = ui->scenes->item(i);
 			if (!item->isHidden()) {
@@ -575,7 +581,7 @@ void OBSBasic::on_scenes_customContextMenuRequested(const QPoint &pos)
 
 	popup.addAction(QTStr("AddScene") + "...", this, &OBSBasic::on_actionAddScene_triggered);
 	OBSSource landscape = obs_scene_get_source(currentScene.load());
-	if (landscape) {
+	if (landscape && !pulseHudEditing) {
 		popup.addAction("Duplicate landscape scene to portrait...", this, [this, landscape] {
 			std::string name;
 			if (!NameDialog::AskForName(this, "Duplicate to portrait", "Scene name", name,
@@ -588,7 +594,7 @@ void OBSBasic::on_scenes_customContextMenuRequested(const QPoint &pos)
 			}
 		});
 	}
-	if (IsPulsePortraitEditing() && item && landscape) {
+	if (pulsePortraitEditing && item && landscape) {
 		OBSSource portrait = GetCurrentSceneSource();
 		OBSDataAutoRelease settings = obs_source_get_private_settings(portrait);
 		auto *link = popup.addAction("Link to selected landscape scene");
@@ -712,7 +718,8 @@ void OBSBasic::GridActionClicked()
 
 void OBSBasic::on_actionAddScene_triggered()
 {
-	obs_canvas_t *canvas = IsPulsePortraitEditing() ? obs_get_canvas_by_name("Pulse Weaver Vertical") : obs_get_main_canvas();
+	obs_canvas_t *canvas = pulseHudEditing ? obs_get_canvas_by_name("Pulse Weaver HUD") :
+		(IsPulsePortraitEditing() ? obs_get_canvas_by_name("Pulse Weaver Vertical") : obs_get_main_canvas());
 	if (!canvas)
 		return;
 	QString suggestion = QTStr("Basic.Main.DefaultSceneName.Text").arg(2);

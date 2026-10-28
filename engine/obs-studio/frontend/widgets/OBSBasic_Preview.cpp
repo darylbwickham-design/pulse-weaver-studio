@@ -97,6 +97,26 @@ void OBSBasic::UpdatePreviewScalingMenu()
 
 void OBSBasic::DrawBackdrop(float cx, float cy)
 {
+	if (pulseHudEditing) {
+		if (!pulseHudCheckerboard) {
+			uint32_t pixels[32 * 32];
+			for (int y = 0; y < 32; ++y) for (int x = 0; x < 32; ++x)
+				pixels[y * 32 + x] = ((x / 16) ^ (y / 16)) ? 0xff342a20u : 0xff41352bu;
+			const uint8_t *bytes = reinterpret_cast<const uint8_t *>(pixels);
+			pulseHudCheckerboard = gs_texture_create(32, 32, GS_RGBA, 1, &bytes, 0);
+		}
+		if (pulseHudCheckerboard) {
+			auto *effect = obs_get_base_effect(OBS_EFFECT_REPEAT);
+			vec2 repeat{cx / 32.0f, cy / 32.0f};
+			gs_effect_set_texture(gs_effect_get_param_by_name(effect, "image"), pulseHudCheckerboard);
+			gs_effect_set_vec2(gs_effect_get_param_by_name(effect, "scale"), &repeat);
+			gs_matrix_push(); gs_matrix_identity();
+			while (gs_effect_loop(effect, "Draw"))
+				gs_draw_sprite(pulseHudCheckerboard, 0, uint32_t(cx), uint32_t(cy));
+			gs_matrix_pop();
+			return;
+		}
+	}
 	if (!box) {
 		return;
 	}

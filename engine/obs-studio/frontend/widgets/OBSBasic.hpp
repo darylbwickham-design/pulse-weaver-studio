@@ -20,6 +20,7 @@
 #include "../../shared/qt/PulseYouTubeChatSessions.hpp"
 #include "../../shared/qt/PulseChatPanel.hpp"
 #include "../../shared/qt/PulseEditorCanvas.hpp"
+#include "PulseHudOutput.hpp"
 #include "../../shared/qt/PulseTwitchStart.hpp"
 
 #include "ui_OBSBasic.h"
@@ -422,6 +423,22 @@ private:
 	QByteArray pulseCameraStartingDockLayout;
 	QByteArray pulseCameraHorizontalDockLayout;
 	std::atomic<bool> pulsePortraitEditing{false};
+	std::atomic<bool> pulseHudEditing{false};
+	gs_texture_t *pulseHudCheckerboard = nullptr;
+	PulseEditor::Selection pulseHudPreview;
+	QPointer<PulseHudOutput> pulseHudOutput;
+	QPointer<QToolButton> pulseHudToggle;
+	QPointer<QPushButton> pulseHudScreenChoice;
+	QPointer<QScreen> pulseHudScreen;
+	QMetaObject::Connection pulseHudGeometryConnection;
+	QMetaObject::Connection pulseHudRemovedConnection;
+	bool ChoosePulseHudScreen();
+	bool EnsurePulseHudCanvas();
+	void SetPulseHudEditing();
+	void TogglePulseHud();
+	void StopPulseHud();
+	void UpdatePulseHudControls();
+	void WatchPulseHudScreen(QScreen *screen);
 	PulseEditor::Selection pulsePortraitPreview;
 	QByteArray pulseStageSignature;
 
@@ -1534,10 +1551,11 @@ public:
 	}
 
 	OBSScene GetCurrentScene();
-	bool IsPulsePortraitEditing() const { return pulsePortraitEditing.load(); }
+	/* The native editor uses this path for either non-programme workspace. */
+	bool IsPulsePortraitEditing() const { return pulsePortraitEditing.load() || pulseHudEditing.load(); }
 	bool GetEditorVideoInfo(obs_video_info *info);
 	static bool IsPulsePortraitScene(obs_source_t *source);
-	static bool IsPulseCameraSceneAvailable(obs_source_t *source, bool portrait);
+	bool IsPulseCameraSceneAvailable(obs_source_t *source, bool portrait) const;
 	void SelectPulsePortraitScene(obs_source_t *source);
 	void RefreshPulseCameraScenes();
 	void RefreshPulseCameraPreview();

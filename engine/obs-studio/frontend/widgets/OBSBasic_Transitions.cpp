@@ -290,7 +290,7 @@ void OBSBasic::TransitionToScene(OBSSource source, bool force, bool quickTransit
 {
 	obs_scene_t *scene = obs_scene_from_source(source);
 	bool usingPreviewProgram = IsPreviewProgramMode();
-	if (!scene || IsPulsePortraitScene(source)) {
+	if (!scene || IsPulsePortraitScene(source) || PulseEditor::IsHud(source)) {
 		return;
 	}
 
@@ -735,6 +735,11 @@ void OBSBasic::SetCurrentScene(obs_scene_t *scene, bool force)
 
 void OBSBasic::SetCurrentScene(OBSSource scene, bool force)
 {
+	if (PulseEditor::IsHud(scene)) {
+		SetPulseHudEditing();
+		if (pulseHudEditing) SelectPulsePortraitScene(scene);
+		return;
+	}
 	if (IsPulsePortraitScene(scene) ||
 	    (IsPulseCameraSceneAvailable(scene, true) &&
 	     (IsPulsePortraitEditing() || !IsPulseCameraSceneAvailable(scene, false)))) {

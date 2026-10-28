@@ -73,6 +73,7 @@ target_sources(
 )
 
 if(OS_WINDOWS)
+  target_link_libraries(obs-studio PRIVATE d3d11 dxgi dcomp)
   include(cmake/os-windows.cmake)
 
   # Pulse Weaver's Twitch, YouTube and Kick account connections all require HTTPS.

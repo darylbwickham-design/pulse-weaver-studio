@@ -1686,6 +1686,10 @@ EXPORT obs_scene_t *obs_scene_get_ref(obs_scene_t *scene);
 /** Gets the scene's source context */
 EXPORT obs_source_t *obs_scene_get_source(const obs_scene_t *scene);
 
+/** Pulse Weaver: resize an independent scene without rebuilding its item graph
+ * or resetting any video output. Existing item identities remain valid. */
+EXPORT bool obs_scene_set_custom_size(obs_scene_t *scene, uint32_t width, uint32_t height);
+
 /** Gets the scene from its source, or NULL if not a scene */
 EXPORT obs_scene_t *obs_scene_from_source(const obs_source_t *source);
 

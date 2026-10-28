@@ -1,3 +1,7 @@
+# Pulse Weaver 2.0.0-unstable.10 — Transparent desktop HUD
+
+Camera has a third **HUD** workspace sized from the chosen display. A monitor icon beside the Lumia and connection controls toggles transparent, click-through desktop effects and lights up only while the output is running. See [release details](docs/RELEASE-2.0.0-unstable.10.md).
+
 # Pulse Weaver 2.0.0-unstable.9 — Combined chat without Discord
 
 The main chat read filter now includes **All chats (no Discord)**. It keeps the streaming chats together while Discord remains connected. See [release details](docs/RELEASE-2.0.0-unstable.9.md).

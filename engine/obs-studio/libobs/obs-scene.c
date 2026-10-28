@@ -2026,6 +2026,31 @@ obs_source_t *obs_scene_get_source(const obs_scene_t *scene)
 	return scene ? scene->source : NULL;
 }
 
+bool obs_scene_set_custom_size(obs_scene_t *scene, uint32_t width, uint32_t height)
+{
+	if (!scene || scene->is_group || !width || !height || width > 16384 || height > 16384)
+		return false;
+	full_lock(scene);
+	if (scene->custom_size && scene->cx == width && scene->cy == height) {
+		full_unlock(scene);
+		return true;
+	}
+	scene->custom_size = true;
+	scene->cx = width;
+	scene->cy = height;
+	for (struct obs_scene_item *item = scene->first_item; item; item = item->next)
+		os_atomic_set_bool(&item->update_transform, true);
+	full_unlock(scene);
+	/* Source/property callbacks must stay outside the scene locks. */
+	obs_data_t *settings = obs_source_get_settings(scene->source);
+	obs_data_set_bool(settings, "custom_size", true);
+	obs_data_set_int(settings, "cx", width);
+	obs_data_set_int(settings, "cy", height);
+	obs_data_release(settings);
+	obs_source_update_properties(scene->source);
+	return true;
+}
+
 obs_scene_t *obs_scene_from_source(const obs_source_t *source)
 {
 	if (!source || strcmp(source->info.id, scene_info.id) != 0)
