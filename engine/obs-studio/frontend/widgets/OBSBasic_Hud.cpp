@@ -115,8 +115,14 @@ bool OBSBasic::ChoosePulseHudScreen()
 		auto *tile = new QPushButton(QString("Display %1 · %2\n%3 × %4 · %5")
 			.arg(index + 1).arg(model).arg(description.pixels.width()).arg(description.pixels.height())
 			.arg(description.pixels.width() >= description.pixels.height() ? "Landscape" : "Portrait"));
-		tile->setObjectName("PulseWeaverControl");
+		tile->setObjectName("PulseWeaverHudScreenCard");
+		/* Toolbar controls have a compact themed height. These two-line cards
+		 * need their own metrics so theme polish cannot squash the labels. */
+		tile->setStyleSheet("QPushButton#PulseWeaverHudScreenCard { height: -1px; min-height: 72px; max-height: 16777215px; padding: 10px 14px; }");
 		tile->setMinimumSize(240, 96);
+		tile->setAutoDefault(false);
+		tile->setCursor(Qt::PointingHandCursor);
+		tile->setToolTip(tile->text());
 		connect(tile, &QPushButton::clicked, &dialog, [&dialog, &chosen, screen = QPointer<QScreen>(screen)] {
 			if (!screen) return;
 			chosen = screen; dialog.accept();
