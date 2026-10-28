@@ -1,8 +1,8 @@
-# Pulse Weaver Studio — 1.14.4-alpha.1
+# Pulse Weaver Studio — 2.0.0-unstable.8
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
-**1.14.4-alpha.1** refines the four-page show wizard with clickable choices, clearer source questions and previews that follow your selected stage and Look. Each stage can reuse existing sources or create new ones. Optional layout settings and transitions open when needed, and readable video files can become stingers. Lumia artwork, three shared alert layers per canvas and Chat Box Physics remain part of the guided setup. Download this preview from this repository's **Releases** page; 1.14.3 remains the latest regular release. See [UPDATES.md](UPDATES.md) for channel behavior and [the alpha release notes](docs/RELEASE-v1.14.4-alpha.1.md).
+**2.0.0-unstable.8** adds receive-only Discord channels to the main chat panel through a secure Pulse connection. Choose channels, including authorised private channels, from the Chat options menu. See [the release notes](docs/RELEASE-2.0.0-unstable.8.md) and [Discord setup](docs/DISCORD-RECEIVE-ONLY.md). The latest regular Windows release remains 1.14.3.
 
 Incoming YouTube chat automatically uses the web scanner in the combined chat box. Sending and moderation use the official API. No reader dropdown or API-receive fallback is exposed, and old reader preferences cannot re-enable API reception.
 

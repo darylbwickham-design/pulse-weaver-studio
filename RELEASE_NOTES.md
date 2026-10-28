@@ -1,3 +1,7 @@
+# Pulse Weaver 2.0.0-unstable.8 — Receive-only Discord chat
+
+Connect Pulse from the Chat options menu and read selected Discord channels in the main feed. Private channels are available where both your account and the bot have access. Discord is receive-only. See [release details and validation limits](docs/RELEASE-2.0.0-unstable.8.md).
+
 # Pulse Weaver 2.0.0-unstable.7 — Camera movement and portrait editing
 
 Animated Looks use smooth camera reflow by default, with coordinated view
