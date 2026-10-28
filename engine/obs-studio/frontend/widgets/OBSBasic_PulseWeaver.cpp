@@ -1,4 +1,5 @@
 #include "../../shared/qt/PulseChat.hpp"
+#include "../../shared/qt/PulseDiscord.hpp"
 #include "../../shared/qt/PulseInteractionFeedback.hpp"
 #include "../../shared/qt/PulseLegal.hpp"
 #include "../../shared/qt/PulseInstructions.hpp"
@@ -1829,6 +1830,16 @@ void OBSBasic::InitPulseWeaverShell()
         chatFeed->setProperty("pulseWeaverChatTimestamps", enabled); chatFeed->doItemsLayout(); chatFeed->viewport()->update();
     });
     chatFilters->addWidget(timestamps);
+    auto *discordStatus = new QLabel(chatPage);
+    discordStatus->setWordWrap(true);
+    discordStatus->hide();
+    auto *discordClient = new PulseDiscord::Client(chatFeed, readFilter, discordStatus, chatPage);
+    chatMenu->addSeparator();
+    auto *discordConnect = chatMenu->addAction("Discord channels…");
+    connect(discordConnect, &QAction::triggered, chatPage, [discordClient, chatPage] { discordClient->configure(chatPage); });
+    auto *discordDisconnect = chatMenu->addAction("Disconnect Discord");
+    connect(discordDisconnect, &QAction::triggered, chatPage, [discordClient] { discordClient->disconnectDevice(); });
+    chatLayout->addWidget(discordStatus);
     chatLayout->addLayout(chatFilters);
 	chatLayout->addWidget(chatFeed, 1);
 	auto *chatToolbar = new QHBoxLayout;
@@ -1837,7 +1848,7 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseChatProvider = new QComboBox(chatPage);
 	pulseChatProvider->setObjectName("PulseWeaverChatProvider");
 	pulseChatProvider->setAccessibleName("Chat destination");
-	pulseChatProvider->addItem("All chats", "all");
+	pulseChatProvider->addItem("All stream chats", "all");
 	pulseChatProvider->addItem("Twitch", "twitch");
 	pulseChatProvider->addItem("YouTube", "youtube");
 	pulseChatProvider->addItem("Kick", "kick");
@@ -4496,7 +4507,7 @@ void OBSBasic::RefreshPulseWeaverChatPanel()
 	if (pulseChatPanelCard)
 		pulseChatPanelCard->setMinimumWidth(270);
 	if (pulseChatPanelDescription) {
-		pulseChatPanelDescription->setText("Twitch · YouTube · Kick");
+		pulseChatPanelDescription->setText("Twitch · YouTube · Kick · Discord");
 		pulseChatPanelDescription->setVisible(native);
 	}
 	if (pulseChatPanelButton) {
@@ -6886,7 +6897,7 @@ void OBSBasic::RefreshPulseWeaverChatComposer()
 	if (provider == "all") {
 		enabled = twitchReady || kickReady || youtubeAvailable;
 		status = enabled ? (youtubeAccount && !pulseYouTubeChatSessions.isEmpty() && !youtubeReady ?
-			"Post to connected chats · YouTube live chat is connecting…" : "Post to every connected chat.") :
+			"Post to connected chats · YouTube live chat is connecting…" : "Post to connected Twitch, YouTube and Kick chats.") :
 			"Connect a chat account in Action → Connections.";
 	} else if (provider == "twitch") {
 		enabled = twitchReady;

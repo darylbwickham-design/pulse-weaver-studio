@@ -71,3 +71,7 @@ You can complain to the [UK Information Commissioner's Office](https://ico.org.u
 ## 10. Changes
 
 We will update this notice when Pulse Weaver's data handling materially changes. The effective date above identifies the current version. If a change expands how YouTube API data is used, users will be asked to accept the updated notice before that new use.
+
+## Pulse Discord connection (28 October 2026)
+
+If you connect Pulse, the desktop receives recent messages from the Discord channels you select, including private channels where your account and the bot have access. Message text is displayed in memory rather than saved to a chat log. The connection credential is protected with Windows DPAPI. Pulse stores device-token hashes, your Discord account ID, server-list metadata and expiry for up to thirty days; unclaimed pairings expire after ten minutes. The bridge does not persist Discord message content. You can disconnect in the desktop or revoke installations on the Pulse connection page. Discord messages cannot be sent from Pulse Weaver.
