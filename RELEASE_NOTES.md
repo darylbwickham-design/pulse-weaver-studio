@@ -1,3 +1,7 @@
+# Pulse Weaver 2.0.0-unstable.9 — Combined chat without Discord
+
+The main chat read filter now includes **All chats (no Discord)**. It keeps the streaming chats together while Discord remains connected. See [release details](docs/RELEASE-2.0.0-unstable.9.md).
+
 # Pulse Weaver 2.0.0-unstable.8 — Receive-only Discord chat
 
 Connect Pulse from the Chat options menu and read selected Discord channels in the main feed. Private channels are available where both your account and the bot have access. Discord is receive-only. See [release details and validation limits](docs/RELEASE-2.0.0-unstable.8.md).

@@ -2,6 +2,12 @@
 #include <QJsonObject>
 
 namespace PulseChat {
+inline bool matchesFilter(const QString &filter, const QString &platform, const QString &route = {})
+{
+    return filter.isEmpty() || filter == "all" || filter == platform ||
+        (filter == "all-no-discord" && platform != "discord") ||
+        (platform == "discord" && filter == "discord:" + route);
+}
 inline QJsonObject twitchBanBody(const QString &user, int seconds)
 {
     QJsonObject data{{"user_id", user}};

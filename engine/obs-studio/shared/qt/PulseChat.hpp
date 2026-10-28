@@ -125,12 +125,12 @@ class Delegate final : public QStyledItemDelegate {
         QString html;
         const QString muted = feed->palette().color(QPalette::PlaceholderText).name();
         const QString textColour = feed->palette().color(QPalette::Text).name();
-        const QString platformColour = platform == "twitch" ? "#bf94ff" : platform == "kick" ? "#53fc18" : "#ff7272";
+        const QString platformColour = platform == "twitch" ? "#bf94ff" : platform == "kick" ? "#53fc18" : platform == "discord" ? "#5865f2" : "#ff7272";
         html += "<span style='color:" + platformColour + ";font-size:10px'>" + platform.left(1).toUpper() + "</span> ";
         if (feed->property("pulseWeaverChatTimestamps").toBool())
             html += "<span style='color:" + muted + ";font-size:11px'>" + index.data(Time).toString() + "</span> ";
 		const QString route = index.data(Route).toString();
-		if (!route.isEmpty())
+		if (!route.isEmpty() && platform != "discord")
 			html += "<span style='color:" + muted + ";font-size:9px'>" +
 				(route == "vertical" ? QString("9:16") : QString("16:9")) + "</span> ";
         QStringList resources;
@@ -324,7 +324,7 @@ inline QListWidgetItem *append(QListWidget *feed, const QString &platform, const
     item->setToolTip(platform.toUpper() + " · " + user + "\n" + roles.join(", ") + "\n" + message);
     feed->addItem(item);
     const QString filter = feed->property("pulseWeaverChatFilter").toString();
-    item->setHidden(!filter.isEmpty() && filter != "all" && filter != platform);
+    item->setHidden(!matchesFilter(filter, platform, route));
     while (feed->count() > 500) {
         if (anchor == feed->item(0)) anchor = feed->item(1);
         delete feed->takeItem(0);

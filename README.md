@@ -1,8 +1,8 @@
-# Pulse Weaver Studio — 2.0.0-unstable.8
+# Pulse Weaver Studio — 2.0.0-unstable.9
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
-**2.0.0-unstable.8** adds receive-only Discord channels to the main chat panel through a secure Pulse connection. Choose channels, including authorised private channels, from the Chat options menu. See [the release notes](docs/RELEASE-2.0.0-unstable.8.md) and [Discord setup](docs/DISCORD-RECEIVE-ONLY.md). The latest regular Windows release remains 1.14.3.
+**2.0.0-unstable.9** adds an **All chats (no Discord)** read filter. Receive-only Discord channels, introduced in unstable 8, appear in the main chat panel through a secure Pulse connection. Choose channels, including authorised private channels, from the Chat options menu. See [the release notes](docs/RELEASE-2.0.0-unstable.9.md) and [Discord setup](docs/DISCORD-RECEIVE-ONLY.md). The latest regular Windows release remains 1.14.3.
 
 Incoming YouTube chat automatically uses the web scanner in the combined chat box. Sending and moderation use the official API. No reader dropdown or API-receive fallback is exposed, and old reader preferences cannot re-enable API reception.
 

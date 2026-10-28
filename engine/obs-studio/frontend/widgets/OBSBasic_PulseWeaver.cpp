@@ -286,7 +286,7 @@ static void pulseApplyChatFilter(QListWidget *feed, const QString &filter)
 	feed->setProperty("pulseWeaverChatFilter", filter);
 	for (int index = 0; index < feed->count(); ++index) {
 		auto *item = feed->item(index);
-		item->setHidden(filter != "all" && item->data(PulseChatPlatformRole).toString() != filter);
+		item->setHidden(!PulseChat::matchesFilter(filter, item->data(PulseChatPlatformRole).toString(), item->data(PulseChat::Route).toString()));
 	}
 	if (pulseChatAtBottom(feed)) {
 		feed->setProperty("pulseWeaverUnreadCount", 0);
@@ -1813,6 +1813,7 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *readFilter = new QComboBox(chatPage);
     readFilter->setAccessibleName("Read chat from");
     readFilter->addItem("All chats", "all");
+    readFilter->addItem("All chats (no Discord)", "all-no-discord");
     readFilter->addItem("Twitch", "twitch");
     readFilter->addItem("YouTube", "youtube");
     readFilter->addItem("Kick", "kick");

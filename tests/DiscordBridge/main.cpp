@@ -4,12 +4,18 @@ int main(int argc,char **argv) {
  QApplication app(argc,argv);
  QWidget parent;QListWidget feed;QComboBox filter;QLabel status;
  filter.addItem("All chats","all");
+ filter.addItem("All chats (no Discord)","all-no-discord");
  PulseDiscord::Client client(&feed,&filter,&status,&parent);
  auto *discord=PulseChat::append(&feed,"discord","#mod-chat · Test","Example",{},{},{},"123","456",false,{},"789");
  auto *twitch=PulseChat::append(&feed,"twitch","Viewer","Hello");
  filter.addItem("Discord · #mod-chat","discord:789");filter.setCurrentIndex(filter.findData("discord:789"));client.applyFilter();
  assert(!discord->isHidden()&&twitch->isHidden());
  filter.setCurrentIndex(0);client.applyFilter();assert(!discord->isHidden()&&!twitch->isHidden());
+ filter.setCurrentIndex(filter.findData("all-no-discord"));feed.setProperty("pulseWeaverChatFilter","all-no-discord");client.applyFilter();
+ assert(discord->isHidden()&&!twitch->isHidden());
+ auto *kick=PulseChat::append(&feed,"kick","Viewer","New stream message");
+ auto *privateMessage=PulseChat::append(&feed,"discord","Mod","New Discord message",{},{},{},"124","457");
+ assert(!kick->isHidden()&&privateMessage->isHidden());
  const QJsonObject message{{"id","900"},{"user","Mod"},{"user_id","901"},{"content","Private example"}};
  const QJsonObject group{{"channel","789"},{"name","mod-chat"},{"messages",QJsonArray{message}}};
  client.renderSnapshot(QJsonObject{{"groups",QJsonArray{group}}});
@@ -18,6 +24,7 @@ int main(int argc,char **argv) {
  client.renderSnapshot(QJsonObject{{"groups",QJsonArray{editedGroup}}});
  QListWidgetItem *received=nullptr;for(int i=0;i<feed.count();++i)if(feed.item(i)->data(PulseChat::MessageId).toString()=="900")received=feed.item(i);
  assert(received&&received->data(PulseChat::Text).toString()=="Edited example");
+ assert(received->isHidden());
  auto empty=group;empty.insert("messages",QJsonArray{});client.renderSnapshot(QJsonObject{{"groups",QJsonArray{empty}}});assert(feed.count()==count-1);
  return 0;
 }

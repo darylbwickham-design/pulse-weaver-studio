@@ -108,7 +108,7 @@ public:
         if(filter){filter->addItem("Discord","discord");connect(filter,&QComboBox::currentIndexChanged,this,[this]{applyFilter();});}
         poll.start();
     }
-    void applyFilter(){if(!feed||!filter)return;const auto selected=filter->currentData().toString();for(int i=0;i<feed->count();++i){auto *item=feed->item(i);const auto platform=item->data(PulseChat::Platform).toString();item->setHidden(selected!="all"&&selected!=platform&&!(platform=="discord"&&selected=="discord:"+item->data(PulseChat::Route).toString()));}}
+    void applyFilter(){if(!feed||!filter)return;const auto selected=filter->currentData().toString();for(int i=0;i<feed->count();++i){auto *item=feed->item(i);const auto platform=item->data(PulseChat::Platform).toString();item->setHidden(!PulseChat::matchesFilter(selected,platform,item->data(PulseChat::Route).toString()));}}
     void configure(QWidget *parent){if(!token.isEmpty()){chooseChannels(parent);return;}if(!proof.isEmpty()&&pairing.isActive()){QDesktopServices::openUrl(QUrl(approval));return;}request("/bridge/start","POST",{},[this](QJsonObject data,int code){if(code!=200){fail("Unable to start Discord connection.");return;}proof=data.value("secret").toString();approval=data.value("url").toString();if(!QUrl(approval).toString().startsWith(base+"/connect.html?request=")){proof.clear();return;}QDesktopServices::openUrl(QUrl(approval));pairing.start();fail("Approve Pulse Weaver in your browser.");});}
     void disconnectDevice(){++generation;busy=false;pairBusy=false;poll.stop();pairing.stop();clearFeed();if(!token.isEmpty())request("/bridge/revoke","POST",token,[](QJsonObject,int){});token.clear();proof.clear();PulseAppCredentials::remove("pulse_discord","access_token");fail("Discord disconnected");}
 };
