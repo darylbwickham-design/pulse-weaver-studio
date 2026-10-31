@@ -1,3 +1,7 @@
+# Pulse Weaver 2.0
+
+The regular Windows release now includes the refined 2.0 workspace, selection-first show setup, smooth camera Looks, independent HUD, Discord chat, 15-button Lumia keypad and optional YouTube app credentials with a quota/setup guide. See [2.0 release notes](docs/RELEASE-2.0.0.md) for downloads, upgrade behaviour and validation limits.
+
 # Pulse Weaver 2.0.0-unstable.10 — Transparent desktop HUD
 
 Camera has a third **HUD** workspace sized from the chosen display. There is one HUD, independent from stages and Looks, with no scene picker or transition controls. A monitor icon beside the Lumia and connection controls toggles transparent, click-through desktop effects and lights up only while the output is running. See [release details](docs/RELEASE-2.0.0-unstable.10.md).

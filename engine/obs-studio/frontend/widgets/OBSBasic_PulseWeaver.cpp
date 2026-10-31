@@ -1299,9 +1299,16 @@ void OBSBasic::InitPulseWeaverShell()
 	brandStack->setContentsMargins(0, 0, 0, 0);
 	brandStack->setSpacing(2);
 	brandStack->addWidget(brand);
-	auto *previewVersion = new QLabel("2.0  UNSTABLE", header);
+	QFile releaseIdentity(QCoreApplication::applicationDirPath() + "/pulseweaver-update.json");
+	PulseUpdates::Identity release;
+	if (releaseIdentity.open(QIODevice::ReadOnly) && releaseIdentity.size() <= 16384)
+		release = PulseUpdates::identityFromJson(QJsonDocument::fromJson(releaseIdentity.readAll()).object());
+	const QString releaseLabel = release.channel == "windows-unstable" ? "2.0  UNSTABLE" :
+		release.channel == "windows-alpha" ? "2.0  ALPHA" :
+		release.tag.isEmpty() ? "2.0  DEVELOPMENT" : "2.0";
+	auto *previewVersion = new QLabel(releaseLabel, header);
 	previewVersion->setObjectName("PulseWeaverPreviewVersion");
-	previewVersion->setToolTip("An isolated preview of Pulse Weaver 2.0");
+	previewVersion->setToolTip(release.tag.isEmpty() ? "Pulse Weaver development build" : "Pulse Weaver " + release.tag.mid(1));
 	brandStack->addWidget(previewVersion, 0, Qt::AlignLeft);
 	headerLayout->addLayout(brandStack);
 	headerLayout->addSpacing(8);

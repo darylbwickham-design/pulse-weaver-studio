@@ -24,6 +24,28 @@ static QJsonObject release(const Identity &identity)
 int main(int argc, char **argv)
 {
 	QCoreApplication application(argc, argv);
+	if (argc == 4 && QString::fromLocal8Bit(argv[1]) == "--promotion-catalog") {
+		QFile file(QString::fromLocal8Bit(argv[2]));
+		check(file.open(QIODevice::ReadOnly), "Read promoted release catalogue");
+		const auto catalog = QJsonDocument::fromJson(file.readAll()).array();
+		const QString expected = QString::fromLocal8Bit(argv[3]);
+		check(!catalog.isEmpty(), "Promoted catalogue is populated");
+		for (const Identity &installed : {Identity{"windows-private", "v1.14.3"},
+			Identity{"windows-alpha", "v1.14.4-alpha.7"},
+			Identity{"windows-unstable", "v2.0.0-unstable.10"},
+			Identity{"windows-unstable", "v2.0.0-unstable.11"},
+			Identity{"windows-public", "v1.12.1"}}) {
+			const auto update = selectRelease(catalog, installed);
+			check(update && update->identity.tag == expected && update->name == assetName(update->identity),
+				"Regular, alpha, unstable and legacy public installations find the exact 2.0 installer");
+			check(update->sha256.size() == 32, "Promoted update has a verified SHA-256 digest");
+		}
+		check(!selectRelease(catalog, {"windows-private", expected}, true, true), "Current regular release never offers an older preview");
+		const auto isolated = selectRelease(catalog, {"windows-unstable", "v2.0.0-unstable.10", "studio2-preview"});
+		check(!isolated || isolated->identity.product == "studio2-preview", "Isolated preview remains in its own product family");
+		std::puts("PASS: live regular, alpha, unstable and legacy public promotion; exact assets/digests; no downgrade or isolated-profile crossover");
+		return 0;
+	}
 	if (argc == 4 && QString::fromLocal8Bit(argv[1]) == "--release-catalog") {
 		QFile file(QString::fromLocal8Bit(argv[2]));
 		check(file.open(QIODevice::ReadOnly), "Read release catalogue fixture");

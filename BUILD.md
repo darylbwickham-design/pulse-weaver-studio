@@ -1,6 +1,6 @@
-# Build Pulse Weaver 1.14 development source on Windows
+# Build Pulse Weaver 2.0 on Windows
 
-This branch contains the 1.14 unstable source plus local work under review. It contains no personal configuration, account tokens or bundled Google registration file. A local build does not publish a release or change an installed application.
+This branch contains the Pulse Weaver 2.0 source. It contains no personal configuration, account tokens or bundled Google registration file. A local build does not publish a release or change an installed application.
 
 The current channel packager is `packaging/Build-ChannelRelease.ps1`, with `release`, `alpha` and `unstable` channels, an explicitly selected version/revision, a native `RuntimeRoot` and an authorised `YouTubeDesktopClientJson`. It stages a clean payload, checks required runtime components, builds the chat helper and packages `PulseWeaver.PrivateSetup`. Do not reuse an existing release tag or run a packager as part of a local-only patch. Current offline installer policies are documented in [the update/storage audit](docs/AUDIT-UPDATES-STORAGE-2026-09-29.md).
 
