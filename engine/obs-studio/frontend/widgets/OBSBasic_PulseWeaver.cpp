@@ -1,4 +1,5 @@
 #include "../../shared/qt/PulseChat.hpp"
+#include "../../shared/qt/PulseYouTubeApplicationUi.hpp"
 #include "../../shared/qt/PulseKeypad.hpp"
 #include "../../shared/qt/PulseDiscord.hpp"
 #include "../../shared/qt/PulseInteractionFeedback.hpp"
@@ -2571,6 +2572,31 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseYouTubeDisconnectButton->setEnabled(false);
 	connect(pulseYouTubeDisconnectButton, &QPushButton::clicked, this, &OBSBasic::DisconnectPulseWeaverYouTube);
 	pulseYouTubeDisconnectButton->hide();
+	auto *youtubeApplication = new PulseYouTubeApplicationUi::Editor(
+		PulseYouTubeRegistration::forEditor(PulseYouTubeRegistration::local(), PulseYouTubeRegistration::defaults()),
+		[this](const PulseYouTubeRegistration::Registration &value) -> QString {
+			const auto existing = PulseYouTubeRegistration::local();
+			if (value.clientId == existing.clientId && value.clientSecret == existing.clientSecret) return {};
+			if (PulseHasActiveOutputs())
+				return "Stop your outputs before changing the YouTube app. Your current connection has been kept.";
+#ifdef YOUTUBE_ENABLED
+			if (pulseYouTubeAuth)
+				return "Disconnect & revoke YouTube before changing app details, then reconnect with the new app.";
+			if (dynamic_cast<YoutubeApiWrappers *>(GetAuth()))
+				return "Disconnect the YouTube account in Settings → Stream before changing app details.";
+#endif
+			if (!PulseYouTubeRegistration::saveLocal(value))
+				return "Could not save app details to protected local storage. Your settings were not changed.";
+			// Remove any unused legacy login so it cannot cross app registrations.
+			PulseAppCredentials::remove("youtube", "refresh_token");
+			PulseAppCredentials::remove("youtube", "access_token");
+			PulseAppCredentials::remove("youtube", "token_client_id");
+			for (const char *key : {"RefreshToken", "Token", "ExpireTime", "ScopeVer", "ChannelName"})
+				config_remove_value(Config(), "YouTube", key);
+			activeConfiguration.SaveSafe("tmp");
+			return {};
+		}, pulsePages);
+	youtubeApplication->hide(); // Hosted by Action → Connections → YouTube.
 	pulseYouTubeCanvas = new QComboBox(pulsePages);
 	pulseYouTubeCanvas->setObjectName("PulseWeaverYouTubeCanvasRoute");
 	pulseYouTubeCanvas->addItem("YouTube · Off", "off");

@@ -44,6 +44,47 @@ int main(int argc, char **argv)
     }
     QTemporaryDir temporary;
     check(temporary.isValid(), "Temporary directory");
+    check(validationError({}).isEmpty(), "Blank fields select built-in app");
+    for (const Registration &invalid : {Registration{"only-id.apps.googleusercontent.com", {}},
+        Registration{{}, "only-secret"}, Registration{"AIza-not-an-oauth-client", "secret"},
+        Registration{"bad/path.apps.googleusercontent.com", "secret"},
+        Registration{"fixture.apps.googleusercontent.com", "with spaces"}})
+        check(!validationError(invalid).isEmpty(), "Incomplete/invalid overrides cannot be saved");
+    check(matchesAccount("old.apps.googleusercontent.com", {"old.apps.googleusercontent.com", "new-secret"}),
+          "Token remains bound to the same client across secret rotation");
+    check(!matchesAccount("old.apps.googleusercontent.com", {"new.apps.googleusercontent.com", "secret"}),
+          "Tokens from another app are never loaded");
+    check(matchesAccount({}, {"legacy.apps.googleusercontent.com", "secret"}), "Legacy accounts can acquire a binding");
+#ifdef _WIN32
+    const auto settingsFile = temporary.filePath("app-credentials.ini");
+    {
+        QSettings settings(settingsFile, QSettings::IniFormat);
+        settings.setValue("twitch/access_token", "untouched-protected-fixture");
+        settings.setValue("youtube/refresh_token", "untouched-youtube-fixture");
+        settings.setValue("youtube/client_id", "old.apps.googleusercontent.com");
+        settings.setValue("youtube/client_secret", PulseAppCredentials::protect("old-secret"));
+    }
+    check(local(settingsFile).clientSecret == "old-secret", "Read legacy DPAPI override");
+    const Registration custom{"mine.apps.googleusercontent.com", "private-synthetic-secret"};
+    check(saveLocal(custom, settingsFile), "Save a complete protected custom pair");
+    check(local(settingsFile).clientId == custom.clientId && local(settingsFile).clientSecret == custom.clientSecret,
+          "Custom pair decrypts on this Windows account");
+    QFile settingsBytes(settingsFile); check(settingsBytes.open(QIODevice::ReadOnly), "Read protected fixture");
+    const auto before = settingsBytes.readAll(); settingsBytes.close();
+    check(!before.contains(custom.clientId.toUtf8()) && !before.contains(custom.clientSecret.toUtf8()),
+          "Neither custom field is stored as plaintext");
+    check(!saveLocal({custom.clientId, {}}, settingsFile), "Reject partial pair before touching disk");
+    check(settingsBytes.open(QIODevice::ReadOnly) && settingsBytes.readAll() == before, "Invalid save preserves the file");
+    settingsBytes.close();
+    check(saveLocal({}, settingsFile), "Clear custom pair to restore bundled lookup");
+    check(local(settingsFile).clientId.isEmpty() && local(settingsFile).clientSecret.isEmpty(), "No legacy override survives clearing");
+    {
+        QSettings settings(settingsFile, QSettings::IniFormat);
+        check(settings.value("twitch/access_token") == "untouched-protected-fixture" &&
+              settings.value("youtube/refresh_token") == "untouched-youtube-fixture", "Registration storage preserves other credentials");
+    }
+    check(!saveLocal(custom, temporary.path()), "Storage failure is reported");
+#endif
     const auto fileName = temporary.filePath("desktop.json");
     auto write = [&](const QByteArray &bytes) {
         QFile file(fileName); check(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "Write fixture");
@@ -51,6 +92,10 @@ int main(int argc, char **argv)
     };
     write(R"({"installed":{"client_id":"fixture.apps.googleusercontent.com","client_secret":"fixture-secret"}})");
     const auto defaults = bundled(fileName);
+    check(forEditor(defaults, defaults).clientId.isEmpty() && forEditor(defaults, defaults).clientSecret.isEmpty(),
+          "Publisher registration is never exposed by the editor, including legacy local copies");
+    check(forEditor({"custom.apps.googleusercontent.com", "secret"}, defaults).clientSecret == "secret",
+          "Only the user's own override can populate the editor");
     check(defaults.clientId == "fixture.apps.googleusercontent.com", "Parse desktop client");
     check(resolve({}, defaults).clientSecret == "fixture-secret", "Fresh install fallback");
     check(resolve({{}, "orphan-secret"}, defaults).clientSecret == "fixture-secret", "Do not mix orphan secret");

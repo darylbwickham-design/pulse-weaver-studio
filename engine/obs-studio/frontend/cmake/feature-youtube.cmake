@@ -1,5 +1,5 @@
-# Release packaging supplies the public desktop registration. Existing local
-# registrations remain supported without exposing developer fields in the UI.
+# Release packaging supplies the desktop registration. The connection page can
+# optionally select a user's own registration without exposing the bundled one.
 if(TARGET OBS::browser-panels)
   target_sources(
     obs-studio

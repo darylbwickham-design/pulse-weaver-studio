@@ -1,6 +1,7 @@
 #pragma once
 
 #include "OAuth.hpp"
+#include "../../shared/qt/PulseYouTubeRegistration.hpp"
 
 inline const std::vector<Auth::Def> youtubeServices = {{"YouTube - RTMP", Auth::Type::OAuth_LinkedAccount, true, true},
 						       {"YouTube - RTMPS", Auth::Type::OAuth_LinkedAccount, true, true},
@@ -12,6 +13,13 @@ class YoutubeChatDock;
 
 class YoutubeAuth : public OAuthStreamKey {
 	Q_OBJECT
+
+protected:
+	// Snapshot the registration that owns this account's tokens. Never refresh
+	// an existing account using a newly selected application's client secret.
+	const PulseYouTubeRegistration::Registration registration = PulseYouTubeRegistration::current();
+
+private:
 
 	bool uiLoaded = false;
 	std::string section;

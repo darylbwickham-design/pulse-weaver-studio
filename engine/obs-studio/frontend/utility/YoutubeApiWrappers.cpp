@@ -34,14 +34,14 @@ QString quotaFile()
 {
 	return QFileInfo(PulseAppCredentials::path()).absolutePath() + "/youtube-api-budget.ini";
 }
-QString quotaKey()
+QString quotaKey(const QString &clientId)
 {
-	return QString::fromLatin1(QCryptographicHash::hash(PulseYouTubeRegistration::current().clientId.toUtf8(),
+	return QString::fromLatin1(QCryptographicHash::hash(clientId.toUtf8(),
 		QCryptographicHash::Sha256).toHex());
 }
-PulseYouTubeQuota::Pause quotaPause()
+PulseYouTubeQuota::Pause quotaPause(const QString &clientId)
 {
-	return PulseYouTubeQuota::read(quotaFile(), quotaKey(), QDateTime::currentMSecsSinceEpoch());
+	return PulseYouTubeQuota::read(quotaFile(), quotaKey(clientId), QDateTime::currentMSecsSinceEpoch());
 }
 using std::string_view_literals::operator""sv;
 
@@ -91,8 +91,8 @@ bool YoutubeApiWrappers::GetTranslatedError(QString &error_message)
 
 YoutubeApiWrappers::YoutubeApiWrappers(const Def &d) : YoutubeAuth(d) {}
 
-qint64 YoutubeApiWrappers::ApiBlockedUntil() const { return quotaPause().until; }
-QString YoutubeApiWrappers::ApiPauseMessage() const { return PulseYouTubeQuota::message(quotaPause()); }
+qint64 YoutubeApiWrappers::ApiBlockedUntil() const { return quotaPause(registration.clientId).until; }
+QString YoutubeApiWrappers::ApiPauseMessage() const { return PulseYouTubeQuota::message(quotaPause(registration.clientId)); }
 
 bool YoutubeApiWrappers::TryInsertCommand(const char *url, const char *content_type, std::string request_type,
 					  const char *data, Json &json_out, long *error_code, int data_size)
@@ -153,7 +153,6 @@ bool YoutubeApiWrappers::UpdateAccessToken()
 		return false;
 	}
 
-	const auto registration = PulseYouTubeRegistration::current();
 	std::string clientid = registration.clientId.toStdString();
 	std::string secret = registration.clientSecret.toStdString();
 
@@ -187,7 +186,7 @@ bool YoutubeApiWrappers::InsertCommand(const char *url, const char *content_type
 	long error_code = 0;
 	lastErrorMessage.clear();
 	lastErrorReason.clear();
-	const auto paused = quotaPause();
+	const auto paused = quotaPause(registration.clientId);
 	if (paused.until) {
 		lastErrorReason = paused.reason;
 		lastErrorMessage = PulseYouTubeQuota::message(paused);
@@ -215,7 +214,7 @@ bool YoutubeApiWrappers::InsertCommand(const char *url, const char *content_type
 		success = false;
 	}
 	if (!success) {
-		const auto pause = PulseYouTubeQuota::record(quotaFile(), quotaKey(), lastErrorReason, error_code,
+		const auto pause = PulseYouTubeQuota::record(quotaFile(), quotaKey(registration.clientId), lastErrorReason, error_code,
 			QDateTime::currentMSecsSinceEpoch());
 		if (pause.until) {
 			lastErrorReason = pause.reason;
@@ -325,7 +324,7 @@ bool YoutubeApiWrappers::GetReusableStream(const QString &route, StreamDescripti
 	}
 	// Cache only identifiers. Ingestion keys are read from YouTube for each preparation.
 	const auto account = QString::fromLatin1(QCryptographicHash::hash(
-		(PulseYouTubeRegistration::current().clientId + "|" + connectedChannelId).toUtf8(), QCryptographicHash::Sha256).toHex());
+		(registration.clientId + "|" + connectedChannelId).toUtf8(), QCryptographicHash::Sha256).toHex());
 	QSettings cache(QFileInfo(PulseAppCredentials::path()).absolutePath() + "/youtube-streams.ini", QSettings::IniFormat);
 	const QString key = account + '/' + route;
 	const QString id = cache.value(key).toString();
@@ -660,7 +659,7 @@ PulseYouTubeStream::Result YoutubeApiWrappers::StreamLiveChatMessages(const QStr
 		QString access;
 		{
 			std::lock_guard<std::mutex> lock(youtubeApiRequestMutex);
-			const auto pause = quotaPause();
+			const auto pause = quotaPause(registration.clientId);
 			if (pause.until) return {pause.reason, received};
 			if (TokenExpired() || (refreshRequired && previousAccess == QString::fromStdString(token))) {
 				if (!UpdateAccessToken()) return {"unauthenticated", received};
@@ -697,7 +696,7 @@ PulseYouTubeStream::Result YoutubeApiWrappers::StreamLiveChatMessages(const QStr
             result.reason.isEmpty() ? "completed" : result.reason.toUtf8().constData());
 		received = received || result.received;
 		if (authRetry.allow(result)) { refreshRequired = true; continue; }
-		PulseYouTubeQuota::record(quotaFile(), quotaKey(), result.reason, 0, QDateTime::currentMSecsSinceEpoch());
+		PulseYouTubeQuota::record(quotaFile(), quotaKey(registration.clientId), result.reason, 0, QDateTime::currentMSecsSinceEpoch());
 		result.received = received;
 		return result;
 	}

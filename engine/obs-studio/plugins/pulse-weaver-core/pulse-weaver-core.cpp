@@ -3341,7 +3341,14 @@ private:
 	void buildYouTubeTab()
 	{
 		auto *page = new QWidget;
-		auto *layout = new QHBoxLayout(page);
+		auto *pageLayout = new QVBoxLayout(page);
+		pageLayout->setContentsMargins(0, 0, 0, 0);
+		auto *scroll = new QScrollArea(page);
+		scroll->setObjectName("YouTubeConnectionScroll");
+		scroll->setWidgetResizable(true);
+		scroll->setFrameShape(QFrame::NoFrame);
+		auto *content = new QWidget;
+		auto *layout = new QHBoxLayout(content);
 		layout->setContentsMargins(18, 16, 18, 16);
 		auto *account = new QGroupBox("YOUTUBE", page);
 		account->setObjectName("ConnectionCard");
@@ -3375,11 +3382,19 @@ private:
 		legal->setTextFormat(Qt::RichText);
 		legal->setOpenExternalLinks(true);
 		form->addWidget(legal, 3, 0, 1, 3);
-		// OAuth registration is supplied by application configuration, not edited
-		// through the account connection screen. Keep saved credentials untouched.
+		// The frontend supplies this editor so account and active-output guards use
+		// the same live state as Connect / Disconnect, without passing secrets through APIs.
+		if (auto *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window())) {
+			if (auto *editor = mainWindow->findChild<QWidget *>("PulseWeaverYouTubeApplicationEditor")) {
+				form->addWidget(editor, 4, 0, 1, 3);
+				editor->show();
+			}
+		}
 
 		layout->addWidget(account, 0, Qt::AlignLeft | Qt::AlignTop);
 		layout->addStretch(1);
+		scroll->setWidget(content);
+		pageLayout->addWidget(scroll);
 		if (QWidget *mainWindow = static_cast<QWidget *>(obs_frontend_get_main_window())) {
 			auto *nativeConnect = mainWindow->findChild<QPushButton *>("PulseWeaverYouTubeConnectButton");
 			auto *nativeDisconnect = mainWindow->findChild<QPushButton *>("PulseWeaverYouTubeDisconnectButton");

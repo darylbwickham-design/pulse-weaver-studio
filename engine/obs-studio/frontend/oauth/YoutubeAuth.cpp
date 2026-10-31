@@ -88,7 +88,8 @@ void YoutubeAuth::SaveInternal()
 	const char *section_name = section.c_str();
 	const bool protectedTokens =
 		PulseAppCredentials::set("youtube", "refresh_token", QString::fromStdString(refresh_token)) &&
-		PulseAppCredentials::set("youtube", "access_token", QString::fromStdString(token));
+		PulseAppCredentials::set("youtube", "access_token", QString::fromStdString(token)) &&
+		PulseAppCredentials::set("youtube", "token_client_id", registration.clientId);
 	if (protectedTokens) {
 		config_remove_value(main->Config(), section_name, "RefreshToken");
 		config_remove_value(main->Config(), section_name, "Token");
@@ -114,6 +115,8 @@ bool YoutubeAuth::LoadInternal()
 		return false;
 
 	const char *section_name = section.c_str();
+	if (!PulseYouTubeRegistration::matchesAccount(PulseAppCredentials::get("youtube", "token_client_id"), registration))
+		return false;
 	refresh_token = PulseAppCredentials::get("youtube", "refresh_token").toStdString();
 	token = PulseAppCredentials::get("youtube", "access_token").toStdString();
 	if (refresh_token.empty())
@@ -154,6 +157,7 @@ bool YoutubeAuth::RevokeAndClear(QWidget *)
 	currentScopeVer = 0;
 	PulseAppCredentials::remove("youtube", "refresh_token");
 	PulseAppCredentials::remove("youtube", "access_token");
+	PulseAppCredentials::remove("youtube", "token_client_id");
 	if (OBSBasic *main = OBSBasic::Get(); main && main->Config()) {
 		for (const char *key : {"RefreshToken", "Token", "ExpireTime", "ScopeVer", "ChannelName"})
 			config_remove_value(main->Config(), section.c_str(), key);
@@ -277,7 +281,7 @@ std::shared_ptr<Auth> YoutubeAuth::Login(QWidget *owner, const std::string &serv
 	dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowCloseButtonHint);
 	dlg.setWindowTitle(QTStr("YouTube.Auth.WaitingAuth.Title"));
 
-	const auto registration = PulseYouTubeRegistration::current();
+	const auto &registration = auth->registration;
 	std::string clientid = registration.clientId.toStdString();
 	std::string clientSecret = registration.clientSecret.toStdString();
 
