@@ -22,6 +22,14 @@ For YouTube, select **Save app details** to save both fields together. Disconnec
 
 You can explore the studio without connecting a platform. For an independent test profile, use a separate portable copy with its own configuration folder.
 
+## Discord chat with Pulse
+
+**Pulse is the Discord bot behind Pulse Weaver's Discord chat feature.** Read up to five selected channels from one server alongside Twitch, YouTube and Kick in the main chat panel. Both your Discord account and Pulse must have access to each selected channel, including private moderator channels.
+
+Have Pulse added to your server, then open the chat panel's options menu → **Discord channels…**. Approve the connection in your browser and choose the server and channels. Discord is receive-only; the composer continues to send to the streaming platforms. Use **Discord**, individual-channel filters or **All chats (no Discord)** to choose what you see.
+
+[Open the Pulse bot portal](https://pulse-community.darylbwickham.workers.dev/) · [Discord chat setup guide](docs/DISCORD-RECEIVE-ONLY.md)
+
 ## Published minimum system
 
 The current conservative minimum for a multi-output 1080p60 show is **Windows 10/11 64-bit, Intel Core i5-12400F, NVIDIA GeForce RTX 3060, 32 GB RAM, and 2 GB free storage**. This is the developer's tested machine baseline. Simpler single-output shows may run on less capable hardware, but are not part of the published support floor yet.

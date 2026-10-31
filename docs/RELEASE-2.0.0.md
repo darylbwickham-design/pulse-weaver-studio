@@ -14,12 +14,18 @@ Pulse Weaver 2.0.0 is the regular Windows x64 release, bringing the 2.0 workspac
 - Click-through show setup based on the stages and layouts a user needs, with reusable inputs, separate landscape/portrait framing, stingers and up to three shared alert layers per format.
 - Smoother camera Look movement and corrected portrait scene ownership/editing.
 - One transparent, click-through HUD, independent from stages and Looks. Choose a display to set the canvas size and toggle it from Show Control.
-- Receive-only Discord alongside streaming chats, including All chats (no Discord).
+- Discord chat through **Pulse, the Discord bot by PulseWeaver**: read up to five selected channels from one server alongside streaming chats, including All chats (no Discord). Both you and Pulse must have access to each selected channel.
 - A configurable 15-button Lumia keypad in the chat panel. Give buttons names, choose an included icon or supply an image. The plugin exposes Keypad 01–15, all defaulting to Off.
 - The renamed PulseWeaver Stream Studio plugin retains the existing Motion Preview ID and alert/action bindings. Its connection help is concise; installation instructions remain in the external README.
 - Optional YouTube Desktop app client ID and secret, a shared daily quota notice and a six-step setup guide. Blank fields use the bundled registration, whose values are never filled into the editor. Custom pairs are protected by Windows and saved together; changing apps requires disconnecting first.
 - YouTube OAuth objects retain their owning application registration, preventing refreshes from mixing different app credentials. Incoming chat keeps the existing web reader; sending, moderation and broadcast management use the authenticated API.
 - Lights remains visible with its normal empty panels marked Coming soon. Unfinished Alerts and Overlay designer entry points remain hidden.
+
+## Discord chat with Pulse
+
+Have Pulse added to your Discord server, then open the chat panel's options menu → **Discord channels…** in Pulse Weaver. Approve the connection in your browser and select the server and channels. Public and private moderator channels are available where both your account and Pulse have permission to read them.
+
+Discord is receive-only; messages typed in Pulse Weaver continue to go to Twitch, YouTube and Kick. [Open the Pulse bot portal](https://pulse-community.darylbwickham.workers.dev/) or follow the [Discord chat setup guide](DISCORD-RECEIVE-ONLY.md).
 
 ## Updating
 
