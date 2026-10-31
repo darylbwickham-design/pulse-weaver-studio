@@ -1,12 +1,19 @@
 {
   "name": "pulseweaver-control-lumia-plugin",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "private": true,
   "main": "main.js",
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@lumiastream/plugin": "^0.9.7"
+    "@lumiastream/plugin": "^1.0.0"
+  },
+  "description": "Connect Lumia Stream and LumiCon to Pulse Weaver streaming software. Switch Stages and Looks, control streaming, recording, sources, audio and media, and use the Pulse Weaver on-screen keypad to trigger your Lumia alerts.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/darylbwickham-design/pulse-weaver-studio.git",
+    "directory": "integrations/lumia-pulseweaver"
   }
 }

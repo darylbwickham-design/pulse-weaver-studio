@@ -18,6 +18,7 @@ class PulseWeaverPlugin extends Plugin {
     this.previousPresentation = null;
     this.stageLooks = new Map();
     this.lastCompletedMotion = null;
+    this.lastKeypadSequence = 0;
   }
   async onload() { this.enabled = true; this.connect(); }
   async onunload() {
@@ -65,7 +66,7 @@ class PulseWeaverPlugin extends Plugin {
     if (!route.startsWith('/') || route.includes('..') || route.includes('\\')) throw new Error('Invalid operation route.');
     return `http://127.0.0.1:${port}/api/v1/lumia${route}`;
   }
-  headers() { return { Authorization: `Bearer ${this.connectionToken()}`, 'X-Pulse-Weaver-Client': 'lumia-plugin' }; }
+  headers() { return { Authorization: `Bearer ${this.connectionToken()}`, 'X-Pulse-Weaver-Client': 'lumia-plugin', 'X-Pulse-Weaver-Keypad': '1' }; }
   async request(route, method = 'GET') {
     if (!this.enabled) throw new Error('Pulse Weaver plugin is disabled.');
     const lifecycle = this.lifecycle;
@@ -83,6 +84,7 @@ class PulseWeaverPlugin extends Plugin {
     if (!this.enabled) return;
     clearTimeout(this.retryTimer); this.stream?.destroy();
     const generation = ++this.generation;
+    this.lastKeypadSequence = 0;
     let ended = false;
     const disconnect = (error) => {
       if (ended || generation !== this.generation) return;
@@ -217,6 +219,20 @@ class PulseWeaverPlugin extends Plugin {
     }
     if (payload.kind !== 'event' || !this.state) return;
     let alert = payload.event;
+    if (typeof alert === 'string' && alert.startsWith('keypad_')) {
+      const slot = Number(alert.slice(7));
+      if (!Number.isInteger(slot) || slot < 1 || slot > 15 || alert !== `keypad_${String(slot).padStart(2, '0')}` ||
+          payload.buttonIndex !== slot || typeof payload.buttonName !== 'string' || !payload.buttonName.trim() ||
+          payload.buttonName.length > 32 || !Number.isSafeInteger(payload.sequence) || payload.sequence <= this.lastKeypadSequence) return;
+      if (!(this.manifest.config.alerts || []).some(item => item.key === alert)) return;
+      this.lastKeypadSequence = payload.sequence;
+      const accepted = await this.lumia.triggerAlert({ alert, showInEventList: false,
+        extraSettings: { buttonIndex: slot, buttonName: payload.buttonName, message: payload.buttonName } });
+      if (current()) await this.setVariable('last_result', accepted === false ?
+        `Keypad ${String(slot).padStart(2, '0')} was not run. Check that its Lumia alert is enabled.` :
+        `Keypad ${String(slot).padStart(2, '0')}: ${payload.buttonName}`);
+      return;
+    }
     if (alert === 'stage_changed') this.state.activeStage = payload.stage || '';
     if (alert === 'motion_catalogue_changed') {
       const state = await this.request('/state');

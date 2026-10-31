@@ -15,13 +15,14 @@ function load(lumia,port,overrides={}) {
  vm.runInNewContext(fs.readFileSync(path.join(root,'main.js'),'utf8'),sandbox,{filename:'main.js'});
  return new sandbox.module.exports(manifest,{});
 }
-async function fixture() {
+async function fixture(lumiaOverrides={}) {
  const alerts=[],variables=new Map(),options=[],requests=[],toasts=[],sockets=new Set();
  const state={operatorApi:2,activeStage:'Starting',stages:['Starting','Gaming'],destinations:{twitch:'horizontal',kick:'horizontal',youtube:'dual'},outputs:{},motion:{active:false,status:'READY',execution:null},motionActions:[{id:'motion-1',name:'Camera close-up',stage:'Gaming'}],sources:[{id:'mic',name:'Microphone',audio:true},{id:'media',name:'Clip',media:true},{id:'scene',name:'Main',items:[{itemId:'22',name:'Camera',visible:true}]}]};
  let subscriber; const outputTimers = new Map();
  const emit = event => { if(event.platform)state.outputs[event.output || event.platform]=event; subscriber?.write('data: '+JSON.stringify({kind:'event',...event})+'\n\n'); };
  const server = http.createServer((req,res)=>{
   requests.push(req.url); assert.equal(req.headers.authorization,'Bearer test-token'); assert.equal(req.headers['x-pulse-weaver-client'],'lumia-plugin');
+  assert.equal(req.headers['x-pulse-weaver-keypad'],'1');
   const url=new URL(req.url,'http://localhost');
   if(url.pathname.endsWith('/events')){ subscriber=res;res.writeHead(200,{'Content-Type':'text/event-stream'});const frame='data: '+JSON.stringify({kind:'snapshot',state})+'\n\n';res.write(frame.slice(0,23));setTimeout(()=>res.write(frame.slice(23)),5);return; }
   res.setHeader('Content-Type','application/json');
@@ -45,18 +46,20 @@ async function fixture() {
  });
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
- const lumia={updateConnection:async()=>{},setVariable:async(k,v)=>variables.set(k,v),updateActionFieldOptions:async v=>options.push(v),triggerAlert:async v=>alerts.push(v),showToast:async v=>toasts.push(v)};
- const plugin=load(lumia,server.address().port);await plugin.onload();await until(()=>plugin.state && options.length===6);
+ const lumia={updateConnection:async()=>{},setVariable:async(k,v)=>variables.set(k,v),updateActionFieldOptions:async v=>options.push(v),triggerAlert:async v=>alerts.push(v),showToast:async v=>toasts.push(v),...lumiaOverrides};
+ const plugin=load(lumia,server.address().port);await plugin.onload();
+ try { await until(()=>plugin.state && options.length===6); }
+ catch(error) { await plugin.onunload(); for(const socket of sockets)socket.destroy(); await new Promise(resolve=>server.close(resolve)); throw new Error(`Fixture did not connect: ${JSON.stringify({state:plugin.state, options:options.length,requests,toasts,variables:[...variables]})}`,{cause:error}); }
  return {plugin,state,alerts,variables,options,requests,toasts,emit,close:async()=>{await plugin.onunload();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));}};
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'Pulse Weaver');assert.equal(manifest.version,'1.4.4');
+ assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'PulseWeaver Stream Studio');assert.equal(manifest.version,'1.5.0');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
- assert.equal(manifest.config.actions.length,17);assert.equal(manifest.config.alerts.length,36);
+ assert.equal(manifest.config.actions.length,17);assert.equal(manifest.config.alerts.length,51);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
  for(const action of manifest.config.actions)assert.ok(!/create|delete|transform|filter|raw|url|file/i.test(action.type));
- assert.equal(new Set(manifest.config.alerts.map(a=>a.key)).size,36);
+ assert.equal(new Set(manifest.config.alerts.map(a=>a.key)).size,51);
  assert.equal(manifest.config.actions.find(a=>a.type==='restore_motion').label,'Undo Previous Stage / Look');
  assert.ok(!manifest.config.actions.some(a=>['return_presentation','stop_motion','restore_original_motion'].includes(a.type)));
 });
@@ -86,6 +89,67 @@ test('Custom ports, tokens and explicit config paths keep their installation ide
  plugin.settings.configPath='C:\\portable\\pulse-weaver.ini';
  assert.equal(JSON.stringify(plugin.configCandidates()),JSON.stringify(['C:\\portable\\pulse-weaver.ini']));
  assert.equal(plugin.connectionPort(),18765);
+});
+
+test('Keypad alerts have stable numbered names and intentional defaults, with bundled help',()=>{
+ const keys=manifest.config.alerts.filter(alert=>alert.key.startsWith('keypad_'));
+ assert.equal(keys.length,15);
+ for(let slot=1;slot<=15;slot++){
+  const key=keys[slot-1],number=String(slot).padStart(2,'0');
+  assert.equal(key.key,`keypad_${number}`);assert.equal(key.title,`Keypad ${number}`);
+  assert.equal(key.defaults.on,true);assert.ok(key.acceptedVariables.includes('buttonName'));
+ }
+ for(const key of manifest.config.alerts.filter(alert=>!alert.key.startsWith('keypad_')))assert.equal(key.defaults.on,false);
+ for(const file of [manifest.changelog,manifest.config.settings_tutorial,manifest.config.actions_tutorial])assert.ok(fs.statSync(path.join(root,file)).size>100);
+});
+
+test('All 15 keypad events reach their Lumia alert once; invalid, stale and snapshot events do not',async()=>{
+ const f=await fixture();try{
+  for(let slot=1;slot<=15;slot++)f.emit({event:`keypad_${String(slot).padStart(2,'0')}`,buttonIndex:slot,buttonName:`Look ${slot}`,sequence:slot});
+  await until(()=>f.alerts.length===15);
+  for(let slot=1;slot<=15;slot++){
+   assert.equal(f.alerts[slot-1].alert,`keypad_${String(slot).padStart(2,'0')}`);
+   assert.equal(f.alerts[slot-1].extraSettings.buttonName,`Look ${slot}`);
+   assert.equal(f.alerts[slot-1].extraSettings.buttonIndex,slot);assert.equal(f.alerts[slot-1].showInEventList,false);
+  }
+  for(const event of [
+   {event:'keypad_15',buttonIndex:15,buttonName:'Duplicate',sequence:15},
+   {event:'keypad_01',buttonIndex:1,buttonName:'Stale',sequence:2},
+   {event:'keypad_16',buttonIndex:16,buttonName:'Unknown',sequence:16},
+   {event:'keypad_1',buttonIndex:1,buttonName:'Invalid key',sequence:16},
+   {event:'keypad_01',buttonIndex:2,buttonName:'Mismatch',sequence:16},
+   {event:'keypad_01',buttonIndex:1,buttonName:'',sequence:16},
+   {event:'keypad_01',buttonIndex:1,buttonName:'x'.repeat(33),sequence:16},
+   {event:'keypad_01',buttonIndex:1,buttonName:'Missing sequence'},
+  ])f.emit(event);
+  await sleep(50);assert.equal(f.alerts.length,15);
+  await f.plugin.consume({kind:'snapshot',state:{...f.state,event:'keypad_01',buttonIndex:1,buttonName:'Old',sequence:160}});
+  assert.equal(f.alerts.length,15);
+  f.emit({event:'keypad_01',buttonIndex:1,buttonName:'Renamed',sequence:16});
+  await until(()=>f.alerts.length===16);assert.equal(f.alerts.at(-1).alert,'keypad_01');
+ }finally{await f.close();}
+});
+
+test('Keypad reconnect accepts the new stream without replay, and unload blocks stale events',async()=>{
+ const f=await fixture();try{
+  f.emit({event:'keypad_01',buttonIndex:1,buttonName:'Before',sequence:50});await until(()=>f.alerts.length===1);
+  const generation=f.plugin.generation;const requests=f.requests.length;
+  f.plugin.connect();await until(()=>f.requests.length>requests);await sleep(35);
+  assert.equal(f.alerts.length,1);
+  f.emit({event:'keypad_01',buttonIndex:1,buttonName:'After',sequence:1});await until(()=>f.alerts.length===2);
+  await f.plugin.consume({kind:'event',event:'keypad_01',buttonIndex:1,buttonName:'Stale generation',sequence:160},generation);
+  await f.plugin.onunload();await f.plugin.consume({kind:'event',event:'keypad_01',buttonIndex:1,buttonName:'Unloaded',sequence:161});
+  assert.equal(f.alerts.length,2);
+ }finally{await f.close();}
+});
+
+test('A disabled Lumia keypad alert reports rejection and is not retried',async()=>{
+ let calls=0;const f=await fixture({triggerAlert:async()=>{calls++;return false;}});try{
+  f.emit({event:'keypad_03',buttonIndex:3,buttonName:'Newsroom',sequence:1});
+  await until(()=>f.variables.get('last_result')?.includes('not run'));
+  assert.equal(calls,1);assert.match(f.variables.get('last_result'),/Keypad 03/);
+  f.emit({event:'keypad_03',buttonIndex:3,buttonName:'Newsroom',sequence:1});await sleep(30);assert.equal(calls,1);
+ }finally{await f.close();}
 });
 
 test('Long installer downtime keeps retrying and refreshes only the discovered token',()=>{

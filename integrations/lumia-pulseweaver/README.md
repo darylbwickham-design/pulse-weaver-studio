@@ -1,4 +1,20 @@
-# Pulse Weaver for Lumia Stream — 1.4.4
+# PulseWeaver Stream Studio — 1.5.0
+
+The Lumia companion plugin for Pulse Weaver streaming software. Use Lumia Stream reactions and LumiCon to switch Stages and Looks, control outputs, sources, audio and media, and run Lumia alerts from Pulse Weaver's on-screen keypad.
+
+Import **PulseWeaver-Lumia-1.5.0.lumiaplugin** over your existing plugin. Its manifest ID stays **`pulseweavercontrol`**; existing actions, alerts, field keys and variable names remain compatible. Keep your current port and credentials. See [setup](SETUP.md), [actions](ACTIONS.md) and [changes](CHANGELOG.md).
+
+## On-screen keypad
+
+In Pulse Weaver, select the keypad icon beside **Chat**, then **Add button**. Give it a short name and choose one of 12 included icons or your own image. The panel holds up to 15 square buttons in three columns; their side length follows the available width, capped at 112 pixels. Chat and previews keep their existing space.
+
+In Lumia Stream, find **PulseWeaver Stream Studio → Keypad 01** (through **Keypad 15**) and add the reaction you want, such as selecting a Stage or running a Look. The button editor shows its numbered alert. Renaming or changing the icon keeps that alert number. **Edit buttons** lets you configure keys without firing their reactions.
+
+Keypad alerts default to On because they require an explicit button press. Enable a previously disabled keypad alert in Lumia if necessary. They require a Pulse Weaver build with the keypad bridge (2.0 unstable.11 or later). Existing plugin controls continue to work on older compatible builds. A disconnected press is rejected and never replayed later. “Sent to Lumia” confirms the local event was handed off; it does not confirm that a Lumia reaction or animation has completed.
+
+Custom icons are copied into the installation's `keypad-icons` folder, resized to at most 256 × 256, and cached while the panel is open. There is no new idle polling.
+
+## Stages and Looks
 
 **Undo Previous Stage / Look** is the single restore action in the menu. Its existing `restore_motion` ID is unchanged, so current Lumia and LumiCon Undo bindings remain attached. The separate Return, Stop and Restore, and Restore Original Scenes actions are no longer offered. Older saved bindings retain their handlers for compatibility.
 
@@ -8,7 +24,7 @@ For several temporary actions, add **Remember Current Stage / Look** first to pi
 
 For the newsroom at default timings: Run News intro, Delay 1.5 seconds, Send Custom Overlay Content, Delay 33.8 seconds, Undo Previous Stage / Look. The Undo action goes at the end of the chain or under End of Command after the alert duration.
 
-Version 1.4.1 updates the existing Pulse Weaver Lumia plugin for release, alpha and unstable. It cancels queued controls and ignores late state/event replies after unload or connection-setting changes. It keeps the `pulseweavercontrol` ID, action IDs and field keys so current Lumia reactions and LumiCon alert bindings remain attached to the same plugin. Import `PulseWeaver-Lumia-1.4.4.lumiaplugin` over the existing regular plugin. Keep your existing port and credentials; in-place alpha upgrades use the same installation and connection. Motion controls are available when the connected build supports them.
+The plugin cancels queued controls and ignores late state/event replies after unload or connection-setting changes. In-place alpha upgrades use the same installation and connection. Motion controls are available when the connected build supports them.
 
 The motion catalogue includes named stage looks such as Game, Chatting, Printer and BRB. Run Stage Look / Motion Action triggers each look from Lumia reactions or LumiCon buttons. Undo is the single restore control exposed to Lumia.
 
@@ -29,9 +45,9 @@ There are **no** scene/source creation or deletion actions, transforms, filters,
 
 ## Alerts and feedback
 
-All 36 alerts default to **Off** in Lumia. Enable individual alerts when you configure their reactions. Existing saved alert switches are preserved by Lumia during an update; already-enabled alerts must be switched off once in Lumia. No additional plugin master switch is required.
+The 36 automatic state alerts default to **Off** in Lumia. Enable individual alerts when you configure their reactions. The 15 operator-triggered **Keypad 01–15** alerts default to **On**. Lumia preserves existing saved alert switches during an update. No additional plugin master switch is required.
 
-36 alert definitions cover Stage changes, source shown/hidden/muted/unmuted/volume, media playback, transition begin/end, and platform/recording starting/live/stopping/stopped/failed (plus platform reconnecting). Output alerts include the specific output: a dual YouTube or recording route can produce separate output events. A platform's status confirms both YouTube outputs for Dual; partial failure is reported as failure rather than full success.
+The 51 alert definitions include the 15 keypad keys plus Stage changes, source shown/hidden/muted/unmuted/volume, media playback, transition begin/end, and platform/recording starting/live/stopping/stopped/failed (plus platform reconnecting). Output alerts include the specific output: a dual YouTube or recording route can produce separate output events. A platform's status confirms both YouTube outputs for Dual; partial failure is reported as failure rather than full success.
 
 Existing status variables remain, with motion, Twitch, Kick and YouTube status variables. Action return variables keep Lumia's existing `pulseweavercontrol_` prefix. A start command only reports success after live state is observed; a timeout stops the Lumia action chain and tells you to check the app. A failed whole-show start may leave successful destinations running, and its error says so.
 

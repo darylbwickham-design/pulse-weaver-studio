@@ -1,5 +1,6 @@
 #pragma once
 #include "../../shared/qt/PulseLumiaOutput.hpp"
+#include "../../shared/qt/PulseKeypad.hpp"
 #include <obs-frontend-api.h>
 #include <QComboBox>
 #include <QJsonArray>
@@ -27,10 +28,12 @@ class PulseLumiaBridge : public QObject {
 	std::function<QJsonObject()> baseState;
 	quint64 sequence = 0;
 	bool primaryObserved = false;
+	QPointer<QWidget> keypadPanel;
 	std::atomic_bool shuttingDown{false};
 	void stopWatching()
 	{
 		if (shuttingDown.exchange(true)) return;
+		if (keypadPanel) keypadPanel->setProperty("pulseKeypadBound", false);
 		heartbeat.stop(); catalogueTimer.stop();
 		signal_handler_disconnect(obs_get_signal_handler(), "pulseweaver_operator_event", operatorEvent, this);
 		signal_handler_disconnect(obs_get_signal_handler(), "source_create", sourceCreated, this);
@@ -143,6 +146,21 @@ public:
 			}
 		});
 		auto *window = static_cast<QWidget *>(obs_frontend_get_main_window());
+		keypadPanel = window ? window->findChild<QWidget *>("PulseWeaverKeypadPanel") : nullptr;
+		if (keypadPanel) {
+			keypadPanel->setProperty("pulseKeypadBound", true);
+			for (int slot = 1; slot <= PulseKeypad::Slots; ++slot) {
+				auto *button = keypadPanel->findChild<QToolButton *>(QString("PulseWeaverKeypad%1").arg(slot,2,10,QLatin1Char('0')));
+				if (!button) continue;
+				connect(button, &QToolButton::clicked, this, [this, button, slot] {
+					if (!button->property("pulseKeypadTriggerRequested").toBool()) return;
+					button->setProperty("pulseKeypadTriggerRequested", false);
+					const bool sent = pressKeypad(slot, button->property("pulseKeypadName").toString());
+					if (auto *status = keypadPanel ? keypadPanel->findChild<QLabel *>("PulseWeaverKeypadStatus") : nullptr)
+						status->setText(sent ? "Sent to Lumia · " + PulseKeypad::alertTitle(slot) : "Enable or update PulseWeaver Stream Studio 1.5.0 in Lumia, then try again.");
+				});
+			}
+		}
 		if (auto *selector = window ? window->findChild<QComboBox *>("PulseWeaverStageSelector") : nullptr) {
 			connect(selector, &QComboBox::currentTextChanged, this, [this, selector](const QString &) {
 				deliver({{"event", "stage_changed"}, {"stage", pulseLumiaStageName(selector, selector->currentIndex())}});
@@ -165,6 +183,7 @@ public:
 	{
 		QJsonObject state = baseState();
 		state.insert("operatorApi", 2);
+		state.insert("keypadApi", 1);
 		state.insert("outputs", outputStates);
 		state.insert("sources", catalogue());
 		return state;
@@ -217,6 +236,19 @@ public:
 		}
 		payload.insert("kind", "event"); payload.insert("sequence", double(++sequence));
 		broadcast(payload);
+	}
+	bool pressKeypad(int slot, const QString &name)
+	{
+		const QString key = PulseKeypad::alertKey(slot), label = PulseKeypad::cleanName(name);
+		if (shuttingDown.load() || key.isEmpty() || label.isEmpty()) return false;
+		bool connected = false;
+		for (const auto &client : std::as_const(clients))
+			connected |= client && client->property("pulseLumiaKeypad").toBool() && client->state() == QAbstractSocket::ConnectedState && client->bytesToWrite() <= 256 * 1024;
+		if (!connected) return false; // Explicit presses are never retained or replayed after reconnect.
+		const QJsonObject payload{{"kind", "event"}, {"sequence", double(++sequence)}, {"event", key}, {"buttonIndex", slot}, {"buttonName", label}, {"message", label}};
+		for (const auto &client : std::as_const(clients))
+			if (client && client->property("pulseLumiaKeypad").toBool()) send(client, payload);
+		return true;
 	}
 	void frontendEvent(obs_frontend_event event)
 	{

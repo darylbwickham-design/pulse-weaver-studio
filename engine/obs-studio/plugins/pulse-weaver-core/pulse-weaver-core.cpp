@@ -4853,12 +4853,15 @@ private:
 					const QByteArray expected = "Bearer " + apiToken.toUtf8();
 					bool authorized = false;
 					QByteArray integrationClient;
+					bool keypadCapable = false;
 					for (QByteArray line : headerBlock.split('\n')) {
 						line = line.trimmed();
 						if (line.toLower().startsWith("authorization:") && line.mid(line.indexOf(':') + 1).trimmed() == expected)
 							authorized = true;
 						else if (line.toLower().startsWith("x-pulse-weaver-client:"))
 							integrationClient = line.mid(line.indexOf(':') + 1).trimmed();
+						else if (line.toLower().startsWith("x-pulse-weaver-keypad:"))
+							keypadCapable = line.mid(line.indexOf(':') + 1).trimmed() == "1";
 					}
 					if (!authorized) {
 						respond(socket, 401, QJsonObject{{"error", "unauthorized"}});
@@ -4916,6 +4919,7 @@ private:
 						respond(socket, 200, motion ? motion->stateJson() : QJsonObject{{"actions", QJsonArray{}}});
 					else if (method == "GET" && path == "/api/v1/lumia/events") {
 						socket->setProperty("pulseLumiaSubscribed", true);
+						socket->setProperty("pulseLumiaKeypad", keypadCapable);
 						lumiaBridge->subscribe(socket);
 					}
 					else if (method == "POST" && path == "/api/v1/lumia/source") {

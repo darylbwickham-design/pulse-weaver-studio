@@ -160,9 +160,14 @@ QPushButton#PulseWeaverUtility[pulseWorkspaceActive="true"] { background: var(--
 
 /* The production toolbar is a shallow console, not another page heading. */
 QFrame#PulseWeaverProductionControls { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #202F42,stop:1 #142033); border: 1px solid #33485F; border-top-color: #51667F; border-bottom-color: #070E18; border-radius: 10px; }
-QFrame#PulseWeaverModeSwitch { background: #0C1522; border: 1px solid #40536D; border-top-color: #070D16; border-radius: 10px; }
-QPushButton#PulseWeaverShowMode, QPushButton#PulseWeaverControlMode { height: 30px; min-height: 30px; max-height: 30px; padding: 0; font-size: 11px; border-radius: 8px; }
-QPushButton#PulseWeaverShowMode:checked, QPushButton#PulseWeaverControlMode:checked { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 var(--primary),stop:1 var(--primary_dark)); color: var(--text_light); border-top-color: var(--primary_lighter); border-bottom-color: #0B111C; }
+QFrame#PulseWeaverModeSwitch { background: transparent; border: none; }
+QPushButton#PulseWeaverShowMode, QPushButton#PulseWeaverControlMode { background: transparent; border: none; border-bottom: 1px solid transparent; height: 30px; min-height: 30px; max-height: 30px; padding: 0; font-size: 18px; font-weight: 600; border-radius: 0; color: var(--text_muted); }
+QPushButton#PulseWeaverShowMode:checked, QPushButton#PulseWeaverControlMode:checked { background: transparent; color: #48BFFF; border: none; border-bottom: 1px solid transparent; }
+QPushButton#PulseWeaverShowMode:hover, QPushButton#PulseWeaverControlMode:hover { background: transparent; color: #B8DEEE; }
+QPushButton#PulseWeaverShowMode:checked:hover, QPushButton#PulseWeaverControlMode:checked:hover { color: #6AD0FF; }
+QPushButton#PulseWeaverShowMode:focus, QPushButton#PulseWeaverControlMode:focus { border-bottom-color: #48BFFF; }
+QToolButton#PulseWeaverKeypadToggle { min-width: 0; min-height: 0; padding: 0; border-radius: 8px; }
+QToolButton#PulseWeaverKeypadToggle:checked { background: #176476; border-color: #59E6FF; }
 QPushButton#PulseWeaverStageChoice { height: 30px; min-height: 30px; max-height: 30px; padding: 0 10px; font-size: 13px; font-weight: 600; text-align: left; }
 QComboBox#PulseWeaverGameWindow { min-height: 24px; max-height: 24px; padding: 4px 8px; }
 QToolButton#PulseWeaverGameSettings, QToolButton#PulseWeaverConnections, QToolButton#PulseWeaverLumiaGuide { padding: 0; min-height: 0; min-width: 0; border-radius: 8px; }

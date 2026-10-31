@@ -1,4 +1,5 @@
 #include "../../shared/qt/PulseChat.hpp"
+#include "../../shared/qt/PulseKeypad.hpp"
 #include "../../shared/qt/PulseDiscord.hpp"
 #include "../../shared/qt/PulseInteractionFeedback.hpp"
 #include "../../shared/qt/PulseLegal.hpp"
@@ -954,7 +955,7 @@ class PulseCommandPalette final : public QDialog {
 			QString title, detail;
 			if(home) {
 				title = categories[index];
-				detail = title == "Workspaces" ? "Show, Control, Camera, Lights and settings" :
+				detail = title == "Workspaces" ? "Show, Control, Lights, Camera, Action and settings" :
 					title == "Stages" ? "Choose a saved stage or manage its scenes" :
 					title == "Audio" ? "Quick Mix, levels and monitoring" :
 					title == "Broadcast" ? "Recording, replay, virtual camera and streaming" : "Basic commands and connected automation";
@@ -1476,7 +1477,8 @@ void OBSBasic::InitPulseWeaverShell()
 		choice->setCheckable(true);
 		choice->setCursor(Qt::PointingHandCursor);
 		choice->setMinimumHeight(32);
-		choice->setFixedSize(64, 34);
+		QFont font = choice->font(); font.setPixelSize(18); choice->setFont(font);
+		choice->setFixedSize(QFontMetrics(font).horizontalAdvance(choice->text()) + 6, 32);
 		showModeGroup->addButton(choice);
 		showHead->addWidget(choice);
 	}
@@ -1691,7 +1693,22 @@ void OBSBasic::InitPulseWeaverShell()
 	chatHeading->setAccessibleName("Switch chat panel");
 	chatHeading->setToolTip("Click to switch to the next configured chat panel");
 	connect(chatHeading, &QToolButton::clicked, this, [this] {
+		if (auto *keypad = findChild<QToolButton *>("PulseWeaverKeypadToggle"); keypad && keypad->isChecked()) {
+			keypad->setChecked(false); return;
+		}
 		SelectPulseWeaverChatPanel(PulseChatPanel::nextProvider(pulseChatPanelPreferences));
+	});
+	auto *keypadToggle = new QToolButton(activityCard);
+	keypadToggle->setObjectName("PulseWeaverKeypadToggle");
+	keypadToggle->setIcon(PulseKeypad::icon("Grid"));keypadToggle->setIconSize(QSize(23,23));
+	keypadToggle->setFixedSize(30,30);keypadToggle->setCheckable(true);keypadToggle->setCursor(Qt::PointingHandCursor);
+	keypadToggle->setAccessibleName("Show Lumia keypad");keypadToggle->setToolTip("Switch between chat and your Lumia keypad");
+	if (auto *row = qobject_cast<QHBoxLayout *>(activityCard->layout()->itemAt(0)->layout()))
+		row->insertWidget(row->indexOf(chatHeading)+1,keypadToggle);
+	connect(keypadToggle,&QToolButton::toggled,this,[this,keypadToggle](bool enabled){
+		setProperty("pulseKeypadVisible",enabled);
+		keypadToggle->setAccessibleName(enabled?"Return to chat":"Show Lumia keypad");
+		RefreshPulseWeaverChatPanel();
 	});
 	chatOptions->setAccessibleName("Chat panel options");
 	chatOptions->setToolTip("Add or configure chat panels");
@@ -2014,6 +2031,7 @@ void OBSBasic::InitPulseWeaverShell()
 	pulseChatBrowserStatus = browserStatus;
 	browserLayout->addWidget(browserStatus, 1);
 	chatPanelStack->addWidget(browserPage);
+	chatPanelStack->addWidget(new PulseKeypad::Panel(pulseWeaverUiSettingsPath(),chatPanelStack));
 	activityCard->layout()->addWidget(chatPanelStack);
 	activityCard->setMinimumWidth(280);
 	activityCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -2033,8 +2051,8 @@ void OBSBasic::InitPulseWeaverShell()
 	auto *modeSwitch = new QFrame(productionControls);
 	modeSwitch->setObjectName("PulseWeaverModeSwitch");
 	auto *modeLayout = new QHBoxLayout(modeSwitch);
-	modeLayout->setContentsMargins(1, 1, 1, 1);
-	modeLayout->setSpacing(2);
+	modeLayout->setContentsMargins(0, 0, 0, 0);
+	modeLayout->setSpacing(4);
 	modeLayout->addWidget(showMode);
 	modeLayout->addWidget(controlMode);
 	productionLayout->addWidget(modeSwitch);
@@ -2935,6 +2953,31 @@ void OBSBasic::InitPulseWeaverShell()
 	lightsMountLayout->setContentsMargins(0, 0, 0, 0);
 	lightsMountLayout->setSpacing(0);
 	lightsLayout->addWidget(lightsMount, 1);
+	lightsMount->setProperty("pulseUnfinishedTool", true);
+	lightsMount->hide();
+	auto *lightsPlaceholders = new QWidget(pulseLightsHost);
+	lightsPlaceholders->setObjectName("PulseWeaverLightsComingSoon");
+	auto *lightsPanels = new QHBoxLayout(lightsPlaceholders);
+	lightsPanels->setContentsMargins(0, 0, 0, 0);
+	lightsPanels->setSpacing(10);
+	for (const auto &title : {QString("Devices"), QString("Live control"), QString("Saved looks")}) {
+		auto *panel = new QFrame(lightsPlaceholders);
+		panel->setObjectName("PulseWeaverCard");
+		auto *body = new QVBoxLayout(panel);
+		body->setContentsMargins(16, 16, 16, 16);
+		auto *heading = new QLabel(title, panel);
+		QFont headingFont = heading->font(); headingFont.setPixelSize(14); headingFont.setBold(true);
+		heading->setFont(headingFont);
+		body->addWidget(heading);
+		body->addStretch();
+		auto *comingSoon = new QLabel("Coming soon", panel);
+		comingSoon->setObjectName("PulseWeaverMuted");
+		comingSoon->setAlignment(Qt::AlignCenter);
+		body->addWidget(comingSoon);
+		body->addStretch();
+		lightsPanels->addWidget(panel, 1);
+	}
+	lightsLayout->addWidget(lightsPlaceholders, 1);
 	pulsePages->addWidget(pulseLightsHost);
 
 	/* CAMERA — the untouched native OBS horizontal editor plus an equally
@@ -2983,6 +3026,9 @@ void OBSBasic::InitPulseWeaverShell()
 	overlays->setProperty("class", "primary");
 	overlays->setToolTip("Build native Pulse Weaver overlays and add them to the active scene");
 	outputSelector->addWidget(overlays);
+	overlays->setProperty("pulseUnfinishedTool",true);
+	overlays->setEnabled(false);
+	overlays->hide();
 	outputSelector->addStretch();
 	auto *unlockDocks = new QPushButton("Unlock layout");
 	unlockDocks->setObjectName("PulseWeaverDockLockToggle");
@@ -4550,13 +4596,15 @@ void OBSBasic::RefreshPulseWeaverChatPanel()
 	if (!pulseChatPanelStack || property("pulseChatPanelShuttingDown").toBool())
 		return;
 	const bool native = pulseChatPanelPreferences.provider == "native";
-	pulseChatPanelStack->setCurrentWidget(native ? pulseChatNativePage.data() : pulseChatBrowserPage.data());
-	const QString name = PulseChatPanel::title(pulseChatPanelPreferences);
+	const bool keypad = property("pulseKeypadVisible").toBool();
+	auto *keypadPage = pulseChatPanelStack->findChild<QWidget *>("PulseWeaverKeypadPanel");
+	pulseChatPanelStack->setCurrentWidget(keypad && keypadPage ? keypadPage : native ? pulseChatNativePage.data() : pulseChatBrowserPage.data());
+	const QString name = keypad ? "Chat" : PulseChatPanel::title(pulseChatPanelPreferences);
 	if (pulseChatPanelCard)
 		pulseChatPanelCard->setMinimumWidth(270);
 	if (pulseChatPanelDescription) {
 		pulseChatPanelDescription->setText("Twitch · YouTube · Kick · Discord");
-		pulseChatPanelDescription->setVisible(native);
+		pulseChatPanelDescription->setVisible(native && !keypad);
 	}
 	if (pulseChatPanelButton) {
 		QString displayedName = name;
@@ -4568,7 +4616,7 @@ void OBSBasic::RefreshPulseWeaverChatPanel()
 	if (pulseChatBrowserBusy)
 		return;
 	const auto *showContent = findChild<QStackedWidget *>("PulseWeaverShowContentStack");
-	const bool showActive = pulsePages && pulsePages->currentIndex() == 0 &&
+	const bool showActive = !keypad && pulsePages && pulsePages->currentIndex() == 0 &&
 		(!showContent || showContent->currentIndex() == 0);
 	/* Keep one lazily opened page for each saved identity. Native Chat and other
 	 * studio tabs hide it without losing its DOM, scroll position or draft. */

@@ -1,9 +1,9 @@
 {
   "id": "pulseweavercontrol",
-  "name": "Pulse Weaver",
-  "version": "1.4.4",
+  "name": "PulseWeaver Stream Studio",
+  "version": "1.5.0",
   "author": "Pulse Weaver",
-  "description": "Operate your Pulse Weaver show, Stages, native motion actions, sources, audio and media from Lumia Stream or LumiCon.",
+  "description": "Connect Lumia Stream and LumiCon to Pulse Weaver streaming software. Switch Stages and Looks, control streaming, recording, sources, audio and media, and use the Pulse Weaver on-screen keypad to trigger your Lumia alerts.",
   "lumiaVersion": "^9.0.0",
   "category": "apps",
   "license": "MIT",
@@ -19,7 +19,7 @@
           "min": 1024,
           "max": 65535
         },
-        "helperText": "Release and in-place alpha use the same port (normally 18755). Keep your existing value. The separate Motion Preview uses 18765."
+        "helperText": "Match the local API port shown in Pulse Weaver. The standard installation uses 18755. Existing custom ports are retained."
       },
       {
         "key": "apiToken",
@@ -1222,8 +1222,223 @@
         "defaults": {
           "on": false
         }
+      },
+      {
+        "key": "keypad_01",
+        "title": "Keypad 01",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_02",
+        "title": "Keypad 02",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_03",
+        "title": "Keypad 03",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_04",
+        "title": "Keypad 04",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_05",
+        "title": "Keypad 05",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_06",
+        "title": "Keypad 06",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_07",
+        "title": "Keypad 07",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_08",
+        "title": "Keypad 08",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_09",
+        "title": "Keypad 09",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_10",
+        "title": "Keypad 10",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_11",
+        "title": "Keypad 11",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_12",
+        "title": "Keypad 12",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_13",
+        "title": "Keypad 13",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_14",
+        "title": "Keypad 14",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
+      },
+      {
+        "key": "keypad_15",
+        "title": "Keypad 15",
+        "acceptedVariables": [
+          "buttonIndex",
+          "buttonName",
+          "message"
+        ],
+        "defaultMessage": "{{buttonName}}",
+        "variationConditions": [],
+        "defaults": {
+          "on": true
+        }
       }
-    ]
+    ],
+    "settings_tutorial": "./SETUP.md",
+    "actions_tutorial": "./ACTIONS.md"
   },
-  "icon": "./assets/icon.png"
+  "icon": "./assets/icon.png",
+  "website": "https://github.com/darylbwickham-design/pulse-weaver-studio",
+  "repository": "https://github.com/darylbwickham-design/pulse-weaver-studio",
+  "changelog": "./CHANGELOG.md"
 }

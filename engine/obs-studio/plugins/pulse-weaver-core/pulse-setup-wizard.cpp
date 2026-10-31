@@ -166,7 +166,11 @@ void openSetupLumiaHelp(QWidget *parent)
 	auto *lumia = new QPushButton("Get Lumia Stream", body), *plugin = new QPushButton("Get companion plugin", body);
 	downloads->addWidget(lumia); downloads->addWidget(plugin);
 	QObject::connect(lumia, &QPushButton::clicked, &dialog, [] { QDesktopServices::openUrl(QUrl("https://www.lumiastream.com/downloads")); });
-	QObject::connect(plugin, &QPushButton::clicked, &dialog, [] { QDesktopServices::openUrl(QUrl("https://github.com/darylbwickham-design/pulse-weaver-studio/releases/latest/download/PulseWeaver-Lumia-1.4.4.lumiaplugin")); });
+	QObject::connect(plugin, &QPushButton::clicked, &dialog, [] {
+		const auto bundled = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../integrations/lumia/PulseWeaver-Lumia-1.5.0.lumiaplugin");
+		QDesktopServices::openUrl(QFileInfo::exists(bundled) ? QUrl::fromLocalFile(bundled) :
+			QUrl("https://github.com/darylbwickham-design/pulse-weaver-studio/releases"));
+	});
 	auto *guide = new QPushButton("Open artwork and command guide", body); layout->addWidget(guide);
 	QObject::connect(guide, &QPushButton::clicked, &dialog, [&dialog] { PulseInstructions::openDialog(&dialog); });
 	layout->addStretch();

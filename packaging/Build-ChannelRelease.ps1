@@ -62,7 +62,7 @@ Assert-PulseWeaverRuntimeComponents -Root $payload -IncludeChat
 Assert-PulseWeaverRuntimeTree -Root $payload
 $pluginStage = Join-Path $output 'lumia'
 New-Item -ItemType Directory -Path $pluginStage | Out-Null
-foreach($entry in @('main.js','manifest.json','package.json','README.md','assets')) {
+foreach($entry in @('main.js','manifest.json','package.json','README.md','SETUP.md','ACTIONS.md','CHANGELOG.md','LICENSE','assets')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "integrations/lumia-pulseweaver/$entry") -Destination $pluginStage -Recurse
 }
 $pluginVersion = (Get-Content -LiteralPath (Join-Path $pluginStage 'manifest.json') -Raw | ConvertFrom-Json).version

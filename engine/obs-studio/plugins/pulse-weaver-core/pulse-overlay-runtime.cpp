@@ -1358,7 +1358,9 @@ struct PulseOverlayRuntime::Impl {
 		actionStatus->setObjectName("Muted");
 		layout->addWidget(actionStatus);
 		layout->addStretch();
-		tabs->addTab(actionAlertsPage, "ALERTS");
+		const int alertsIndex = tabs->addTab(actionAlertsPage, "ALERTS");
+		tabs->setTabVisible(alertsIndex, false);
+		actionAlertsPage->setProperty("pulseUnfinishedTool", true);
 
 		QObject::connect(actionOverlaySelect, &QComboBox::currentIndexChanged, owner,
 				 [this] { refreshActionVariations(); });
@@ -2074,8 +2076,9 @@ void PulseOverlayRuntime::bindShell(QWidget *mainWindow)
 {
 	if (!mainWindow)
 		return;
-	if (auto *button = mainWindow->findChild<QPushButton *>("PulseWeaverOverlayButton"))
-		connect(button, &QPushButton::clicked, this, [this] { openEditor(); });
+	if (auto *button = mainWindow->findChild<QPushButton *>("PulseWeaverOverlayButton")) {
+		button->hide();button->setEnabled(false);
+	}
 	impl->mountActionControls(mainWindow);
 }
 
