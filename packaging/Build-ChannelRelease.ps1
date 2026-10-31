@@ -66,6 +66,9 @@ foreach($entry in @('main.js','manifest.json','package.json','README.md','SETUP.
     Copy-Item -LiteralPath (Join-Path $projectRoot "integrations/lumia-pulseweaver/$entry") -Destination $pluginStage -Recurse
 }
 $pluginVersion = (Get-Content -LiteralPath (Join-Path $pluginStage 'manifest.json') -Raw | ConvertFrom-Json).version
+$pluginIdentity = Get-Content -LiteralPath (Join-Path $pluginStage 'manifest.json') -Raw | ConvertFrom-Json
+if ($pluginIdentity.id -ne 'pulseweavermotionpreview') { throw 'Lumia updates must retain the existing Motion Preview plugin ID.' }
+if (@($pluginIdentity.config.alerts | Where-Object { $_.key -like 'keypad_*' -and $_.defaults.on }).Count -ne 0) { throw 'Keypad alerts must default to Off.' }
 $packageVersion = (Get-Content -LiteralPath (Join-Path $pluginStage 'package.json') -Raw | ConvertFrom-Json).version
 if ($pluginVersion -ne $packageVersion) { throw 'Lumia manifest and package versions do not match.' }
 $pluginZip = Join-Path $output "PulseWeaver-Lumia-$pluginVersion.zip"

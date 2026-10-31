@@ -10,9 +10,9 @@ The chat card switches to a maximum of 15 configurable square keys in three colu
 
 - Native frontend and core built successfully with Visual Studio 2022 / Qt 6.11.1.
 - `tests/Keypad`: 225 checks passed for all 15 keys, widths 246–420 pixels, square sizing, three-column layout, cancel/rename persistence, edit safety, bounded image loading, legacy subscriber compatibility, offline rejection and local event delivery.
-- `tests/LumiaPlugin.test.cjs`: 29 tests passed, including all 15 alert mappings, stale/duplicate/invalid event rejection, reconnect without replay, unload guards, disabled-alert reporting and regressions for existing Stage/Look/output/source/audio/media controls.
+- `tests/LumiaPlugin.test.cjs`: 30 tests passed, including all 15 alert mappings, default-Off alerts, retained Motion Preview identity, connection-profile selection, stale/duplicate/invalid event rejection, reconnect without replay, unload guards, disabled-alert reporting and regressions for existing Stage/Look/output/source/audio/media controls.
 - Lumia's official `lumia-plugin` 1.0.0 CLI validated the source and extracted final package and built the standalone `.lumiaplugin` artifact.
-- Compared the new manifest with unstable.10: manifest ID `pulseweavercontrol`, all 17 existing action definitions and all 36 existing automatic alert definitions are preserved. There are 15 added keypad alerts, for 51 total.
+- Compared the new manifest with the user's existing Motion Preview 1.4.4 plugin: manifest ID `pulseweavermotionpreview`, all 17 existing action definitions and all 36 existing automatic alert definitions are preserved. There are 15 added keypad alerts, all defaulting to Off, for 51 total.
 - Native click-through in an isolated installation: observed all 15 keys in five rows; Chat round-trip preserved preview/card bounds; active Control text turned blue; Alerts and Overlay designer entry points were absent.
 - Final Lights check: the main navigation tab remains, its normal heading stays at the top, and three empty Devices / Live control / Saved looks panels display “Coming soon”. Working lighting controls are hidden.
 - Pressed key 15 in the native app and observed exactly `keypad_15`, slot 15 and its configured name in the plugin's mock Lumia SDK receiver over the real authenticated local event stream.

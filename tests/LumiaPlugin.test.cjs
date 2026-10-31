@@ -54,7 +54,7 @@ async function fixture(lumiaOverrides={}) {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavercontrol');assert.equal(manifest.name,'PulseWeaver Stream Studio');assert.equal(manifest.version,'1.5.0');
+ assert.equal(manifest.id,'pulseweavermotionpreview');assert.equal(manifest.name,'PulseWeaver Stream Studio');assert.equal(manifest.version,'1.5.0');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
  assert.equal(manifest.config.actions.length,17);assert.equal(manifest.config.alerts.length,51);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
@@ -72,11 +72,11 @@ test('Saved motion actions populate the existing plugin and use the guarded moti
   assert.ok(f.requests.some(route=>route.startsWith('/api/v1/lumia/motion/run?id=motion-1&request=')));
   await f.plugin.actions({actions:[{type:'stop_motion'}]});
   assert.ok(f.requests.some(route=>route==='/api/v1/lumia/motion/stop'));
-  assert.equal(run.newlyPassedVariables.pulseweavercontrol_result,'Motion started');
+  assert.equal(run.newlyPassedVariables.pulseweavermotionpreview_result,'Motion started');
   const original=await f.plugin.actions({actions:[{type:'restore_original_motion'}]});
   assert.equal(original.shouldStop,false);
   assert.ok(f.requests.includes('/api/v1/lumia/motion/original'));
-  assert.equal(original.newlyPassedVariables.pulseweavercontrol_result,'Original scenes restored');
+  assert.equal(original.newlyPassedVariables.pulseweavermotionpreview_result,'Original scenes restored');
  }finally{await f.close();}
 });
 
@@ -91,13 +91,21 @@ test('Custom ports, tokens and explicit config paths keep their installation ide
  assert.equal(plugin.connectionPort(),18765);
 });
 
+test('Retained Motion Preview ID discovers the regular studio unless an isolated profile is explicitly selected',()=>{
+ const plugin=load({},18765);
+ assert.equal(plugin.manifest.id,'pulseweavermotionpreview');
+ assert.ok(plugin.configCandidates().every(file=>!file.includes('Pulse Weaver Motion Preview')));
+ plugin.manifest={...manifest,connectionProfile:'motion-preview'};
+ assert.ok(plugin.configCandidates().every(file=>file.includes('Pulse Weaver Motion Preview')));
+});
+
 test('Keypad alerts have stable numbered names and intentional defaults, with bundled help',()=>{
  const keys=manifest.config.alerts.filter(alert=>alert.key.startsWith('keypad_'));
  assert.equal(keys.length,15);
  for(let slot=1;slot<=15;slot++){
   const key=keys[slot-1],number=String(slot).padStart(2,'0');
   assert.equal(key.key,`keypad_${number}`);assert.equal(key.title,`Keypad ${number}`);
-  assert.equal(key.defaults.on,true);assert.ok(key.acceptedVariables.includes('buttonName'));
+  assert.equal(key.defaults.on,false);assert.ok(key.acceptedVariables.includes('buttonName'));
  }
  for(const key of manifest.config.alerts.filter(alert=>!alert.key.startsWith('keypad_')))assert.equal(key.defaults.on,false);
  for(const file of [manifest.changelog,manifest.config.settings_tutorial,manifest.config.actions_tutorial])assert.ok(fs.statSync(path.join(root,file)).size>100);
@@ -231,7 +239,7 @@ test('Stop bypasses a pending start and the cancelled start cannot report succes
  await until(()=>f.plugin.outputStatus('kick')==='starting');
  const stopping=f.plugin.actions({actions:[{type:'stop_platform',value:{platform:'kick'}}]});
  const [started,stopped]=await Promise.all([starting,stopping]);
- assert.equal(started.shouldStop,true);assert.match(started.newlyPassedVariables.pulseweavercontrol_result,/superseded/);
+ assert.equal(started.shouldStop,true);assert.match(started.newlyPassedVariables.pulseweavermotionpreview_result,/superseded/);
  assert.equal(stopped.shouldStop,false);assert.equal(f.plugin.outputStatus('kick'),'stopped');
  }finally{await f.close();}
 });
@@ -273,7 +281,7 @@ test('Queued controls cannot run after unload or a settings reload',async()=>{
   f.plugin.enabled=true; // A newly loaded plugin must not inherit the old queued command.
   const before=f.requests.length;release();
   const result=await queued;
-  assert.equal(result.shouldStop,true);assert.match(result.newlyPassedVariables.pulseweavercontrol_result,/cancelled/);
+  assert.equal(result.shouldStop,true);assert.match(result.newlyPassedVariables.pulseweavermotionpreview_result,/cancelled/);
   assert.equal(f.requests.length,before);
  }finally{await f.close();}
 });

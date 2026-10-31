@@ -2,12 +2,11 @@
 
 This plugin connects **Lumia Stream and LumiCon to Pulse Weaver streaming software**. It controls your existing show and receives events from Pulse Weaver. Build your scenes, Stages, Looks, audio routing and output destinations in Pulse Weaver first.
 
-## Install and connect
+## Connection
 
-1. Install Pulse Weaver and open it on this computer.
-2. Import the `.lumiaplugin` package into Lumia Stream, then enable **PulseWeaver Stream Studio**.
-3. The standard Windows installation connects automatically on port **18755**. Keep an existing custom port; it must match Pulse Weaver's local API settings.
-4. If you use a portable installation, provide its `pulse-weaver.ini` configuration path in this plugin's settings. A connection token can also be supplied manually. Keep that token private.
+Open Pulse Weaver on this computer. The plugin connects using the port shown on the left. Keep your existing port; it must match Pulse Weaver's local API settings.
+
+The standard installation is detected automatically. For a portable installation, use its `pulse-weaver.ini` configuration path. The connection token is normally read automatically from that file; keep any manually entered token private.
 
 The plugin connects only to this computer. It does not require an OBS WebSocket connection. Closing Pulse Weaver disconnects the plugin; reopening it reconnects without replaying earlier alerts.
 
@@ -23,11 +22,11 @@ The keypad requires the Pulse Weaver build that includes **Chat → keypad** and
 
 There are at most 15 buttons in three columns. Renaming a button or changing its icon keeps its numbered alert binding. Clearing a button frees that number for reuse, so update any old Lumia reactions before reassigning the slot.
 
-The new keypad alerts default to on because they run only when you explicitly press a button. Existing alert settings and existing action IDs are preserved. If nothing runs, check that the numbered Lumia alert is enabled and has reactions configured. Pulse Weaver's “Sent to Lumia” message confirms event hand-off; it does not confirm that a scene transition has finished.
+The keypad alerts default to off. Enable each numbered alert in Lumia after configuring its reactions. Existing alert settings and existing action IDs are preserved. If nothing runs, check that the numbered Lumia alert is enabled and has reactions configured. Pulse Weaver's “Sent to Lumia” message confirms event hand-off; it does not confirm that a scene transition has finished.
 
 ## Troubleshooting
 
 - **Disconnected:** start Pulse Weaver, enable this plugin, and check the port/configuration path. Upgrade to plugin 1.5.0 to enable the keypad.
 - **Button does nothing:** leave Edit buttons mode, check the matching Keypad alert and its reactions, and inspect the plugin's `last_result` variable.
 - **Wrong scene:** update that numbered alert's reactions in Lumia. Pulse Weaver does not infer a scene from the button's name.
-- **Returning after an update:** the plugin keeps its manifest ID `pulseweavercontrol`, so existing Lumia/LumiCon bindings remain attached.
+- **Returning after an update:** the plugin keeps its manifest ID `pulseweavermotionpreview`, so existing Lumia/LumiCon bindings remain attached.

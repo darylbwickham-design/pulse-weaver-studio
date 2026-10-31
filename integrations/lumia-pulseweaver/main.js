@@ -39,7 +39,8 @@ class PulseWeaverPlugin extends Plugin {
     const local = process.env.LOCALAPPDATA || '';
     const regular = local && path.join(local, 'Programs', 'Pulse Weaver', 'config', 'obs-studio', 'plugin_config', 'pulse-weaver-core', 'pulse-weaver.ini');
     const preview = local && path.join(local, 'Programs', 'Pulse Weaver Motion Preview', 'config', 'obs-studio', 'plugin_config', 'pulse-weaver-core', 'pulse-weaver.ini');
-    const isolatedPreview = this.manifest.id === 'pulseweavermotionpreview';
+    const isolatedPreview = this.manifest.connectionProfile === 'motion-preview' ||
+      (!this.manifest.connectionProfile && this.manifest.id === 'pulseweavermotionpreview');
     return configured ? [configured] : (isolatedPreview ? [preview] : [regular]).filter(Boolean);
   }
   connectionPort() {

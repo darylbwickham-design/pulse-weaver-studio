@@ -2,7 +2,7 @@
 
 The Lumia companion plugin for Pulse Weaver streaming software. Use Lumia Stream reactions and LumiCon to switch Stages and Looks, control outputs, sources, audio and media, and run Lumia alerts from Pulse Weaver's on-screen keypad.
 
-Import **PulseWeaver-Lumia-1.5.0.lumiaplugin** over your existing plugin. Its manifest ID stays **`pulseweavercontrol`**; existing actions, alerts, field keys and variable names remain compatible. Keep your current port and credentials. See [setup](SETUP.md), [actions](ACTIONS.md) and [changes](CHANGELOG.md).
+Import **PulseWeaver-Lumia-1.5.0.lumiaplugin** over your existing plugin. Its manifest ID stays **`pulseweavermotionpreview`**; existing actions, alerts, field keys and variable names remain compatible. Keep your current port and credentials. See [setup](SETUP.md), [actions](ACTIONS.md) and [changes](CHANGELOG.md).
 
 ## On-screen keypad
 
@@ -10,7 +10,7 @@ In Pulse Weaver, select the keypad icon beside **Chat**, then **Add button**. Gi
 
 In Lumia Stream, find **PulseWeaver Stream Studio → Keypad 01** (through **Keypad 15**) and add the reaction you want, such as selecting a Stage or running a Look. The button editor shows its numbered alert. Renaming or changing the icon keeps that alert number. **Edit buttons** lets you configure keys without firing their reactions.
 
-Keypad alerts default to On because they require an explicit button press. Enable a previously disabled keypad alert in Lumia if necessary. They require a Pulse Weaver build with the keypad bridge (2.0 unstable.11 or later). Existing plugin controls continue to work on older compatible builds. A disconnected press is rejected and never replayed later. “Sent to Lumia” confirms the local event was handed off; it does not confirm that a Lumia reaction or animation has completed.
+Keypad alerts default to Off. Enable each numbered alert in Lumia when you configure its reactions. They require a Pulse Weaver build with the keypad bridge (2.0 unstable.11 or later). Existing plugin controls continue to work on older compatible builds. A disconnected press is rejected and never replayed later. “Sent to Lumia” confirms the local event was handed off; it does not confirm that a Lumia reaction or animation has completed.
 
 Custom icons are copied into the installation's `keypad-icons` folder, resized to at most 256 × 256, and cached while the panel is open. There is no new idle polling.
 
@@ -45,17 +45,17 @@ There are **no** scene/source creation or deletion actions, transforms, filters,
 
 ## Alerts and feedback
 
-The 36 automatic state alerts default to **Off** in Lumia. Enable individual alerts when you configure their reactions. The 15 operator-triggered **Keypad 01–15** alerts default to **On**. Lumia preserves existing saved alert switches during an update. No additional plugin master switch is required.
+The 36 automatic state alerts default to **Off** in Lumia. Enable individual alerts when you configure their reactions. The 15 operator-triggered **Keypad 01–15** alerts also default to **Off**. Lumia preserves existing saved alert switches during an update. No additional plugin master switch is required.
 
 The 51 alert definitions include the 15 keypad keys plus Stage changes, source shown/hidden/muted/unmuted/volume, media playback, transition begin/end, and platform/recording starting/live/stopping/stopped/failed (plus platform reconnecting). Output alerts include the specific output: a dual YouTube or recording route can produce separate output events. A platform's status confirms both YouTube outputs for Dual; partial failure is reported as failure rather than full success.
 
-Existing status variables remain, with motion, Twitch, Kick and YouTube status variables. Action return variables keep Lumia's existing `pulseweavercontrol_` prefix. A start command only reports success after live state is observed; a timeout stops the Lumia action chain and tells you to check the app. A failed whole-show start may leave successful destinations running, and its error says so.
+Existing status variables remain, with motion, Twitch, Kick and YouTube status variables. Action return variables keep Lumia's existing `pulseweavermotionpreview_` prefix. A start command only reports success after live state is observed; a timeout stops the Lumia action chain and tells you to check the app. A failed whole-show start may leave successful destinations running, and its error says so.
 
 Events arrive over one authenticated local event stream. There is no idle status polling. Source lists update when their catalogue changes, variables/options update only when changed, and the connection sends a small heartbeat every 20 seconds while subscribed. Reconnection retries back off to once every 30 seconds while Pulse Weaver is closed for an upgrade or rollback. Automatically discovered tokens are reread on reconnect; explicitly supplied credentials remain unchanged. Reconnecting refreshes the current state without replaying historical alerts.
 
 ## Connection
 
-Port 18755 remains the default for the normal Pulse Weaver installation. The separate **Pulse Weaver Motion Preview** package uses manifest ID `pulseweavermotionpreview` and port 18765, so it can coexist with the release plugin. Build it with `packaging/Build-LumiaMotionPreview.ps1`. Its variables and action results use the `pulseweavermotionpreview_` prefix. Token discovery stays within the selected installation; it does not fall back to the other profile. For a custom portable installation, set the full `config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini` path or enter its connection token. The task-specific package includes its configuration path, never its token. The 1.3.1 preview package routes Restore Last Motion Layout separately from Stop and Restore Motion.
+The plugin retains the existing **Motion Preview** identity, `pulseweavermotionpreview`; only its display name changes to **PulseWeaver Stream Studio**. Existing variables and action results keep the `pulseweavermotionpreview_` prefix. The standard package discovers the normal Pulse Weaver installation; keep your installation's saved port (18765 for existing Motion Preview users, usually 18755 for a new standard installation). For a custom portable installation, set its configuration path. `Build-LumiaMotionPreview.ps1` builds an alternative connection profile for an isolated Motion Preview installation using the same ID; it is an alternative package, not a second plugin to install alongside this one.
 
 Saved look requests are asynchronous: acceptance means the cue was queued, not that the animation has finished. A Stage change preloads the saved layout before the configured stinger reveals it. Within the same Stage, looks animate directly. Keep your Chatty layout actions in the same Lumia reaction; Pulse Weaver preserves Chatty as a locked full-canvas overlay.
 

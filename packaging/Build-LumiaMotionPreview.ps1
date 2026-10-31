@@ -18,9 +18,10 @@ foreach ($entry in @('main.js', 'manifest.json', 'package.json', 'SETUP.md', 'AC
 $manifestPath = Join-Path $stage 'manifest.json'
 $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 $manifest.id = 'pulseweavermotionpreview'
-$manifest.name = 'Pulse Weaver Motion Preview'
+$manifest.name = 'PulseWeaver Stream Studio'
+$manifest | Add-Member -NotePropertyName connectionProfile -NotePropertyValue 'motion-preview' -Force
 $manifest.version = $Version
-$manifest.description = 'Control the isolated Pulse Weaver Motion Preview: stages, animated looks, original-scene restore, sources and audio. Coexists with the release plugin.'
+$manifest.description = 'Connect Lumia Stream and LumiCon to an isolated Pulse Weaver Motion Preview installation: Stages, Looks, outputs, sources, audio, media and the on-screen keypad. Retains the existing Motion Preview plugin ID.'
 foreach ($setting in $manifest.config.settings) {
     if ($setting.key -eq 'port') {
         $setting.defaultValue = 18765
@@ -37,9 +38,9 @@ $npm.name = 'pulseweaver-motion-preview-lumia-plugin'
 $npm.version = $Version
 $npm | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $npmPath -Encoding utf8
 @'
-# Pulse Weaver Motion Preview for Lumia
+# PulseWeaver Stream Studio — isolated connection profile
 
-This package has its own manifest ID, `pulseweavermotionpreview`. Import it alongside the regular Pulse Weaver plugin; existing release bindings remain separate.
+This alternative package retains the existing `pulseweavermotionpreview` manifest ID. It updates the prior Motion Preview entry in place. It uses the same ID as the standard PulseWeaver Stream Studio package and must not be installed as a second side-by-side plugin.
 
 The default port is 18765. For a portable task build, set Custom Pulse Weaver configuration path to that build's config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini. No token is bundled.
 
