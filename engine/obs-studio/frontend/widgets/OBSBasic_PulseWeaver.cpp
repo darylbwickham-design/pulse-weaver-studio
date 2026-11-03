@@ -41,6 +41,7 @@ extern QCef *cef;
 #include <widgets/OBSQTDisplay.hpp>
 
 #include <QFrame>
+#include <QAbstractItemView>
 #include <QAbstractItemModel>
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -5845,34 +5846,34 @@ void OBSBasic::ManagePulseWeaverStages()
 {
 	QDialog dialog(this);
 	dialog.setWindowTitle("Pulse Weaver — Manage Stages");
+	dialog.setObjectName("PulseWeaverManageStages");
 	dialog.resize(1560, 760);
+	dialog.setMinimumSize(1000, 560);
 	auto *layout = new QVBoxLayout(&dialog);
-	auto *copy = new QLabel("Each Stage assigns an exact scene to each platform output. Leave an output unchanged when this cue must not touch it; Exclude Sources creates a non-destructive platform-specific programme copy.");
+	auto *copy = new QLabel("Choose the scenes each Stage uses for each output. Leave unchanged keeps the current scene. Exclude removes sources from that output only; shared sources stay intact.");
 	copy->setWordWrap(true);
 	copy->setObjectName("PulseWeaverMuted");
 	layout->addWidget(copy);
 	auto *table = new QTableWidget;
-	table->setColumnCount(9);
-	table->setHorizontalHeaderLabels({"Stage", "TWITCH PROGRAMME", "YOUTUBE PROGRAMME", "KICK PROGRAMME",
-		"RECORDING · UNSTABLE", "16:9 TRANSITION", "16:9 DURATION", "9:16 TRANSITION", "9:16 DURATION"});
-	table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-	table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-	table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-	/* All three programme columns need the same usable width.  Letting Kick
-	 * shrink to its contents made its 16:9 control drift and misalign with the
-	 * Twitch/YouTube cells at normal window widths. */
-	table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
-	table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
-	table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
-	table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
-	table->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
-	table->horizontalHeader()->setSectionResizeMode(8, QHeaderView::ResizeToContents);
-	table->setColumnWidth(5, 108);
-	table->setColumnWidth(6, 112);
-	table->setColumnWidth(7, 108);
-	table->setColumnWidth(8, 112);
+	table->setObjectName("PulseWeaverStageTable");
+	table->setColumnCount(7);
+	table->setHorizontalHeaderLabels({"Stage", "Twitch", "YouTube", "Kick", "Recording", "16:9 transition", "9:16 transition"});
+	/* Preserve useful scene widths instead of letting long transition names
+	 * consume the viewport. Smaller windows scroll rather than crush inputs. */
+	table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+	table->horizontalHeader()->setMinimumSectionSize(148);
+	table->setColumnWidth(0, 156);
+	for (int column = 1; column <= 4; ++column)
+		table->setColumnWidth(column, 228);
+	table->setColumnWidth(5, 210);
+	table->setColumnWidth(6, 210);
+	table->horizontalHeaderItem(4)->setToolTip("Recording routes — experimental");
+	table->setSelectionBehavior(QAbstractItemView::SelectRows);
+	table->setSelectionMode(QAbstractItemView::SingleSelection);
+	table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+	table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 	table->verticalHeader()->setVisible(false);
-	table->verticalHeader()->setDefaultSectionSize(132);
+	table->verticalHeader()->setDefaultSectionSize(164);
 	layout->addWidget(table, 1);
 
 	QStringList horizontalNames;
@@ -5932,10 +5933,12 @@ void OBSBasic::ManagePulseWeaverStages()
 		QJsonArray stages;
 		for (int row = 0; row < table->rowCount(); ++row) {
 			auto *nameItem = table->item(row, 0);
-			auto *horizontalTransition = qobject_cast<QComboBox *>(table->cellWidget(row, 5));
-			auto *horizontalDuration = qobject_cast<QSpinBox *>(table->cellWidget(row, 6));
-			auto *verticalTransition = qobject_cast<QComboBox *>(table->cellWidget(row, 7));
-			auto *verticalDuration = qobject_cast<QSpinBox *>(table->cellWidget(row, 8));
+			auto *horizontalCell = table->cellWidget(row, 5);
+			auto *verticalCell = table->cellWidget(row, 6);
+			auto *horizontalTransition = horizontalCell ? horizontalCell->findChild<QComboBox *>("StageTransition") : nullptr;
+			auto *horizontalDuration = horizontalCell ? horizontalCell->findChild<QSpinBox *>("StageDuration") : nullptr;
+			auto *verticalTransition = verticalCell ? verticalCell->findChild<QComboBox *>("StageTransition") : nullptr;
+			auto *verticalDuration = verticalCell ? verticalCell->findChild<QSpinBox *>("StageDuration") : nullptr;
 			const QString name = nameItem ? nameItem->text().trimmed() : QString();
 			if (!name.isEmpty()) {
 				QJsonObject assignments;
@@ -5963,38 +5966,64 @@ void OBSBasic::ManagePulseWeaverStages()
 		return savePulseWeaverStages(stages);
 	};
 	auto addRow = [table, horizontalNames, verticalNames, transitionOptions, saveTable](const QJsonObject &stage) {
+		const QSignalBlocker buildingRow(table);
 		const int row = table->rowCount();
 		table->insertRow(row);
 		table->setItem(row, 0, new QTableWidgetItem(stage.value("name").toString("New Stage")));
 		auto makeOutput = [table, horizontalNames, verticalNames, saveTable](const QJsonObject &stage, const QString &provider) {
 			auto *cell = new QWidget(table);
 			auto *cellLayout = new QVBoxLayout(cell);
-			cellLayout->setContentsMargins(2, 2, 2, 2);
-			cellLayout->setSpacing(2);
+			cellLayout->setContentsMargins(8, 8, 8, 8);
+			cellLayout->setSpacing(10);
 			auto addRoute = [cell, cellLayout, table, saveTable](const QString &canvas, const QStringList &sceneNames,
 				const QJsonObject &assignment) {
 				const QString suffix = canvas == "vertical" ? "Vertical" : "Horizontal";
-				auto *row = new QHBoxLayout;
+				auto *route = new QVBoxLayout;
+				route->setSpacing(4);
+				auto *heading = new QHBoxLayout;
+				heading->setSpacing(6);
+				auto *format = new QLabel(canvas == "vertical" ? "9:16" : "16:9", cell);
+				format->setObjectName("PulseWeaverMuted");
+				heading->addWidget(format);
+				heading->addStretch();
 				auto *combo = new QComboBox(cell);
 				combo->setObjectName("StageOutput" + suffix);
 				combo->setAccessibleName((canvas == "vertical" ? "9:16" : "16:9") + QString(" scene"));
-				combo->addItem((canvas == "vertical" ? "9:16" : "16:9") + QString(" · Leave unchanged"), QString());
-				for (const QString &scene : sceneNames)
-					combo->addItem((canvas == "vertical" ? "9:16 · " : "16:9 · ") + scene, scene);
+				combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+				combo->setFixedHeight(34);
+				combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+				combo->setMinimumContentsLength(18);
+				combo->addItem("Leave unchanged", QString());
+				int popupWidth = combo->fontMetrics().horizontalAdvance(combo->itemText(0));
+				for (const QString &scene : sceneNames) {
+					combo->addItem(scene, scene);
+					combo->setItemData(combo->count() - 1, scene, Qt::ToolTipRole);
+					popupWidth = std::max(popupWidth, combo->fontMetrics().horizontalAdvance(scene));
+				}
+				combo->view()->setMinimumWidth(std::clamp(popupWidth + 56, 300, 760));
+				combo->view()->setTextElideMode(Qt::ElideNone);
 				const int selected = combo->findData(assignment.value("scene").toString());
 				combo->setCurrentIndex(selected >= 0 ? selected : 0);
-				auto *exclude = new QPushButton("EXCLUDE", cell);
+				auto refreshSceneHint = [combo, canvas] {
+					combo->setToolTip((canvas == "vertical" ? "9:16 · " : "16:9 · ") + combo->currentText());
+				};
+				refreshSceneHint();
+				auto *exclude = new QPushButton("Exclude", cell);
 				exclude->setObjectName("StageOutputExclude" + suffix);
-				exclude->setMaximumWidth(84);
+				exclude->setFixedHeight(28);
+				exclude->setMinimumWidth(94);
+				exclude->setAccessibleName((canvas == "vertical" ? "9:16" : "16:9") + QString(" excluded sources"));
+				exclude->setToolTip("Choose sources to exclude from this output only");
 				QStringList excluded;
 				for (const QJsonValue &value : assignment.value("excluded").toArray()) excluded << value.toString();
 				exclude->setProperty("excluded", excluded);
 				exclude->setProperty("excludedIdentities", assignment.value("excludedIdentities").toArray().toVariantList());
 				auto refreshExclude = [exclude] {
 					const int count = exclude->property("excluded").toStringList().size();
-					exclude->setText(count ? QString("EXCLUDE %1").arg(count) : "EXCLUDE");
+					exclude->setText(count ? QString("Exclude (%1)").arg(count) : "Exclude");
 				};
 				refreshExclude();
+				QObject::connect(combo, &QComboBox::currentIndexChanged, table, [refreshSceneHint](int) { refreshSceneHint(); });
 				QObject::connect(combo, &QComboBox::currentIndexChanged, table, [saveTable](int) { saveTable(); });
 				QObject::connect(exclude, &QPushButton::clicked, table, [table, combo, exclude, refreshExclude, saveTable, canvas] {
 				const QString sceneName = combo->currentData().toString();
@@ -6067,27 +6096,30 @@ void OBSBasic::ManagePulseWeaverStages()
 					saveTable();
 				}
 				});
-				row->addWidget(combo, 1);
-				row->addWidget(exclude);
-				cellLayout->addLayout(row);
+				heading->addWidget(exclude);
+				route->addLayout(heading);
+				route->addWidget(combo);
+				cellLayout->addLayout(route);
 			};
 			addRoute("horizontal", horizontalNames, pulseStageAssignment(stage, provider, "horizontal"));
 			if (provider != "kick") {
 				addRoute("vertical", verticalNames, pulseStageAssignment(stage, provider, "vertical"));
 			} else {
-				/* Use the same two-control row as every other programme cell.
-				 * The old bare label did not share the combo/exclude geometry,
-				 * which made Kick look vertically and horizontally offset. */
-				auto *unsupportedRow = new QHBoxLayout;
+				auto *unsupportedRow = new QVBoxLayout;
+				unsupportedRow->setSpacing(4);
+				auto *heading = new QLabel("9:16 · Unavailable", cell);
+				heading->setObjectName("PulseWeaverMuted");
+				heading->setFixedHeight(28);
+				unsupportedRow->addWidget(heading);
 				auto *unsupported = new QComboBox(cell);
-				unsupported->addItem("9:16 · Not supported by Kick");
+				unsupported->addItem("Not supported by Kick");
+				unsupported->setFixedHeight(34);
+				unsupported->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+				unsupported->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+				unsupported->setMinimumContentsLength(18);
 				unsupported->setEnabled(false);
 				unsupported->setAccessibleName("Kick 9:16 is not supported");
-				auto *capability = new QPushButton("UNAVAILABLE", cell);
-				capability->setEnabled(false);
-				capability->setMaximumWidth(84);
-				unsupportedRow->addWidget(unsupported, 1);
-				unsupportedRow->addWidget(capability);
+				unsupportedRow->addWidget(unsupported);
 				cellLayout->addLayout(unsupportedRow);
 			}
 			return cell;
@@ -6099,30 +6131,61 @@ void OBSBasic::ManagePulseWeaverStages()
 		const QString legacyTransition = stage.value("transition").toString("fade");
 		const int legacyDuration = std::clamp(stage.value("durationMs").toInt(500), 100, 5000);
 		auto addTransitionControls = [table, row, &stage, &transitionOptions, saveTable, &legacyTransition,
-			legacyDuration](int transitionColumn, int durationColumn, const QString &transitionKey,
+			legacyDuration](int column, const QString &transitionKey,
 			const QString &durationKey) {
-			auto *transition = new QComboBox(table);
+			auto *cell = new QWidget(table);
+			auto *controls = new QVBoxLayout(cell);
+			controls->setContentsMargins(8, 12, 8, 12);
+			controls->setSpacing(10);
+			auto *transition = new QComboBox(cell);
+			transition->setObjectName("StageTransition");
+			const QString format = column == 5 ? "16:9" : "9:16";
+			transition->setAccessibleName(format + " transition type");
+			transition->setFixedHeight(34);
+			transition->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+			transition->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+			transition->setMinimumContentsLength(16);
 			for (const auto &option : transitionOptions)
 				transition->addItem(option.first, option.second);
+			transition->view()->setMinimumWidth(360);
+			transition->view()->setTextElideMode(Qt::ElideNone);
 			const QString selectedTransition = stage.value(transitionKey).toString(legacyTransition);
 			const int transitionIndex = transition->findData(selectedTransition);
 			transition->setCurrentIndex(transitionIndex >= 0 ? transitionIndex : 0);
-			table->setCellWidget(row, transitionColumn, transition);
-			auto *duration = new QSpinBox(table);
+			controls->addWidget(transition);
+			auto *timing = new QWidget(cell);
+			auto *timingLayout = new QHBoxLayout(timing);
+			timingLayout->setContentsMargins(0, 0, 0, 0);
+			timingLayout->setSpacing(8);
+			timingLayout->addWidget(new QLabel("Duration", timing));
+			auto *duration = new QSpinBox(timing);
+			duration->setObjectName("StageDuration");
+			duration->setAccessibleName(format + " transition duration");
+			duration->setFixedHeight(34);
 			duration->setRange(100, 5000);
 			duration->setSingleStep(50);
 			duration->setSuffix(" ms");
 			duration->setValue(std::clamp(stage.value(durationKey).toInt(legacyDuration), 100, 5000));
-			auto updateDuration = [transition, duration] {
+			timingLayout->addWidget(duration, 1);
+			controls->addWidget(timing);
+			auto *timingHint = new QLabel(cell);
+			timingHint->setObjectName("PulseWeaverMuted");
+			timingHint->setWordWrap(true);
+			controls->addWidget(timingHint);
+			controls->addStretch();
+			auto updateDuration = [transition, duration, timing, timingHint] {
 				/* A Stinger owns both its duration and its A/B transition point in
 				 * its OBS properties. The Stage duration must not imply that it can
 				 * override either setting. Cut also has no duration. */
 				const QString id = transition->currentData().toString();
 				const bool stageDurationApplies = id == "fade";
-				duration->setVisible(stageDurationApplies);
+				timing->setVisible(stageDurationApplies);
 				duration->setEnabled(stageDurationApplies);
+				timingHint->setText(id.startsWith("stinger:") ? "Timing is set by the stinger." : "Cut changes instantly.");
+				timingHint->setVisible(!stageDurationApplies);
+				transition->setToolTip(transition->currentText());
 			};
-			table->setCellWidget(row, durationColumn, duration);
+			table->setCellWidget(row, column, cell);
 			updateDuration();
 			QObject::connect(transition, &QComboBox::currentIndexChanged, table, [updateDuration, saveTable](int) {
 				updateDuration();
@@ -6130,8 +6193,8 @@ void OBSBasic::ManagePulseWeaverStages()
 			});
 			QObject::connect(duration, &QSpinBox::valueChanged, table, [saveTable](int) { saveTable(); });
 		};
-		addTransitionControls(5, 6, "horizontalTransition", "horizontalDurationMs");
-		addTransitionControls(7, 8, "verticalTransition", "verticalDurationMs");
+		addTransitionControls(5, "horizontalTransition", "horizontalDurationMs");
+		addTransitionControls(6, "verticalTransition", "verticalDurationMs");
 	};
 	for (const QJsonValue &value : loadPulseWeaverStages())
 		addRow(value.toObject());

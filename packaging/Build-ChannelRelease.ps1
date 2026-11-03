@@ -45,7 +45,7 @@ $identity | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $payload 'bin/6
 New-Item -ItemType File -Path (Join-Path $payload 'portable_mode.txt') | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $payload 'docs') | Out-Null
 foreach ($doc in @('PRIVACY.md','TERMS.md')) { Copy-Item -LiteralPath (Join-Path $projectRoot $doc) -Destination (Join-Path $payload 'docs') }
-foreach ($doc in @('DISCORD-RECEIVE-ONLY.md','ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md','SETUP-WIZARD-GUIDE.md','YOUTUBE-APPLICATION-SETUP.md','RELEASE-2.0.0.md','LUMIA-GAME-CHALLENGES-2026-10-14.md','LUMIA-IMPORT-LINKS.txt')) {
+foreach ($doc in @('DISCORD-RECEIVE-ONLY.md','ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md','SETUP-WIZARD-GUIDE.md','YOUTUBE-APPLICATION-SETUP.md','RELEASE-2.0.0.md','RELEASE-2.0.1.md','LUMIA-GAME-CHALLENGES-2026-10-14.md','LUMIA-IMPORT-LINKS.txt')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$doc") -Destination (Join-Path $payload 'docs')
 }
 if ($IsolatedShowcase) {
@@ -62,7 +62,7 @@ Assert-PulseWeaverRuntimeComponents -Root $payload -IncludeChat
 Assert-PulseWeaverRuntimeTree -Root $payload
 $pluginStage = Join-Path $output 'lumia'
 New-Item -ItemType Directory -Path $pluginStage | Out-Null
-foreach($entry in @('main.js','manifest.json','package.json','README.md','SETUP.md','ACTIONS.md','CHANGELOG.md','LICENSE','assets')) {
+foreach($entry in @('main.js','manifest.json','package.json','README.md','SETUP.md','ACTIONS.md','TUTORIAL.md','CHANGELOG.md','LICENSE','assets')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "integrations/lumia-pulseweaver/$entry") -Destination $pluginStage -Recurse
 }
 $pluginVersion = (Get-Content -LiteralPath (Join-Path $pluginStage 'manifest.json') -Raw | ConvertFrom-Json).version
@@ -84,7 +84,9 @@ foreach ($name in @('README.md','VALIDATION.txt')) {
 $bundledPluginDirectory = Join-Path $payload 'integrations/lumia'
 New-Item -ItemType Directory -Path $bundledPluginDirectory -Force | Out-Null
 Copy-Item -LiteralPath $plugin -Destination $bundledPluginDirectory
-Copy-Item -LiteralPath (Join-Path $pluginStage 'README.md') -Destination $bundledPluginDirectory
+foreach ($guide in @('README.md','SETUP.md','ACTIONS.md','TUTORIAL.md','CHANGELOG.md','LICENSE')) {
+    Copy-Item -LiteralPath (Join-Path $pluginStage $guide) -Destination $bundledPluginDirectory
+}
 if ($IsolatedShowcase) {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'integrations/streamerbot') -Destination (Join-Path $payload 'integrations/streamerbot') -Recurse
 }

@@ -1,32 +1,35 @@
-# Connect PulseWeaver Stream Studio
+# Connect to Pulse Weaver
 
-This plugin connects **Lumia Stream and LumiCon to Pulse Weaver streaming software**. It controls your existing show and receives events from Pulse Weaver. Build your scenes, Stages, Looks, audio routing and output destinations in Pulse Weaver first.
+Use **Pulse Weaver 2.0 for Windows** for all features, with Lumia Stream on the same computer. Tested with Lumia Stream **9.3.4**. Build your show in Pulse Weaver first; this plugin operates its existing Stages, Looks, sources and destinations.
 
-## Connection
+- [Download Pulse Weaver from the website](https://lumi-con.com/pulse-weaver/)
+- [Pulse Weaver on GitHub](https://github.com/darylbwickham-design/pulse-weaver-studio)
+- [Contact support on Discord](https://discord.gg/MQ6pAN9Q)
 
-Open Pulse Weaver on this computer. The plugin connects using the port shown on the left. Keep your existing port; it must match Pulse Weaver's local API settings.
+## Connect
 
-The standard installation is detected automatically. For a portable installation, use its `pulse-weaver.ini` configuration path. The connection token is normally read automatically from that file; keep any manually entered token private.
+1. Open Pulse Weaver and enable this plugin in Lumia.
+2. Match **Pulse Weaver port** to the app's **Settings → Automation and app → Local automation API** port. A new standard installation uses **18755**. Keep an existing custom port when updating.
+3. For a standard installation, leave **Connection token** and **Custom Pulse Weaver configuration path** blank. The token is read automatically. Save changed plugin settings; the plugin reconnects.
+4. Once connected, add **Activate Stage** to a Lumia reaction, choose an existing Stage, and run it. Pulse Weaver should switch to that Stage. This check does not start streaming.
 
-The plugin connects only to this computer. It does not require an OBS WebSocket connection. Closing Pulse Weaver disconnects the plugin; reopening it reconnects without replaying earlier alerts.
+For a portable or nonstandard installation, enter the full path to its `config/obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini` in **Custom Pulse Weaver configuration path**, and match its port separately. Only enter a token manually if needed; keep it private. No OBS WebSocket connection is required.
 
-## Set up the on-screen keypad
+## Set up a keypad button
 
-The keypad requires the Pulse Weaver build that includes **Chat → keypad** and plugin **1.5.0 or newer**.
+1. In Pulse Weaver, click the keypad icon beside **Chat**, then **Add button**.
+2. Give the button a name, choose an included icon or **Use my image…**, and **Save**. Note the numbered alert shown in the editor, such as **Keypad 01**.
+3. In Lumia's **PulseWeaver Stream Studio** alerts, open that exact numbered alert. Add reactions, such as **Activate Stage** with your chosen Stage, then **enable the alert**. Keypad alerts default to **Off**.
+4. Click the Pulse Weaver button. If you are editing buttons, select **Done editing** first. Click the keypad icon again to return to chat.
 
-1. In Pulse Weaver, click the keypad icon beside **Chat**.
-2. Click **Add button**, give it a name, and choose an included icon or your own image.
-3. Note the button's Lumia alert name, such as **Keypad 01**.
-4. In Lumia, open **PulseWeaver Stream Studio** alerts and find that exact numbered alert. Add your scene change, Stage/Look action, lighting or other reactions.
-5. Click the Pulse Weaver button to run the alert. Use **Edit buttons** to change it without firing it.
+There are up to **15 buttons in three columns**. Names and icons do not choose a Stage automatically: Lumia's reactions determine what happens. Renaming a button keeps its alert number. Clearing a button and saving makes that number reusable; update its old Lumia reactions before reusing it.
 
-There are at most 15 buttons in three columns. Renaming a button or changing its icon keeps its numbered alert binding. Clearing a button frees that number for reuse, so update any old Lumia reactions before reassigning the slot.
+“Sent to Lumia” confirms hand-off, not that the reactions have completed. Earlier button presses are not replayed after reconnecting.
 
-The keypad alerts default to off. Enable each numbered alert in Lumia after configuring its reactions. Existing alert settings and existing action IDs are preserved. If nothing runs, check that the numbered Lumia alert is enabled and has reactions configured. Pulse Weaver's “Sent to Lumia” message confirms event hand-off; it does not confirm that a scene transition has finished.
+## If something does not work
 
-## Troubleshooting
-
-- **Disconnected:** start Pulse Weaver, enable this plugin, and check the port/configuration path. Upgrade to plugin 1.5.0 to enable the keypad.
-- **Button does nothing:** leave Edit buttons mode, check the matching Keypad alert and its reactions, and inspect the plugin's `last_result` variable.
-- **Wrong scene:** update that numbered alert's reactions in Lumia. Pulse Weaver does not infer a scene from the button's name.
-- **Returning after an update:** the plugin keeps its manifest ID `pulseweavermotionpreview`, so existing Lumia/LumiCon bindings remain attached.
+- **Disconnected:** check that Pulse Weaver is open, the plugin is enabled, and the port matches. Automatic detection finds the standard installation; use the configuration-path field for another location. Run **Reconnect** after correcting settings.
+- **Empty Stage or Look choices:** create them in the open Pulse Weaver show, then reconnect. A raw scene is not automatically a Stage or a saved Look.
+- **Button does nothing:** select **Done editing**, check its numbered alert is enabled and has reactions, and read **last_result** in the plugin's Lumia variables.
+- **Connection failed: HTTP 401:** the token was not accepted. Check the configuration path; clear a stale manually entered token to use automatic detection.
+- **Updating from Motion Preview:** the name changes, but the ID stays `pulseweavermotionpreview`, preserving existing bindings and variable names.

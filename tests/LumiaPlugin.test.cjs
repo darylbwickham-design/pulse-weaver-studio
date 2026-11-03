@@ -54,7 +54,7 @@ async function fixture(lumiaOverrides={}) {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavermotionpreview');assert.equal(manifest.name,'PulseWeaver Stream Studio');assert.equal(manifest.version,'1.5.0');
+ assert.equal(manifest.id,'pulseweavermotionpreview');assert.equal(manifest.name,'PulseWeaver Stream Studio');assert.equal(manifest.version,'1.5.1');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
  assert.equal(manifest.config.actions.length,17);assert.equal(manifest.config.alerts.length,51);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));

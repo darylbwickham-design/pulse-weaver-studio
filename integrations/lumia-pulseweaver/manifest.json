@@ -2,7 +2,7 @@
   "id": "pulseweavermotionpreview",
   "connectionProfile": "regular",
   "name": "PulseWeaver Stream Studio",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "author": "Pulse Weaver",
   "description": "Connect Lumia Stream and LumiCon to Pulse Weaver streaming software. Switch Stages and Looks, control streaming, recording, sources, audio and media, and use the Pulse Weaver on-screen keypad to trigger your Lumia alerts.",
   "lumiaVersion": "^9.0.0",
@@ -27,7 +27,7 @@
         "label": "Connection token",
         "type": "password",
         "required": false,
-        "helperText": "Normally detected automatically. Only enter this for a custom or portable Pulse Weaver installation."
+        "helperText": "Leave blank to read the token from Pulse Weaver's configuration file. A custom configuration path also supports automatic token reading. Only enter a token manually if needed; keep it private."
       },
       {
         "key": "configPath",

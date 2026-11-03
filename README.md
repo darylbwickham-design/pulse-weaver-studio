@@ -1,10 +1,12 @@
-# Pulse Weaver Studio — 2.0
+# Pulse Weaver Studio — 2.0.1
 
 A Windows streaming studio built on OBS Studio, with show control, landscape and portrait outputs, platform chat, an audio mixer and three visual themes.
 
-**2.0.0 is the current regular Windows release.** It brings the refined Show/Control workspace, animated format selectors, selection-first show setup, smoother camera Looks, independent transparent HUD, receive-only Discord chat and a configurable 15-button Lumia keypad. YouTube connections now include optional app credentials, a shared-quota notice and a click-through setup guide. See [the release notes](docs/RELEASE-2.0.0.md).
+**2.0.1 is the current regular Windows release.** It fixes Manage Stages readability, gives scene names more space and stacks transition type and timing together for each format. It also bundles the updated Lumia companion help. See [the patch notes](docs/RELEASE-2.0.1.md).
 
-[Download 2.0.0 for Windows x64](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/download/v2.0.0/PulseWeaver-Setup-2.0.0.exe) · [Lumia plugin 1.5.0](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/download/v2.0.0/PulseWeaver-Lumia-1.5.0.lumiaplugin) · [Release assets and checksums](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/tag/v2.0.0)
+The 2.0 workspace includes animated format selectors, selection-first show setup, smoother camera Looks, an independent transparent HUD, receive-only Discord chat and a configurable 15-button Lumia keypad. YouTube connections include optional app credentials, a shared-quota notice and a click-through setup guide. See [the 2.0 feature notes](docs/RELEASE-2.0.0.md).
+
+[Download 2.0.1 for Windows x64](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/download/v2.0.1/PulseWeaver-Setup-2.0.1.exe) · [Lumia plugin 1.5.1](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/download/v2.0.1/PulseWeaver-Lumia-1.5.1.lumiaplugin) · [Release assets and checksums](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/tag/v2.0.1)
 
 Incoming YouTube chat automatically uses the web scanner in the combined chat box. Sending and moderation use the official API. No reader dropdown or API-receive fallback is exposed, and old reader preferences cannot re-enable API reception.
 
@@ -61,6 +63,6 @@ Open **Settings → Start here → Build my show**, or **Show Control → Contro
 
 Each stage group has its own source assignments. Reuse existing inputs or create cameras, captures, media files, images and browser sources in the wizard. New inputs can be reused by other groups, and each Look has separate landscape and portrait artwork. Three shared alert layers per format can be assigned to the selected Looks. Add or reuse stingers and select the transition used when entering each Stage.
 
-**Lumia Stream is required for the Lumia overlay templates for Pulse Weaver, including the countdown and widgets**, and its [companion plugin](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/download/v2.0.0/PulseWeaver-Lumia-1.5.0.lumiaplugin) is the recommended way to control animations and show actions. Install Lumia, import and connect the plugin, then import the templates. On page 4, reuse the corresponding Lumia browser sources or add their browser links. The Lumia bulb on Show Control explains the countdown start payload and the command to run when the timer reaches zero.
+**Lumia Stream is required for the Lumia overlay templates for Pulse Weaver, including the countdown and widgets**, and its [companion plugin](https://github.com/darylbwickham-design/pulse-weaver-studio/releases/download/v2.0.1/PulseWeaver-Lumia-1.5.1.lumiaplugin) is the recommended way to control animations and show actions. Install Lumia, import and connect the plugin, then import the templates. In the setup wizard's alert editor, reuse the corresponding Lumia browser sources or add their browser links. The Lumia bulb on Show Control explains the countdown start payload and the command to run when the timer reaches zero.
 
 In **Control**, design and rehearse Looks, then save them. **Show** contains the live Stage, chat, audio and output controls. The Lumia bulb opens that service's overlay and command instructions. See [the current setup guide](docs/SETUP-WIZARD-GUIDE.md) for the full flow and [the 2.0 release notes](docs/RELEASE-2.0.0.md) for this update. The older theme-builder guide is historical.
