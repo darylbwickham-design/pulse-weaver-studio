@@ -1,172 +1,73 @@
 #include "OBSAbout.hpp"
 
-#include <widgets/OBSBasic.hpp>
-#include <utility/RemoteTextThread.hpp>
+#include "../../shared/qt/PulseManual.hpp"
+#include "../../shared/qt/PulseUpdateRelease.hpp"
 
-#include <qt-wrappers.hpp>
-
-#include <json11.hpp>
+#include <QCoreApplication>
+#include <QDesktopServices>
+#include <QFile>
+#include <QIcon>
+#include <QJsonDocument>
+#include <QPixmap>
+#include <QPushButton>
+#include <QUrl>
 
 #include "moc_OBSAbout.cpp"
-
-using namespace json11;
-
-extern bool steam;
 
 OBSAbout::OBSAbout(QWidget *parent) : QDialog(parent), ui(new Ui::OBSAbout)
 {
 	setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
-
 	ui->setupUi(this);
+	setWindowTitle("About Pulse Weaver");
+	setWindowIcon(QIcon(":/res/images/pulseweaver.png"));
 
-	QString bitness;
+	PulseUpdates::Identity release;
+	QFile identity(QCoreApplication::applicationDirPath() + "/pulseweaver-update.json");
+	if (identity.open(QIODevice::ReadOnly) && identity.size() <= 16384)
+		release = PulseUpdates::identityFromJson(QJsonDocument::fromJson(identity.readAll()).object());
+	const QString version = release.tag.isEmpty() ? "Development build" : release.tag.mid(1);
 
-	if (sizeof(void *) == 4) {
-		bitness = " (32 bit)";
-	} else if (sizeof(void *) == 8) {
-		bitness = " (64 bit)";
-	}
-
-	QString ver = obs_get_version_string();
-
-	ui->version->setText(ver + bitness);
-
-	ui->contribute->setText(QTStr("About.Contribute"));
-
-	if (steam) {
-		delete ui->donate;
-	} else {
-		ui->donate->setText("&nbsp;&nbsp;<a href='https://obsproject.com/contribute'>" + QTStr("About.Donate") +
-				    "</a>");
-		ui->donate->setTextInteractionFlags(Qt::TextBrowserInteraction);
-		ui->donate->setOpenExternalLinks(true);
-	}
-
-	ui->getInvolved->setText("&nbsp;&nbsp;<a href='https://obsproject.com/developer-contributing'>" +
-				 QTStr("About.GetInvolved") + "</a>");
-	ui->getInvolved->setTextInteractionFlags(Qt::TextBrowserInteraction);
-	ui->getInvolved->setOpenExternalLinks(true);
-
-	ui->about->setText("<a href='#'>" + QTStr("About") + "</a>");
-	ui->authors->setText("<a href='#'>" + QTStr("About.Authors") + "</a>");
-	ui->license->setText("<a href='#'>" + QTStr("About.License") + "</a>");
-
+	ui->icon->setPixmap(QPixmap(":/res/images/pulseweaver.png"));
+	ui->icon->setFixedSize(144, 144);
+	ui->name->setText("Pulse Weaver Studio");
+	ui->version->setText("Version " + version);
+	ui->info->setText("Stream production with Stages, Looks, scenes, lighting and connected show actions.");
 	ui->name->setProperty("class", "text-heading");
 	ui->version->setProperty("class", "text-large");
-	ui->about->setProperty("class", "bg-base");
-	ui->authors->setProperty("class", "bg-base");
-	ui->license->setProperty("class", "bg-base");
-	ui->info->setProperty("class", "");
+	ui->contribute->hide();
+	ui->donate->hide();
+	ui->getInvolved->hide();
+	ui->about->hide();
+	ui->authors->hide();
+	ui->license->hide();
 
-	connect(ui->about, &ClickableLabel::clicked, this, &OBSAbout::ShowAbout);
-	connect(ui->authors, &ClickableLabel::clicked, this, &OBSAbout::ShowAuthors);
-	connect(ui->license, &ClickableLabel::clicked, this, &OBSAbout::ShowLicense);
+	ui->textBrowser->setHtml(
+		"<h2>Pulse Weaver Studio</h2>"
+		"<p>Use the Nerds' Introduction for the complete guide to Stages, Looks, scenes, "
+		"stream workflows, the Lumia companion and release history. The bundled manual "
+		"opens in your browser, where it can be read or printed.</p>"
+		"<p>Pulse Weaver uses the OBS engine. Open source notices and licenses are "
+		"included with the installation.</p>");
 
-	QPointer<OBSAbout> about(this);
+	auto *manual = new QPushButton("Open and print manual", this);
+	manual->setEnabled(PulseManual::exists());
+	manual->setToolTip(manual->isEnabled() ? "Open the bundled offline manual in your browser" :
+					    "The bundled manual was not found in this installation");
+	ui->horizontalLayout->addWidget(manual);
+	connect(manual, &QPushButton::clicked, this, [this] { PulseManual::open(this); });
 
-	OBSBasic *main = OBSBasic::Get();
-	if (main->patronJson.empty() && !main->patronJsonThread) {
-		RemoteTextThread *thread =
-			new RemoteTextThread("https://obsproject.com/patreon/about-box.json", "application/json");
-		QObject::connect(thread, &RemoteTextThread::Result, main, &OBSBasic::UpdatePatronJson);
-		QObject::connect(thread, &RemoteTextThread::Result, this, &OBSAbout::ShowAbout);
-		main->patronJsonThread.reset(thread);
-		thread->start();
-	} else {
-		ShowAbout();
-	}
+	auto *releaseNotes = new QPushButton("Release notes", this);
+	ui->horizontalLayout->addWidget(releaseNotes);
+	connect(releaseNotes, &QPushButton::clicked, this, [release] {
+		const QString tag = release.tag.isEmpty() ? "" : "/tag/" + release.tag;
+		QDesktopServices::openUrl(QUrl(PulseUpdates::repository + "/releases" + tag));
+	});
+
+	auto *closeButton = new QPushButton("Close", this);
+	ui->horizontalLayout->addWidget(closeButton);
+	connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
 }
 
-void OBSAbout::ShowAbout()
-{
-	OBSBasic *main = OBSBasic::Get();
-
-	if (main->patronJson.empty()) {
-		return;
-	}
-
-	std::string error;
-	Json json = Json::parse(main->patronJson, error);
-	const Json::array &patrons = json.array_items();
-	QString text;
-
-	text += "<h1>Top Patreon contributors:</h1>";
-	text += "<p style=\"font-size:16px;\">";
-	bool first = true;
-	bool top = true;
-
-	for (const Json &patron : patrons) {
-		std::string name = patron["name"].string_value();
-		std::string link = patron["link"].string_value();
-		int amount = patron["amount"].int_value();
-
-		if (top && amount < 5000) {
-			text += "</p>";
-			top = false;
-		} else if (!first) {
-			text += "<br/>";
-		}
-
-		if (!link.empty()) {
-			text += "<a href=\"";
-			text += QT_UTF8(link.c_str()).toHtmlEscaped();
-			text += "\">";
-		}
-		text += QT_UTF8(name.c_str()).toHtmlEscaped();
-		if (!link.empty()) {
-			text += "</a>";
-		}
-
-		if (first) {
-			first = false;
-		}
-	}
-
-	ui->textBrowser->setHtml(text);
-}
-
-void OBSAbout::ShowAuthors()
-{
-	std::string path;
-	QString error = QTStr("About.Error").arg("https://github.com/obsproject/obs-studio/blob/master/AUTHORS");
-
-#ifdef __APPLE__
-	if (!GetDataFilePath("AUTHORS", path)) {
-#else
-	if (!GetDataFilePath("authors/AUTHORS", path)) {
-#endif
-		ui->textBrowser->setPlainText(error);
-		return;
-	}
-
-	ui->textBrowser->setPlainText(QString::fromStdString(path));
-
-	BPtr<char> text = os_quick_read_utf8_file(path.c_str());
-
-	if (!text || !*text) {
-		ui->textBrowser->setPlainText(error);
-		return;
-	}
-
-	ui->textBrowser->setPlainText(QT_UTF8(text));
-}
-
-void OBSAbout::ShowLicense()
-{
-	std::string path;
-	QString error = QTStr("About.Error").arg("https://github.com/obsproject/obs-studio/blob/master/COPYING");
-
-	if (!GetDataFilePath("license/gplv2.txt", path)) {
-		ui->textBrowser->setPlainText(error);
-		return;
-	}
-
-	BPtr<char> text = os_quick_read_utf8_file(path.c_str());
-
-	if (!text || !*text) {
-		ui->textBrowser->setPlainText(error);
-		return;
-	}
-
-	ui->textBrowser->setPlainText(QT_UTF8(text));
-}
+void OBSAbout::ShowAbout() {}
+void OBSAbout::ShowAuthors() {}
+void OBSAbout::ShowLicense() {}

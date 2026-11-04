@@ -45,8 +45,13 @@ $identity | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $payload 'bin/6
 New-Item -ItemType File -Path (Join-Path $payload 'portable_mode.txt') | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $payload 'docs') | Out-Null
 foreach ($doc in @('PRIVACY.md','TERMS.md')) { Copy-Item -LiteralPath (Join-Path $projectRoot $doc) -Destination (Join-Path $payload 'docs') }
-foreach ($doc in @('DISCORD-RECEIVE-ONLY.md','ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md','SETUP-WIZARD-GUIDE.md','YOUTUBE-APPLICATION-SETUP.md','RELEASE-2.0.0.md','RELEASE-2.0.1.md','LUMIA-GAME-CHALLENGES-2026-10-14.md','LUMIA-IMPORT-LINKS.txt')) {
+foreach ($doc in @('DISCORD-RECEIVE-ONLY.md','ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md','SETUP-WIZARD-GUIDE.md','YOUTUBE-APPLICATION-SETUP.md','RELEASE-2.0.0.md','RELEASE-2.0.1.md','RELEASE-2.0.2.md','LUMIA-GAME-CHALLENGES-2026-10-14.md','LUMIA-IMPORT-LINKS.txt')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$doc") -Destination (Join-Path $payload 'docs')
+}
+$manualDirectory = Join-Path $payload 'docs/manual'
+New-Item -ItemType Directory -Path $manualDirectory | Out-Null
+foreach ($manual in @('Pulse-Weaver-Studio-Nerds-Introduction.html','Pulse-Weaver-Studio-Nerds-Introduction.pdf','Pulse-Weaver-Studio-Nerds-Introduction.docx')) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot "docs/manual/$manual") -Destination $manualDirectory
 }
 if ($IsolatedShowcase) {
     foreach ($doc in @('PULSEWEAVER-2-DESIGN-RESEARCH.md','PULSEWEAVER-2-PREVIEW.md')) {
@@ -62,7 +67,7 @@ Assert-PulseWeaverRuntimeComponents -Root $payload -IncludeChat
 Assert-PulseWeaverRuntimeTree -Root $payload
 $pluginStage = Join-Path $output 'lumia'
 New-Item -ItemType Directory -Path $pluginStage | Out-Null
-foreach($entry in @('main.js','manifest.json','package.json','README.md','SETUP.md','ACTIONS.md','TUTORIAL.md','CHANGELOG.md','LICENSE','assets')) {
+foreach($entry in @('main.js','manifest.json','package.json','README.md','SETUP.md','ACTIONS.md','TUTORIAL.md','CHANGELOG.md','LICENSE','assets','manual')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "integrations/lumia-pulseweaver/$entry") -Destination $pluginStage -Recurse
 }
 $pluginVersion = (Get-Content -LiteralPath (Join-Path $pluginStage 'manifest.json') -Raw | ConvertFrom-Json).version

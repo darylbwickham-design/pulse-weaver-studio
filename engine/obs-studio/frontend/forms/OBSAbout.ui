@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>About</string>
+   <string>About Pulse Weaver</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout_2">
    <property name="leftMargin">
@@ -47,21 +47,21 @@
       <widget class="QLabel" name="icon">
        <property name="minimumSize">
         <size>
-         <width>256</width>
-         <height>256</height>
+         <width>144</width>
+         <height>144</height>
         </size>
        </property>
        <property name="maximumSize">
         <size>
-         <width>256</width>
-         <height>256</height>
+         <width>144</width>
+         <height>144</height>
         </size>
        </property>
        <property name="text">
         <string/>
        </property>
        <property name="pixmap">
-        <pixmap>:res/images/obs.png</pixmap>
+        <pixmap>:res/images/pulseweaver.png</pixmap>
        </property>
        <property name="scaledContents">
         <bool>true</bool>
@@ -76,7 +76,7 @@
        <item>
         <widget class="QLabel" name="name">
          <property name="text">
-          <string notr="true">OBS Studio</string>
+          <string notr="true">Pulse Weaver Studio</string>
          </property>
         </widget>
        </item>

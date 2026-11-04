@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.5.1',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.5.2',
     [string]$OutputDirectory,
     [string]$ConfigPath
 )
@@ -12,7 +12,7 @@ $stage = Join-Path $OutputDirectory "package-$Version"
 $packagePath = Join-Path $OutputDirectory "PulseWeaver-Motion-Preview-Lumia-$Version.lumiaplugin"
 if (Test-Path -LiteralPath $packagePath) { throw "Package already exists: $packagePath" }
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
-foreach ($entry in @('main.js', 'manifest.json', 'package.json', 'SETUP.md', 'ACTIONS.md', 'TUTORIAL.md', 'CHANGELOG.md', 'LICENSE', 'assets')) {
+foreach ($entry in @('main.js', 'manifest.json', 'package.json', 'SETUP.md', 'ACTIONS.md', 'TUTORIAL.md', 'CHANGELOG.md', 'LICENSE', 'assets', 'manual')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "integrations/lumia-pulseweaver/$entry") -Destination $stage -Recurse
 }
 $manifestPath = Join-Path $stage 'manifest.json'

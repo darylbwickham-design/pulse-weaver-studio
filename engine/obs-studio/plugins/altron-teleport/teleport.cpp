@@ -177,8 +177,8 @@ obs_properties_t *sound_properties(void *)
   obs_properties_add_int(p, "arrival_delay", "Arrival sound delay (ms)", 0, 1500, 10);
   obs_properties_add_int(p, "departure_delay", "Departure sound delay (ms)", 0, 1500, 10);
   obs_properties_add_bool(p, "monitor", "Also hear through the app's audio monitoring device");
-  obs_properties_add_button(p, "test_arrival", "Test arrival sound (show scene must be live)", sound_test);
-  obs_properties_add_button(p, "test_departure", "Test departure sound (show scene must be live)", sound_test);
+  obs_properties_add_button2(p, "test_arrival", "Test arrival sound (show scene must be live)", sound_test, nullptr);
+  obs_properties_add_button2(p, "test_departure", "Test departure sound (show scene must be live)", sound_test, nullptr);
   return p;
 }
 
@@ -291,9 +291,9 @@ obs_properties_t *filter_properties(void *)
   obs_properties_add_float_slider(p, "centre_y", "Energy centre Y", 0, 1, .01);
   obs_properties_add_text(p, "audio_source", "Teleport audio source name (blank = silent)", OBS_TEXT_DEFAULT);
   obs_properties_add_float(p, "preview_time", "Frozen preview (-1 = live)", -1, 3, .05);
-  obs_properties_add_button(p, "out", "Test departure", filter_test);
-  obs_properties_add_button(p, "in", "Test arrival", filter_test);
-  obs_properties_add_button(p, "reset", "Reset / cancel sound", filter_test);
+  obs_properties_add_button2(p, "out", "Test departure", filter_test, nullptr);
+  obs_properties_add_button2(p, "in", "Test arrival", filter_test, nullptr);
+  obs_properties_add_button2(p, "reset", "Reset / cancel sound", filter_test, nullptr);
   return p;
 }
 

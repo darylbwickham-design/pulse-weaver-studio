@@ -54,9 +54,9 @@ async function fixture(lumiaOverrides={}) {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavermotionpreview');assert.equal(manifest.name,'PulseWeaver Stream Studio');assert.equal(manifest.version,'1.5.1');
+ assert.equal(manifest.id,'pulseweavermotionpreview');assert.equal(manifest.name,'PulseWeaver Stream Studio');assert.equal(manifest.version,'1.5.2');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
- assert.equal(manifest.config.actions.length,17);assert.equal(manifest.config.alerts.length,51);
+ assert.equal(manifest.config.actions.length,18);assert.equal(manifest.config.alerts.length,51);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
  for(const action of manifest.config.actions)assert.ok(!/create|delete|transform|filter|raw|url|file/i.test(action.type));
  assert.equal(new Set(manifest.config.alerts.map(a=>a.key)).size,51);

@@ -27,6 +27,7 @@ Start controls can begin a real broadcast. Configure accounts, output modes and 
 - **Source Volume:** set an **Audio source** from **0–100%**.
 - **Media Playback:** choose a **Media source**, then Play / Resume, Pause, Restart, Stop, Next or Previous. Available operations depend on the source.
 - **Reconnect:** reconnect to the local Pulse Weaver installation after it opens or connection settings are corrected.
+- **Open Pulse Weaver Manual:** while the plugin is connected, choose the browser reading edition or the page-numbered PDF print edition. Both files remain in the installed plugin package for offline reading.
 
 Visibility affects the selected scene item. Mute and volume affect that shared source wherever it is used. Platform audio exclusions and monitoring stay configured in Pulse Weaver. Internal routing copies are not offered as editable scene items.
 
@@ -46,6 +47,7 @@ The retained namespace is **`pulseweavermotionpreview_`**, despite the new publi
 
 ## Downloads and help
 
+- [Read the complete offline manual](manual/Pulse-Weaver-Studio-Nerds-Introduction.html) or [open its print edition](manual/Pulse-Weaver-Studio-Nerds-Introduction.pdf)
 - [Download Pulse Weaver from the website](https://lumi-con.com/pulse-weaver/)
 - [Source code and issues on GitHub](https://github.com/darylbwickham-design/pulse-weaver-studio)
 - [Contact support on Discord](https://discord.gg/MQ6pAN9Q)

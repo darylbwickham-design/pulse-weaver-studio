@@ -1,3 +1,10 @@
+# 1.5.2
+
+- Bundled the complete Pulse Weaver technical manual as an offline HTML reading edition and a page-numbered PDF print edition.
+- Added **Open Pulse Weaver Manual**, an action that opens the selected edition while the plugin is connected. Both files remain available in the installed package for offline reading.
+- Linked the manual from the plugin's setup guide, action reference, tutorial and README.
+- Retained the plugin ID, existing action/alert IDs, saved field keys, alert defaults and variable names.
+
 # 1.5.1
 
 - Rewrote the public tutorial, connection help and action reference for Pulse Weaver 2.0 for Windows; testing used Lumia Stream 9.3.4.

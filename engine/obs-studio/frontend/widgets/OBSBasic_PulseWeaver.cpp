@@ -4,6 +4,7 @@
 #include "../../shared/qt/PulseDiscord.hpp"
 #include "../../shared/qt/PulseInteractionFeedback.hpp"
 #include "../../shared/qt/PulseLegal.hpp"
+#include "../../shared/qt/PulseManual.hpp"
 #include "../../shared/qt/PulseInstructions.hpp"
 #include "../../shared/qt/PulseLumiaBrand.hpp"
 #include "../../shared/qt/PulseWindowChrome.hpp"
@@ -1257,13 +1258,18 @@ void renderCanvasFit(obs_canvas_t *canvas, uint32_t canvasWidth, uint32_t canvas
 
 void OBSBasic::InitPulseWeaverShell()
 {
+	QFile releaseIdentity(QCoreApplication::applicationDirPath() + "/pulseweaver-update.json");
+	PulseUpdates::Identity release;
+	if (releaseIdentity.open(QIODevice::ReadOnly) && releaseIdentity.size() <= 16384)
+		release = PulseUpdates::identityFromJson(QJsonDocument::fromJson(releaseIdentity.readAll()).object());
+	const QString releaseVersion = release.tag.isEmpty() ? "Development build" : release.tag.mid(1);
 	setProperty("pulseWeaverGoLiveSession", false);
 	setObjectName("PulseWeaverStudio");
 	QSettings previewSettings(pulseWeaverUiSettingsPath(), QSettings::IniFormat);
 	const int savedPreviewFps = previewSettings.value("preview/fps", 60).toInt();
 	qApp->setProperty("pulsePreviewFps", savedPreviewFps == 15 || savedPreviewFps == 30 ? savedPreviewFps : 60);
 	qApp->setProperty("pulseLivePreviews", previewSettings.value("preview/live_while_streaming", true).toBool());
-	setWindowTitle("Pulse Weaver 2.0 · Unstable Preview");
+	setWindowTitle("Pulse Weaver " + releaseVersion);
 	setWindowIcon(QIcon(":/res/images/pulseweaver.png"));
 	setMinimumSize(1180, 720);
 	/* OBS remains the native engine, but its legacy product chrome is not
@@ -1300,16 +1306,10 @@ void OBSBasic::InitPulseWeaverShell()
 	brandStack->setContentsMargins(0, 0, 0, 0);
 	brandStack->setSpacing(2);
 	brandStack->addWidget(brand);
-	QFile releaseIdentity(QCoreApplication::applicationDirPath() + "/pulseweaver-update.json");
-	PulseUpdates::Identity release;
-	if (releaseIdentity.open(QIODevice::ReadOnly) && releaseIdentity.size() <= 16384)
-		release = PulseUpdates::identityFromJson(QJsonDocument::fromJson(releaseIdentity.readAll()).object());
-	const QString releaseLabel = release.channel == "windows-unstable" ? "2.0  UNSTABLE" :
-		release.channel == "windows-alpha" ? "2.0  ALPHA" :
-		release.tag.isEmpty() ? "2.0  DEVELOPMENT" : "2.0";
+	const QString releaseLabel = release.tag.isEmpty() ? "DEVELOPMENT BUILD" : releaseVersion.toUpper();
 	auto *previewVersion = new QLabel(releaseLabel, header);
 	previewVersion->setObjectName("PulseWeaverPreviewVersion");
-	previewVersion->setToolTip(release.tag.isEmpty() ? "Pulse Weaver development build" : "Pulse Weaver " + release.tag.mid(1));
+	previewVersion->setToolTip("Pulse Weaver " + releaseVersion);
 	brandStack->addWidget(previewVersion, 0, Qt::AlignLeft);
 	headerLayout->addLayout(brandStack);
 	headerLayout->addSpacing(8);
@@ -1410,16 +1410,48 @@ void OBSBasic::InitPulseWeaverShell()
 	studioMenu->addMenu(ui->profileMenu);
 	studioMenu->addMenu(ui->sceneCollectionMenu);
 	studioMenu->addMenu(ui->menuTools);
-	ui->menuBasic_MainMenu_Help->addSeparator();
-	auto *privacyAction = ui->menuBasic_MainMenu_Help->addAction("Pulse Weaver Privacy Policy");
+	auto *helpMenu = studioMenu->addMenu("Help");
+	helpMenu->setObjectName("PulseWeaverHelpMenu");
+	auto *manualAction = helpMenu->addAction("Open Pulse Weaver Manual");
+	manualAction->setEnabled(PulseManual::exists());
+	manualAction->setToolTip(manualAction->isEnabled() ? "Read or print the bundled offline manual" :
+						"The bundled manual was not found in this installation");
+	connect(manualAction, &QAction::triggered, this, [this] { PulseManual::open(this); });
+	auto *websiteAction = helpMenu->addAction("Pulse Weaver Website");
+	connect(websiteAction, &QAction::triggered, this, [] {
+		QDesktopServices::openUrl(QUrl("https://lumi-con.com/pulse-weaver/"));
+	});
+	auto *communityAction = helpMenu->addAction("Pulse Weaver Community");
+	connect(communityAction, &QAction::triggered, this, [] {
+		QDesktopServices::openUrl(QUrl("https://discord.gg/MQ6pAN9Q"));
+	});
+	helpMenu->addSeparator();
+	auto *diagnosticsMenu = helpMenu->addMenu("Diagnostics");
+	auto *currentLogAction = diagnosticsMenu->addAction("View Current Studio Log");
+	connect(currentLogAction, &QAction::triggered, ui->actionViewCurrentLog, &QAction::trigger);
+	auto *logFolderAction = diagnosticsMenu->addAction("Open Studio Log Folder");
+	connect(logFolderAction, &QAction::triggered, ui->actionShowLogs, &QAction::trigger);
+	auto *crashFolderAction = diagnosticsMenu->addAction("Open Crash Reports Folder");
+	connect(crashFolderAction, &QAction::triggered, ui->actionShowCrashLogs, &QAction::trigger);
+	auto *restartAction = helpMenu->addAction("Restart Pulse Weaver in Safe Mode");
+	connect(restartAction, &QAction::triggered, ui->actionRestartSafe, &QAction::trigger);
+	helpMenu->addSeparator();
+	auto *releaseNotesAction = helpMenu->addAction("Pulse Weaver Release Notes");
+	connect(releaseNotesAction, &QAction::triggered, this, [release] {
+		const QString tag = release.tag.isEmpty() ? "" : "/tag/" + release.tag;
+		QDesktopServices::openUrl(QUrl(PulseUpdates::repository + "/releases" + tag));
+	});
+	auto *aboutAction = helpMenu->addAction("About Pulse Weaver " + releaseVersion);
+	connect(aboutAction, &QAction::triggered, ui->actionShowAbout, &QAction::trigger);
+	helpMenu->addSeparator();
+	auto *privacyAction = helpMenu->addAction("Pulse Weaver Privacy Policy");
 	connect(privacyAction, &QAction::triggered, this, [] {
 		QDesktopServices::openUrl(QUrl(QString::fromUtf8(PulseLegal::PrivacyUrl)));
 	});
-	auto *termsAction = ui->menuBasic_MainMenu_Help->addAction("Pulse Weaver Terms of Service");
+	auto *termsAction = helpMenu->addAction("Pulse Weaver Terms of Service");
 	connect(termsAction, &QAction::triggered, this, [] {
 		QDesktopServices::openUrl(QUrl(QString::fromUtf8(PulseLegal::TermsUrl)));
 	});
-	studioMenu->addMenu(ui->menuBasic_MainMenu_Help);
 	studioMenuButton->setMenu(studioMenu);
 	studioMenuButton->setToolTip("Profiles, scene collections, files, docks and native studio tools");
 	headerLayout->addWidget(studioMenuButton);
