@@ -1,9 +1,7 @@
 # 1.5.2
 
-- Bundled the complete Pulse Weaver technical manual as an offline HTML reading edition and a page-numbered PDF print edition.
-- Added **Open Pulse Weaver Manual**, an action that opens the selected edition while the plugin is connected. Both files remain available in the installed package for offline reading.
-- Linked the manual from the plugin's setup guide, action reference, tutorial and README.
-- Retained the plugin ID, existing action/alert IDs, saved field keys, alert defaults and variable names.
+- Clarified that the complete printable manual opens from Pulse Weaver Studio's Help menu or About dialog. The Lumia plugin contains no manual action or manual files.
+- Retained the plugin ID, established show-control action and alert IDs, saved field keys, alert defaults and variable names.
 
 # 1.5.1
 

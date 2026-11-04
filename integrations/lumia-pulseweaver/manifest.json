@@ -393,24 +393,6 @@
         "label": "Reconnect",
         "description": "Reconnect after opening Pulse Weaver or fixing connection settings.",
         "fields": []
-      },
-      {
-        "type": "open_manual",
-        "label": "Open Pulse Weaver Manual",
-        "description": "Open the bundled offline book in your default reader. Choose browser reading or the page-numbered PDF print edition.",
-        "fields": [
-          {
-            "key": "format",
-            "label": "Edition",
-            "type": "select",
-            "required": true,
-            "options": [
-              { "label": "Reading edition (HTML)", "value": "html" },
-              { "label": "Print edition (PDF)", "value": "pdf" }
-            ],
-            "defaultValue": "html"
-          }
-        ]
       }
     ],
     "variables": [

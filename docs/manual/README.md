@@ -1,7 +1,7 @@
 # Pulse Weaver Studio manual assets
 
 `Pulse-Weaver-Studio-Nerds-Introduction.html` is the offline reading copy used by
-the native Help menu and Lumia plugin. It contains its CSS and text in one file.
+Pulse Weaver Studio's Help menu and About dialog. It contains its CSS and text in one file.
 The browser's **Print book** button or Ctrl+P produces an A4 printout.
 
 `Pulse-Weaver-Studio-Nerds-Introduction.pdf` is the fixed 146-page A4 print
@@ -18,5 +18,4 @@ that every contents and index link resolves and that the printed page numbers
 still match the map.
 
 The channel installer places the HTML, PDF and DOCX under `docs/manual` in the
-installed application. The Lumia plugin package carries the HTML and PDF under
-its `manual` directory.
+installed application. The Lumia plugin does not include a manual or manual-opening action.

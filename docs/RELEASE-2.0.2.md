@@ -1,6 +1,6 @@
 # Pulse Weaver Studio 2.0.2
 
-This Windows release adds the printable **Pulse Weaver Studio: The Nerds' Introduction** manual to the installed application and the Lumia Stream companion plugin.
+This Windows release adds the printable **Pulse Weaver Studio: The Nerds' Introduction** manual to the installed application.
 
 ## In Pulse Weaver Studio
 
@@ -11,8 +11,8 @@ This Windows release adds the printable **Pulse Weaver Studio: The Nerds' Introd
 
 ## Lumia Stream companion 1.5.2
 
-- The **Open Pulse Weaver Manual** action opens its own bundled offline copy when the Lumia integration is connected. The bundled file and setup guide remain available for direct opening without a Pulse Weaver connection.
-- Setup, actions and tutorial help point to the manual. The plugin keeps the existing `pulseweavermotionpreview` ID and established show bindings.
+- The companion retains its Stage, Look, output, source, audio, media and keypad controls, with the existing `pulseweavermotionpreview` ID and established show bindings.
+- The manual is available from Pulse Weaver Studio's **Studio → Help → Open Pulse Weaver Manual** command and **About Pulse Weaver** dialog; it is not included in the Lumia plugin.
 
 ## Manual scope
 

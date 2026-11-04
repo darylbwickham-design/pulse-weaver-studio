@@ -2,7 +2,7 @@
 
 Use **Pulse Weaver 2.0 for Windows** for all features, with Lumia Stream on the same computer. Tested with Lumia Stream **9.3.4**. Build your show in Pulse Weaver first; this plugin operates its existing Stages, Looks, sources and destinations.
 
-The complete offline manual covers Pulse Weaver and OBS, Stages, Looks, scenes, streaming workflows, release history, a glossary and an index. It is bundled as a [browser reading edition](manual/Pulse-Weaver-Studio-Nerds-Introduction.html) and a [page-numbered PDF print edition](manual/Pulse-Weaver-Studio-Nerds-Introduction.pdf). With the plugin connected, run **Open Pulse Weaver Manual** in a Lumia reaction or command and choose an edition. The files remain in the installed plugin package for offline reading.
+The complete printable manual covers Pulse Weaver and OBS, Stages, Looks, scenes, streaming workflows, release history, a glossary and an index. Open it in Pulse Weaver Studio through **Studio → Help → Open Pulse Weaver Manual**, or use the manual button in **About Pulse Weaver**. It is part of the studio installation, not this Lumia plugin.
 
 - [Download Pulse Weaver from the website](https://lumi-con.com/pulse-weaver/)
 - [Pulse Weaver on GitHub](https://github.com/darylbwickham-design/pulse-weaver-studio)

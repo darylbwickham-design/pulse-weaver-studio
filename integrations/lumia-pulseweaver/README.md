@@ -11,9 +11,9 @@ The Lumia Stream companion plugin for **Pulse Weaver** streaming software. Use L
 3. Enable the plugin and open Pulse Weaver. Leave **Connection token** and **Custom Pulse Weaver configuration path** blank for a standard installation. **Pulse Weaver port** must match the app's local API port; a new standard installation uses **18755**.
 4. Add an **Activate Stage** action to a Lumia reaction and select an existing Stage. Run it to check the connection without starting a broadcast.
 
-Follow the [complete tutorial](TUTORIAL.md) for keypad buttons, temporary Looks, output controls and troubleshooting. The shorter [connection help](SETUP.md) and [action reference](ACTIONS.md) also appear inside Lumia.
+The included complete tutorial covers keypad buttons, temporary Looks, output controls and troubleshooting. Connection help and the action reference also appear inside Lumia.
 
-The complete offline manual is included as a [reading edition](manual/Pulse-Weaver-Studio-Nerds-Introduction.html) and a [page-numbered print edition](manual/Pulse-Weaver-Studio-Nerds-Introduction.pdf). In Lumia, run **Open Pulse Weaver Manual** from a reaction or command and choose an edition. The HTML edition opens in your default browser; its **Print** command also prints or saves a PDF. Lumia runs plugin actions while the integration is connected. Both files remain available in the installed plugin package when Pulse Weaver is closed.
+The complete printable manual is part of Pulse Weaver Studio. Open **Studio → Help → Open Pulse Weaver Manual**, or use the manual button in **About Pulse Weaver**. It opens in your default browser for reading and printing. The Lumia plugin does not contain or open the manual.
 
 ## What it controls
 
@@ -34,4 +34,4 @@ The standard package connects to the regular Pulse Weaver installation. The deve
 
 Communication uses an authenticated connection to `127.0.0.1` on your computer. The plugin reads the standard installation's local connection token automatically and receives pushed events rather than polling while idle. Closing Pulse Weaver disconnects it; reopening the app reconnects without replaying earlier alerts. Keep connection tokens private.
 
-For help with setup or other support questions, [contact us on Discord](https://discord.gg/MQ6pAN9Q). Use the [website for downloads](https://lumi-con.com/pulse-weaver/) and [GitHub for source code and issue tracking](https://github.com/darylbwickham-design/pulse-weaver-studio). See the [changelog](CHANGELOG.md). The plugin is licensed under [MIT](LICENSE).
+For help with setup or other support questions, [contact us on Discord](https://discord.gg/MQ6pAN9Q). Use the [website for downloads](https://lumi-con.com/pulse-weaver/) and [GitHub for source code and issue tracking](https://github.com/darylbwickham-design/pulse-weaver-studio). The package includes a changelog and MIT licence.

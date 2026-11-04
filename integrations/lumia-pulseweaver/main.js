@@ -3,7 +3,6 @@ const { Plugin } = require('@lumiastream/plugin');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { spawn } = require('child_process');
 const { EventEmitter } = require('events');
 
 class PulseWeaverPlugin extends Plugin {
@@ -312,25 +311,8 @@ class PulseWeaverPlugin extends Plugin {
     await this.waitForOutput(platform, start, 20000, attempt);
     return { ...result, message: `${platform} ${start ? 'is live' : 'is stopped'}.` };
   }
-  async openManual(format = 'html') {
-    const filenames = {
-      html: 'Pulse-Weaver-Studio-Nerds-Introduction.html',
-      pdf: 'Pulse-Weaver-Studio-Nerds-Introduction.pdf'
-    };
-    if (!Object.hasOwn(filenames, format)) throw new Error('Choose the reading edition or print edition.');
-    const manual = path.join(__dirname, 'manual', filenames[format]);
-    if (!fs.existsSync(manual)) throw new Error('The bundled manual is missing. Reinstall the PulseWeaver Stream Studio plugin.');
-    const opener = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
-    await new Promise((resolve, reject) => {
-      const child = spawn(opener, [manual], { detached: true, stdio: 'ignore', windowsHide: true });
-      child.once('error', reject);
-      child.once('spawn', () => { child.unref(); resolve(); });
-    });
-    return { message: format === 'pdf' ? 'Opened the print edition of the manual.' : 'Opened the reading edition of the manual. Use your browser’s Print command to print or save it as a PDF.' };
-  }
   async runAction(action) {
     const params = action.value || {};
-    if (action.type === 'open_manual') return this.openManual(String(params.format || 'html'));
     if (action.type === 'reconnect') { this.retry = 0; this.connect(); return { message: 'Connection requested.' }; }
     // Destination selectors can change while the event stream remains connected.
     // Start commands must use the plan shown in Pulse Weaver at action time.

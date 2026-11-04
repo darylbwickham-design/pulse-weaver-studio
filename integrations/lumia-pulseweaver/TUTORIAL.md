@@ -4,7 +4,7 @@ This plugin connects **Lumia Stream and LumiCon** to **Pulse Weaver**, the strea
 
 This guide covers plugin **1.5.2** and **Pulse Weaver 2.0 for Windows**. Lumia Stream **9.3.4** was used for testing; the plugin manifest declares Lumia 9.x compatibility. Run both applications on the same computer.
 
-For the full book, including the OBS comparison, Stage/Look/scene examples, release history, glossary and index, open the bundled [reading edition](manual/Pulse-Weaver-Studio-Nerds-Introduction.html) or [page-numbered PDF print edition](manual/Pulse-Weaver-Studio-Nerds-Introduction.pdf). With the plugin connected, Lumia's **Open Pulse Weaver Manual** action opens the edition you choose. Both files remain in the installed plugin package for offline reading.
+For the full book, including the OBS comparison, Stage/Look/scene examples, release history, glossary and index, open **Studio → Help → Open Pulse Weaver Manual** in Pulse Weaver Studio, or use the manual button in **About Pulse Weaver**. The printable manual belongs to the studio installation and is not included in this Lumia plugin.
 
 ## 1. Have a show ready
 
