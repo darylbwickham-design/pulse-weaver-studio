@@ -15,6 +15,8 @@ without this identity do not guess an installation channel.
 | windows-public | v1.12.6 | PulseWeaver-Public-Dist-1.12.6-Setup.exe |
 | windows-private | v1.12.15 | PulseWeaver-Setup-1.12.15-BETA.exe |
 | windows-private | v1.14.3 | PulseWeaver-Setup-1.14.3.exe |
+| windows-public | v2.0.3 | PulseWeaver-Public-Dist-2.0.3-Setup.exe |
+| windows-private | v2.0.3 | PulseWeaver-Setup-2.0.3.exe |
 | windows-alpha | v1.14.4-alpha.1 | PulseWeaver-Setup-1.14.4-alpha.1.exe |
 | windows-alpha | v1.14.4-alpha.2 | PulseWeaver-Setup-1.14.4-alpha.2.exe |
 | windows-unstable (regular) | v2.0.0-unstable.10 | PulseWeaver-Setup-2.0.0-unstable.10.exe |
@@ -73,6 +75,6 @@ and runs the test with its bundled plugins before signing.
 Both Windows setup `/test` modes validate written channel/version metadata and
 exercise preservation of configuration while replacing obsolete payload files.
 
-The current alpha advances beyond regular 1.14.3. Alpha installations can receive
-it; regular installations receive it only when alpha updates are enabled.
-Regular 1.14.3 remains GitHub's latest stable release.
+Regular 2.0.3 is the current stable release. Published regular updates remain
+eligible for installations that also accept alpha or unstable releases; preview
+updates still require the corresponding opt-in.

@@ -45,7 +45,7 @@ $identity | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $payload 'bin/6
 New-Item -ItemType File -Path (Join-Path $payload 'portable_mode.txt') | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $payload 'docs') | Out-Null
 foreach ($doc in @('PRIVACY.md','TERMS.md')) { Copy-Item -LiteralPath (Join-Path $projectRoot $doc) -Destination (Join-Path $payload 'docs') }
-foreach ($doc in @('DISCORD-RECEIVE-ONLY.md','ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md','SETUP-WIZARD-GUIDE.md','YOUTUBE-APPLICATION-SETUP.md','RELEASE-2.0.0.md','RELEASE-2.0.1.md','RELEASE-2.0.2.md','LUMIA-GAME-CHALLENGES-2026-10-14.md','LUMIA-IMPORT-LINKS.txt')) {
+foreach ($doc in @('DISCORD-RECEIVE-ONLY.md','ALPHA-UPGRADES.md','BUILD-MY-SHOW-GUIDE.md','SETUP-WIZARD-GUIDE.md','YOUTUBE-APPLICATION-SETUP.md','RELEASE-2.0.0.md','RELEASE-2.0.1.md','RELEASE-2.0.2.md','RELEASE-2.0.3.md','LUMIA-GAME-CHALLENGES-2026-10-14.md','LUMIA-IMPORT-LINKS.txt')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$doc") -Destination (Join-Path $payload 'docs')
 }
 $manualDirectory = Join-Path $payload 'docs/manual'

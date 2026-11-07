@@ -1,3 +1,7 @@
+# Pulse Weaver Studio 2.0.3 — Refresh browser overlays
+
+Show Control adds a button beside HUD and Lumia to refresh browser sources on every canvas, including inactive and nested sources. It bypasses the browser cache, refreshes shared sources once and reports the requested source count. See [2.0.3 release notes](docs/RELEASE-2.0.3.md).
+
 # Pulse Weaver 2.0
 
 The regular Windows release now includes the refined 2.0 workspace, selection-first show setup, smooth camera Looks, independent HUD, Discord chat, 15-button Lumia keypad and optional YouTube app credentials with a quota/setup guide. See [2.0 release notes](docs/RELEASE-2.0.0.md) for downloads, upgrade behaviour and validation limits.

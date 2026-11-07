@@ -29,6 +29,7 @@
 #include "OBSBasic.hpp"
 #include "OBSApp.hpp"
 #include "PulseVerticalEditor.hpp"
+#include "PulseBrowserRefresh.hpp"
 #ifdef BROWSER_AVAILABLE
 #include <browser-panel.hpp>
 extern QCef *cef;
@@ -1558,6 +1559,10 @@ void OBSBasic::InitPulseWeaverShell()
 	lumiaGuide->setCursor(Qt::PointingHandCursor);
 	connect(lumiaGuide, &QToolButton::clicked, this, [this] { PulseInstructions::openDialog(this); });
 	guideButtons->addWidget(lumiaGuide);
+	auto *refreshBrowsers = new QToolButton(contributorGuides);
+	PulseBrowserRefresh::configure(refreshBrowsers);
+	connect(App(), &OBSApp::StyleChanged, refreshBrowsers, [refreshBrowsers] { PulseBrowserRefresh::updateIcon(refreshBrowsers); });
+	guideButtons->addWidget(refreshBrowsers);
 	showHead->addWidget(contributorGuides);
 	pulseEngineStatus = new QLabel("Preparing studio…");
 	pulseEngineStatus->setObjectName("PulseWeaverStatus");
