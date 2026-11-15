@@ -1,6 +1,6 @@
-# Pulse Weaver Studio 2.0.3 — Refresh browser overlays
+# Pulse Weaver Studio 2.0.4
 
-Show Control adds a button beside HUD and Lumia to refresh browser sources on every canvas, including inactive and nested sources. It bypasses the browser cache, refreshes shared sources once and reports the requested source count. See [2.0.3 release notes](docs/RELEASE-2.0.3.md).
+See the applied Look in Show Control and set each layer's visibility in the Look editor. The Lumia keypad can require an applied Look and show what happened after a press. Right-click the globe to refresh the current Stage. See [2.0.4 release notes](docs/RELEASE-2.0.4.md).
 
 # Pulse Weaver 2.0
 

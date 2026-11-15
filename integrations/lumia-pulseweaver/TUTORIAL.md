@@ -2,7 +2,7 @@
 
 This plugin connects **Lumia Stream and LumiCon** to **Pulse Weaver**, the streaming application. Lumia can change your presentation and operate its controls; Pulse Weaver's on-screen keypad can trigger your Lumia reactions.
 
-This guide covers plugin **1.5.2** and **Pulse Weaver 2.0 for Windows**. Lumia Stream **9.3.4** was used for testing; the plugin manifest declares Lumia 9.x compatibility. Run both applications on the same computer.
+This guide covers plugin **1.5.3** and **Pulse Weaver 2.0.4 for Windows**. The plugin manifest declares Lumia 9.x compatibility. Run both applications on the same computer.
 
 For the full book, including the OBS comparison, Stage/Look/scene examples, release history, glossary and index, open **Studio → Help → Open Pulse Weaver Manual** in Pulse Weaver Studio, or use the manual button in **About Pulse Weaver**. The printable manual belongs to the studio installation and is not included in this Lumia plugin.
 
@@ -16,7 +16,7 @@ Create your Stages and Looks, connect streaming accounts, and configure transiti
 
 ## 2. Install and connect
 
-Install **PulseWeaver Stream Studio** from Lumia's plugin marketplace when it is available. For a manual installation, use Lumia's plugin manager to import **PulseWeaver-Lumia-1.5.2.lumiaplugin**. Enable the plugin.
+Install **PulseWeaver Stream Studio** from Lumia's plugin marketplace when it is available. For a manual installation, use Lumia's plugin manager to import **PulseWeaver-Lumia-1.5.3.lumiaplugin**. Enable the plugin.
 
 If updating **Pulse Weaver Motion Preview**, import the new package as an update. Its permanent ID is still **`pulseweavermotionpreview`**, so existing action/alert bindings and variable names remain attached. Keep your saved connection settings. The renamed plugin connects to the regular Pulse Weaver installation by default.
 

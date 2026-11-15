@@ -2,12 +2,12 @@
 
 The Lumia Stream companion plugin for **Pulse Weaver** streaming software. Use Lumia reactions, commands and LumiCon controls to operate your existing show. Pulse Weaver's on-screen keypad can also trigger Lumia alerts.
 
-**Plugin version: 1.5.2.** Use Pulse Weaver **2.0 for Windows** for the complete feature set. Tested with **Lumia Stream 9.3.4**; the manifest declares compatibility with Lumia 9.x. Both applications must run on the same computer.
+**Plugin version: 1.5.3.** Use Pulse Weaver **2.0.4 for Windows** for the applied Look variables and keypad feedback. The manifest declares compatibility with Lumia 9.x. Both applications must run on the same computer.
 
 ## Start here
 
 1. Install [Pulse Weaver 2.0 for Windows](https://lumi-con.com/pulse-weaver/) and create or open your show.
-2. Install **PulseWeaver Stream Studio** from Lumia's plugin marketplace when available, or import `PulseWeaver-Lumia-1.5.2.lumiaplugin` in Lumia's plugin manager.
+2. Install **PulseWeaver Stream Studio** from Lumia's plugin marketplace when available, or import `PulseWeaver-Lumia-1.5.3.lumiaplugin` in Lumia's plugin manager.
 3. Enable the plugin and open Pulse Weaver. Leave **Connection token** and **Custom Pulse Weaver configuration path** blank for a standard installation. **Pulse Weaver port** must match the app's local API port; a new standard installation uses **18755**.
 4. Add an **Activate Stage** action to a Lumia reaction and select an existing Stage. Run it to check the connection without starting a broadcast.
 

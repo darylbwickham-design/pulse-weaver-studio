@@ -10,6 +10,7 @@
 #include <graphics/vec3.h>
 #include <graphics/vec4.h>
 
+#include <QActionGroup>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
@@ -47,6 +48,8 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QSlider>
+#include <QStyleOptionToolButton>
+#include <QStylePainter>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -78,6 +81,20 @@
 namespace {
 
 QString motionCollection();
+
+class MotionSourceButton final : public QToolButton {
+public:
+	using QToolButton::QToolButton;
+
+protected:
+	void paintEvent(QPaintEvent *) override
+	{
+		QStyleOptionToolButton option;
+		initStyleOption(&option);
+		option.text = fontMetrics().elidedText(text(), Qt::ElideMiddle, std::max(0, width() - 18));
+		QStylePainter(this).drawComplexControl(QStyle::CC_ToolButton, option);
+	}
+};
 
 obs_source_t *motionSource(const QString &name)
 {
@@ -640,8 +657,13 @@ PulseMotionEngine::PulseMotionEngine(QObject *parent, QString path, EventCallbac
 	connect(&animationTimer, &QTimer::timeout, this, [this] { tick(); });
 	stageTimer.setSingleShot(true);
 	connect(&stageTimer, &QTimer::timeout, this, [this] { beginAfterStage(); });
+	obs_frontend_add_save_callback(saveAppliedLook, this);
+	// The portrait Program may change without emitting a main-scene event.
+	lookValidationTimer.setInterval(400);
+	connect(&lookValidationTimer, &QTimer::timeout, this, [this] { validateAppliedLook(); });
 	if (auto *selector = stageSelector()) {
 		connect(selector, &QComboBox::currentIndexChanged, this, [this](int index) {
+			validateAppliedLook();
 			if (index == expectedStageIndex) {
 				expectedStageIndex = -1;
 				return;
@@ -654,6 +676,8 @@ PulseMotionEngine::PulseMotionEngine(QObject *parent, QString path, EventCallbac
 
 PulseMotionEngine::~PulseMotionEngine()
 {
+	obs_frontend_remove_save_callback(saveAppliedLook, this);
+	lookValidationTimer.stop();
 	animationTimer.stop();
 	stageTimer.stop();
 	previewTimer.stop();
@@ -716,6 +740,7 @@ bool PulseMotionEngine::save()
 	}
 	storageRoot = next;
 	syncHotkeys();
+	validateAppliedLook();
 	return true;
 }
 
@@ -1078,7 +1103,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	auto *layersHeading = new QLabel("Layers", layerRail);
 	layersHeading->setObjectName("PulseWeaverCardTitle");
 	railLayout->addWidget(layersHeading);
-	auto *layersHint = new QLabel("Choose a layer to edit. Tap its circle to show or hide it.", layerRail);
+	auto *layersHint = new QLabel("Choose a layer to edit or set its saved visibility.", layerRail);
 	layersHint->setWordWrap(true);
 	layersHint->setObjectName("Muted");
 	railLayout->addWidget(layersHint);
@@ -1231,11 +1256,16 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 			return before != after;
 		};
 		bool changes = false;
-		for (auto it = draftIds.cbegin(); it != draftIds.cend() && !changes; ++it)
-			changes = differs(draftContainer, it.key(), draftItem(it.key()));
+		for (int row = 0; itemTree && row < itemTree->topLevelItemCount() && !changes; ++row) {
+			const auto *entry = itemTree->topLevelItem(row);
+			if (entry->checkState(0) != Qt::Checked) continue;
+			const qint64 id = entry->data(0, Qt::UserRole).toString().toLongLong();
+			changes = differs(draftContainer, id, draftItem(id));
+		}
 		for (auto canvas = parkedDrafts.cbegin(); canvas != parkedDrafts.cend() && !changes; ++canvas)
 			for (auto item = canvas->ids.cbegin(); item != canvas->ids.cend() && !changes; ++item)
-				changes = differs(canvas.key(), item.key(), obs_scene_find_sceneitem_by_id(canvas->scene, item.value()));
+				if (canvas->controlled.contains(item.key()))
+					changes = differs(canvas.key(), item.key(), obs_scene_find_sceneitem_by_id(canvas->scene, item.value()));
 		if (!changes) {
 			if (previewFeedback) previewFeedback->setText("No movement: the starting placement already matches this Look. Choose another starting Look.");
 			setStatus("The chosen starting placement already matches this Look. Choose a different starting Look above to see movement.");
@@ -1261,7 +1291,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 		const qint64 original = draftIds.key(draftId, -1);
 		OBSSceneItem item = draftItem(original);
 		if (!item || obs_sceneitem_locked(item)) return;
-		includeDraftItem(original);
+		const bool included = includeDraftItem(original);
 		const QPolygonF before = anchorCorner >= 0 ? motionItemPolygon(item) : QPolygonF{};
 		Transform value = capture(item);
 		value.pos.x += float(delta.x()); value.pos.y += float(delta.y());
@@ -1301,6 +1331,7 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 				apply(item, value, true);
 			}
 		}
+		if (included) refreshDraftRows();
 		refreshSummary();
 	};
 	portraitCanvas->beginEdit = visualCanvas->beginEdit;
@@ -1324,25 +1355,38 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	});
 
 	itemTree = new QTreeWidget;
-	itemTree->setHeaderLabels({"CONTROL", "SOURCE", "SHOWN", "LAYER"});
-	itemTree->setColumnWidth(2, 60);
-	itemTree->setColumnWidth(3, 48);
+	itemTree->setHeaderLabels({"", "Source", "Visibility", "Layer"});
+	itemTree->setColumnHidden(0, true);
+	itemTree->setRootIsDecorated(false);
+	itemTree->header()->setStretchLastSection(false);
 	itemTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+	itemTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+	itemTree->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
 	itemTree->setMinimumHeight(130);
-	itemTree->setColumnWidth(0, 70);
 	form->addRow(itemTree);
 	auto *selectionTools = new QWidget;
 	auto *selectionRow = new QHBoxLayout(selectionTools);
 	selectionRow->setContentsMargins(0, 0, 0, 0);
 	for (const bool include : {true, false}) {
-		auto *button = new QPushButton(include ? "Include all" : "Clear selection");
+		auto *button = new QPushButton(include ? "Save all sources" : "Leave all as is");
+		button->setToolTip(include ? "Save the current visibility and placement of every source on this canvas."
+					  : "Keep the current visibility and placement of every source on this canvas when the Look runs.");
 		selectionRow->addWidget(button);
 		connect(button, &QPushButton::clicked, this, [this, include] {
+			const auto state = include ? Qt::Checked : Qt::Unchecked;
+			bool changed = false;
 			{
 				const QSignalBlocker blocker(itemTree);
-				for (int row = 0; row < itemTree->topLevelItemCount(); ++row)
-					itemTree->topLevelItem(row)->setCheckState(0, include ? Qt::Checked : Qt::Unchecked);
+				for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
+					auto *item = itemTree->topLevelItem(row);
+					if (item->checkState(0) == state) continue;
+					if (!changed) rememberDraft();
+					item->setCheckState(0, state);
+					changed = true;
+				}
 			}
+			if (!changed) return;
+			refreshDraftRows();
 			refreshSummary();
 		});
 	}
@@ -1484,17 +1528,6 @@ QWidget *PulseMotionEngine::createEditor(QWidget *parent)
 	connect(holdField, &QSpinBox::valueChanged, this, [this] { refreshSummary(); });
 	connect(restoreField, &QCheckBox::toggled, this, [this] { refreshSummary(); });
 	connect(returnStageField, &QCheckBox::toggled, this, [this] { refreshSummary(); });
-	connect(itemTree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *entry, int column) {
-		if (column == 2 && !loadingDraft) {
-			OBSSceneItem item = draftItem(entry->data(0, Qt::UserRole).toString().toLongLong());
-			if (item) {
-				rememberDraft();
-				includeDraftItem(entry->data(0, Qt::UserRole).toString().toLongLong());
-				obs_sceneitem_set_visible(item, entry->checkState(2) == Qt::Checked);
-			}
-		}
-		refreshSummary();
-	});
 	connect(itemTree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *entry) {
 		if (entry) visualSelectedItem = entry->data(0, Qt::UserRole).toString().toLongLong();
 		refreshSourceChips();
@@ -1810,7 +1843,10 @@ void PulseMotionEngine::populateItems()
 		item->setCheckState(0, selected.contains(key) ? Qt::Checked : Qt::Unchecked);
 		item->setData(0, Qt::UserRole, key);
 		item->setData(1, Qt::UserRole, row.value("source").toString());
-		item->setCheckState(2, row.value("visible").toBool() ? Qt::Checked : Qt::Unchecked);
+		item->setData(2, Qt::UserRole, row.value("visible").toBool());
+		auto *visibility = createVisibilityButton(item, itemTree);
+		item->setSizeHint(2, visibility->sizeHint());
+		itemTree->setItemWidget(item, 2, visibility);
 	}
 }
 
@@ -2004,7 +2040,7 @@ void PulseMotionEngine::saveEditorAction()
 		return;
 	}
 	if (action.value("kind") == "layout" && action.value("items").toArray().isEmpty()) {
-		setStatus("Tick at least one source that this layout may control.", true);
+		setStatus("Choose Show or Hide for at least one source in this Look.", true);
 		return;
 	}
 	action.remove("draft");
@@ -2213,30 +2249,34 @@ void PulseMotionEngine::activateDraft(const QString &container)
 		}
 	} else {
 		resetDraft(loadedTargets);
+		const bool newLook = editingId.isEmpty() && loadedTargets.isEmpty();
 		for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
 			auto *item = itemTree->topLevelItem(row);
-			// A paired canvas is a complete look. Capture hidden sources too so
-			// switching back from another look cannot leave its layers visible.
-			item->setCheckState(0, Qt::Checked);
-			for (const auto &value : loadedTargets) {
-				const auto target = value.toObject();
-				if (target.value("container").toString() == container && target.value("itemId").toString() == item->data(0, Qt::UserRole).toString())
-					item->setCheckState(0, Qt::Checked);
-			}
+			const QString id = item->data(0, Qt::UserRole).toString();
+			const bool controlled = newLook || std::any_of(loadedTargets.cbegin(), loadedTargets.cend(),
+				[&](const QJsonValue &value) {
+					const auto target = value.toObject();
+					return target.value("container").toString(mainContainer) == container &&
+						target.value("itemId").toString() == id;
+				});
+			item->setCheckState(0, controlled ? Qt::Checked : Qt::Unchecked);
 		}
 	}
 	visualSelectedItem = -1;
 	refreshDraftRows(); syncVisualCanvas();
 }
 
-void PulseMotionEngine::includeDraftItem(qint64 originalId)
+bool PulseMotionEngine::includeDraftItem(qint64 originalId)
 {
 	const QSignalBlocker blocker(itemTree);
 	for (int row = 0; itemTree && row < itemTree->topLevelItemCount(); ++row) {
 		auto *item = itemTree->topLevelItem(row);
-		if (item->data(0, Qt::UserRole).toString().toLongLong() == originalId)
-			item->setCheckState(0, Qt::Checked);
+		if (item->data(0, Qt::UserRole).toString().toLongLong() != originalId) continue;
+		if (item->checkState(0) == Qt::Checked) return false;
+		item->setCheckState(0, Qt::Checked);
+		return true;
 	}
+	return false;
 }
 
 void PulseMotionEngine::addDraftSource(QString selected)
@@ -2699,6 +2739,12 @@ OBSSceneItem PulseMotionEngine::draftItem(qint64 originalId) const
 QJsonArray PulseMotionEngine::draftSnapshot() const
 {
 	QJsonArray result;
+	QSet<qint64> controlled;
+	for (int row = 0; itemTree && row < itemTree->topLevelItemCount(); ++row) {
+		const auto *entry = itemTree->topLevelItem(row);
+		if (entry->checkState(0) == Qt::Checked)
+			controlled.insert(entry->data(0, Qt::UserRole).toString().toLongLong());
+	}
 	for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
 		OBSSceneItem item = draftItem(it.key());
 		if (!item) continue;
@@ -2707,6 +2753,7 @@ QJsonArray PulseMotionEngine::draftSnapshot() const
 			{"sourceUuid", QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item)))},
 			{"sourceWidth", int(obs_source_get_width(obs_sceneitem_get_source(item)))},
 			{"sourceHeight", int(obs_source_get_height(obs_sceneitem_get_source(item)))},
+			{"draftControlsSource", controlled.contains(it.key())},
 			{"transform", serialize(capture(item))}});
 	}
 	return result;
@@ -2715,16 +2762,29 @@ QJsonArray PulseMotionEngine::draftSnapshot() const
 void PulseMotionEngine::applyDraftSnapshot(const QJsonArray &snapshot)
 {
 	std::vector<std::pair<OBSSceneItem, Transform>> states;
+	QHash<qint64, bool> controlled;
 	for (const auto &value : snapshot) {
 		const auto row = value.toObject();
 		if (row.value("container").toString(mainContainer) != draftContainer) continue;
-		OBSSceneItem item = draftItem(row.value("itemId").toString().toLongLong());
+		const qint64 id = row.value("itemId").toString().toLongLong();
+		OBSSceneItem item = draftItem(id);
 		if (item && (row.value("sourceUuid").toString().isEmpty() ||
-			QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item))) == row.value("sourceUuid").toString()))
+			QString::fromUtf8(obs_source_get_uuid(obs_sceneitem_get_source(item))) == row.value("sourceUuid").toString())) {
 			states.emplace_back(item, savedTransformForSource(row, obs_sceneitem_get_source(item)));
+			if (row.value("draftControlsSource").isBool())
+				controlled.insert(id, row.value("draftControlsSource").toBool());
+		}
 	}
 	std::sort(states.begin(), states.end(), [](const auto &a, const auto &b) { return a.second.order < b.second.order; });
 	for (auto &[item, transform] : states) apply(item, transform, true);
+	if (itemTree && !controlled.isEmpty()) {
+		const QSignalBlocker blocker(itemTree);
+		for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
+			auto *entry = itemTree->topLevelItem(row);
+			const qint64 id = entry->data(0, Qt::UserRole).toString().toLongLong();
+			if (controlled.contains(id)) entry->setCheckState(0, controlled.value(id) ? Qt::Checked : Qt::Unchecked);
+		}
+	}
 	refreshDraftRows();
 }
 
@@ -2748,11 +2808,92 @@ void PulseMotionEngine::refreshDraftRows()
 	for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
 		auto *entry = itemTree->topLevelItem(row);
 		OBSSceneItem item = draftItem(entry->data(0, Qt::UserRole).toString().toLongLong());
-		if (!item) continue;
-		entry->setCheckState(2, obs_sceneitem_visible(item) ? Qt::Checked : Qt::Unchecked);
-		entry->setText(3, QString::number(obs_sceneitem_get_order_position(item)));
+		if (item) {
+			entry->setData(2, Qt::UserRole, obs_sceneitem_visible(item));
+			entry->setText(3, QString::number(obs_sceneitem_get_order_position(item)));
+		}
+		if (auto *button = qobject_cast<QToolButton *>(itemTree->itemWidget(entry, 2)))
+			updateVisibilityButton(button, entry);
 	}
 	refreshSourceChips();
+}
+
+QToolButton *PulseMotionEngine::createVisibilityButton(const QTreeWidgetItem *row, QWidget *parent)
+{
+	auto *button = new QToolButton(parent);
+	button->setObjectName("PulseWeaverMotionVisibility");
+	button->setAccessibleName("Saved visibility for " + row->text(1));
+	button->setFocusPolicy(Qt::StrongFocus);
+	button->setPopupMode(QToolButton::InstantPopup);
+	button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+	const qint64 itemId = row->data(0, Qt::UserRole).toString().toLongLong();
+	const QString container = sceneField->currentData().toString();
+	auto *menu = new QMenu(button);
+	auto *choices = new QActionGroup(menu);
+	for (const auto &[label, mode] : std::initializer_list<std::pair<const char *, LookVisibility>>{{"Show", LookVisibility::Show},
+		     {"Hide", LookVisibility::Hide}, {"Leave as is", LookVisibility::LeaveAsIs}}) {
+		auto *choice = menu->addAction(label);
+		choice->setCheckable(true);
+		choice->setData(int(mode));
+		choices->addAction(choice);
+		connect(choice, &QAction::triggered, this, [this, container, itemId, mode] {
+			if (container == draftContainer) setDraftVisibility(itemId, mode);
+		});
+	}
+	button->setMenu(menu);
+	button->setText("Leave as is");
+	button->setFixedWidth(button->sizeHint().width());
+	updateVisibilityButton(button, row);
+	return button;
+}
+
+void PulseMotionEngine::updateVisibilityButton(QToolButton *button, const QTreeWidgetItem *row) const
+{
+	const bool controlled = row->checkState(0) == Qt::Checked;
+	const LookVisibility mode = !controlled ? LookVisibility::LeaveAsIs :
+		row->data(2, Qt::UserRole).toBool() ? LookVisibility::Show : LookVisibility::Hide;
+	for (auto *choice : button->menu()->actions()) {
+		const bool current = choice->data().toInt() == int(mode);
+		choice->setChecked(current);
+		if (current) button->setText(choice->text());
+	}
+	const QString tip = controlled ?
+		button->text() + " this source and save its placement when the Look runs." :
+		QString("Leave as is keeps this source’s visibility and placement when the Look runs.");
+	button->setToolTip(tip);
+	button->setAccessibleDescription(tip);
+}
+
+void PulseMotionEngine::setDraftVisibility(qint64 originalId, LookVisibility visibility)
+{
+	if (!itemTree || loadingDraft) return;
+	OBSSceneItem item = draftItem(originalId);
+	if (!item) return;
+	for (int row = 0; row < itemTree->topLevelItemCount(); ++row) {
+		auto *entry = itemTree->topLevelItem(row);
+		if (entry->data(0, Qt::UserRole).toString().toLongLong() != originalId) continue;
+		const bool controlled = visibility != LookVisibility::LeaveAsIs;
+		const bool shown = visibility == LookVisibility::Show;
+		if ((entry->checkState(0) == Qt::Checked) == controlled &&
+		    (!controlled || obs_sceneitem_visible(item) == shown))
+			return;
+		rememberDraft();
+		{
+			const QSignalBlocker blocker(itemTree);
+			entry->setCheckState(0, controlled ? Qt::Checked : Qt::Unchecked);
+		}
+		if (controlled)
+			obs_sceneitem_set_visible(item, shown);
+		else {
+			obs_source_t *source = obs_sceneitem_get_source(item);
+			OBSSceneItem live = resolveItem(draftContainer, originalId, entry->text(1), false,
+				QString::fromUtf8(obs_source_get_uuid(source)));
+			if (live) obs_sceneitem_set_visible(item, obs_sceneitem_visible(live));
+		}
+		refreshDraftRows();
+		refreshSummary();
+		return;
+	}
 }
 
 void PulseMotionEngine::refreshSourceChips()
@@ -2778,39 +2919,25 @@ void PulseMotionEngine::refreshSourceChips()
 		lookTools->setVisible(kindField->currentData().toString() == "layout" && !selectedName.isEmpty());
 	for (QTreeWidgetItem *entry : layers) {
 		const qint64 itemId = entry->data(0, Qt::UserRole).toString().toLongLong();
-		const bool visible = entry->checkState(2) == Qt::Checked;
 		auto *chip = new QWidget(sourceChips);
 		auto *chipRow = new QHBoxLayout(chip);
 		chipRow->setContentsMargins(0, 0, 0, 0);
 		chipRow->setSpacing(4);
-		auto *select = new QToolButton(chip);
+		auto *select = new MotionSourceButton(chip);
 		const QString sourceName = entry->text(1);
-		select->setText(QFontMetrics(select->font()).elidedText(sourceName, Qt::ElideRight, 154));
-		select->setToolTip("Select and arrange " + entry->text(1));
-		select->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+		select->setText(sourceName);
+		select->setToolTip("Select and arrange " + sourceName);
+		select->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
 		select->setObjectName("PulseWeaverMotionSourceChoice");
 		select->setProperty("pulseSelected", itemId == visualSelectedItem);
 		chipRow->addWidget(select, 1);
-		auto *eye = new QToolButton(chip);
-		eye->setText(visible ? "◉" : "○");
-		eye->setToolTip(visible ? "Hide this source in this look" : "Show this source in this look");
-		eye->setObjectName("PulseWeaverMotionVisibility");
-		chipRow->addWidget(eye);
+		chipRow->addWidget(createVisibilityButton(entry, chip));
 		layout->addWidget(chip);
 		connect(select, &QToolButton::clicked, this, [this, itemId] {
 			for (int index = 0; index < itemTree->topLevelItemCount(); ++index)
 				if (itemTree->topLevelItem(index)->data(0, Qt::UserRole).toString().toLongLong() == itemId) {
 					itemTree->setCurrentItem(itemTree->topLevelItem(index)); break;
 				}
-			refreshSourceChips();
-		});
-		connect(eye, &QToolButton::clicked, this, [this, itemId] {
-			for (int index = 0; index < itemTree->topLevelItemCount(); ++index) {
-				QTreeWidgetItem *row = itemTree->topLevelItem(index);
-				if (row->data(0, Qt::UserRole).toString().toLongLong() != itemId) continue;
-				row->setCheckState(2, row->checkState(2) == Qt::Checked ? Qt::Unchecked : Qt::Checked);
-				break;
-			}
 			refreshSourceChips();
 		});
 	}
@@ -2987,7 +3114,8 @@ void PulseMotionEngine::previewDraft(int progress)
 	Execution rehearsal;
 	rehearsal.action = actionByIdentity(editingId);
 	rehearsal.action.insert("kind", "layout");
-	auto addPreviewTrack = [&](const QString &container, qint64 id, obs_sceneitem_t *target, obs_sceneitem_t *preview) {
+	auto addPreviewTrack = [&](const QString &container, qint64 id, obs_sceneitem_t *target, obs_sceneitem_t *preview,
+				   bool controlled) {
 		if (!target || !preview) return;
 		obs_source_t *source = obs_sceneitem_get_source(target);
 		const QString sourceName = QString::fromUtf8(obs_source_get_name(source));
@@ -3001,22 +3129,24 @@ void PulseMotionEngine::previewDraft(int progress)
 		track.item = preview;
 		track.from = capture(live);
 		previewStartTransform(container, target, id, track.from);
-		track.target = capture(target);
+		track.target = controlled ? capture(target) : track.from;
 		track.graphic = motionGraphicSwitch(sourceName, source);
 		rehearsal.tracks.push_back(track);
 	};
-	for (auto it = draftIds.cbegin(); it != draftIds.cend(); ++it) {
-		OBSSceneItem target = draftItem(it.key());
+	for (int row = 0; itemTree && row < itemTree->topLevelItemCount(); ++row) {
+		const auto *entry = itemTree->topLevelItem(row);
+		const qint64 id = entry->data(0, Qt::UserRole).toString().toLongLong();
+		OBSSceneItem target = draftItem(id);
 		if (!target) continue;
-		auto *preview = obs_scene_find_sceneitem_by_id(previewScene, previewIds.value(it.value(), -1));
-		addPreviewTrack(draftContainer, it.key(), target, preview);
+		auto *preview = obs_scene_find_sceneitem_by_id(previewScene, previewIds.value(draftIds.value(id, -1), -1));
+		addPreviewTrack(draftContainer, id, target, preview, entry->checkState(0) == Qt::Checked);
 	}
 	for (auto it = pairedPreviews.cbegin(); it != pairedPreviews.cend(); ++it) {
 		const auto targetDraft = parkedDrafts.value(it.key());
 		for (auto id = it->ids.cbegin(); id != it->ids.cend(); ++id) {
 			auto *target = obs_scene_find_sceneitem_by_id(targetDraft.scene, targetDraft.ids.value(id.key(), -1));
 			auto *preview = obs_scene_find_sceneitem_by_id(it->scene, id.value());
-			addPreviewTrack(it.key(), id.key(), target, preview);
+			addPreviewTrack(it.key(), id.key(), target, preview, targetDraft.controlled.contains(id.key()));
 		}
 	}
 	// Reconstruct the starting stack on every scrub, including backwards seeks.
@@ -4745,6 +4875,7 @@ void PulseMotionEngine::createLook(const QString &name, bool duplicate)
 		const QSignalBlocker blocker(itemTree);
 		for (int row = 0; row < itemTree->topLevelItemCount(); ++row) itemTree->topLevelItem(row)->setCheckState(0, Qt::Checked);
 	}
+	refreshDraftRows();
 	refreshSummary();
 	setStatus("Arrange this look in the canvas, then Save. Your live output is unchanged.");
 }
@@ -5174,6 +5305,7 @@ int PulseMotionEngine::findStage(const QString &name) const
 void PulseMotionEngine::switchStage(int index)
 {
 	if (QComboBox *selector = stageSelector()) {
+		if (index == selector->currentIndex()) return;
 		expectedStageIndex = index;
 		selector->setCurrentIndex(index);
 	}
@@ -5288,6 +5420,88 @@ QString motionCollection()
 }
 }
 
+QJsonObject PulseMotionEngine::currentLookScope() const
+{
+	OBSSourceAutoRelease horizontal = obs_frontend_get_current_scene();
+	OBSCanvasAutoRelease canvas = obs_get_canvas_by_name("Pulse Weaver Vertical");
+	OBSSourceAutoRelease vertical = canvas ? obs_canvas_get_channel(canvas, 0) : nullptr;
+	if (vertical && obs_source_get_type(vertical) == OBS_SOURCE_TYPE_TRANSITION)
+		vertical = obs_transition_get_active_source(vertical);
+	QComboBox *selector = stageSelector();
+	const QJsonObject assignment = selector ?
+		QJsonDocument::fromJson(selector->currentData().toString().toUtf8()).object() : QJsonObject{};
+	const QString horizontalName = assignment.value("horizontal").toString();
+	const QString verticalName = assignment.value("vertical").toString();
+	// A manual Program scene change may leave the Stage picker unchanged.
+	if ((!horizontalName.isEmpty() && (!horizontal || horizontalName != QString::fromUtf8(obs_source_get_name(horizontal)))) ||
+	    (!verticalName.isEmpty() && (!vertical || verticalName != QString::fromUtf8(obs_source_get_name(vertical)))))
+		return {};
+	return {
+		{"collection", motionCollection()},
+		{"stage", selector ? rawStageName(selector, selector->currentIndex()) : QString()},
+		{"horizontal", horizontal ? QString::fromUtf8(obs_source_get_uuid(horizontal)) : QString()},
+		{"vertical", vertical ? QString::fromUtf8(obs_source_get_uuid(vertical)) : QString()},
+	};
+}
+
+QJsonValue PulseMotionEngine::activeLookJson() const
+{
+	if (appliedLookRecord.isEmpty() || appliedLookRecord.value("scope").toObject() != currentLookScope())
+		return QJsonValue::Null;
+	const QString id = appliedLookRecord.value("id").toString();
+	const QJsonObject action = actionByIdentity(id);
+	if (id.isEmpty() || action.value("id").toString() != id ||
+		action.value("kind") != "layout" || action.value("draft").toBool())
+		return QJsonValue::Null;
+	return QJsonObject{{"id", action.value("id")}, {"name", action.value("name")},
+		{"stage", appliedLookRecord.value("scope").toObject().value("stage")}};
+}
+
+void PulseMotionEngine::setAppliedLook(QJsonObject record)
+{
+	appliedLookRecord = std::move(record);
+	validateAppliedLook();
+}
+
+void PulseMotionEngine::validateAppliedLook()
+{
+	const QJsonValue current = activeLookJson();
+	if (current.isNull()) {
+		appliedLookRecord = {};
+		lookValidationTimer.stop();
+	} else if (!lookValidationTimer.isActive()) {
+		lookValidationTimer.start();
+	}
+	if (publishedAppliedLook == current)
+		return;
+	publishedAppliedLook = current;
+	const QJsonObject look = current.toObject();
+	if (auto *window = static_cast<QWidget *>(obs_frontend_get_main_window())) {
+		window->setProperty("pulseWeaverActiveLookId", look.value("id").toString());
+		window->setProperty("pulseWeaverActiveLookStage", look.value("stage").toString());
+		window->setProperty("pulseWeaverActiveLookName", look.value("name").toString());
+	}
+	emitEvent("active_look_changed", {{"activeLook", current}});
+}
+
+void PulseMotionEngine::saveAppliedLook(obs_data_t *data, bool saving, void *context)
+{
+	auto *self = static_cast<PulseMotionEngine *>(context);
+	constexpr const char *key = "pulse_weaver_applied_look";
+	if (saving) {
+		if (self->active || self->activeLookJson().isNull()) {
+			obs_data_erase(data, key);
+			return;
+		}
+		const QByteArray json = QJsonDocument(self->appliedLookRecord).toJson(QJsonDocument::Compact);
+		OBSDataAutoRelease record = obs_data_create_from_json(json.constData());
+		obs_data_set_obj(data, key, record);
+		return;
+	}
+	OBSDataAutoRelease record = obs_data_get_obj(data, key);
+	self->pendingAppliedLook = record ? QJsonDocument::fromJson(obs_data_get_json(record)).object() : QJsonObject{};
+}
+
 bool PulseMotionEngine::preserveOriginals(const Execution &execution, QString &error)
 {
 	if (!originalStoreValid) { error = "Original scene storage is unreadable. Output was not changed."; return false; }
@@ -5375,6 +5589,7 @@ QJsonObject PulseMotionEngine::restoreOriginals()
 		return {{"ok", false}, {"message", "The original Stage is missing. Nothing was restored."}};
 	animationTimer.stop(); stageTimer.stop();
 	if (active) complete(false, "Stopped to restore original scenes.");
+	setAppliedLook({});
 	// Retain added source references so saved looks can be played again after restore.
 	for (auto &item : additions) obs_sceneitem_set_visible(item, false);
 	std::stable_sort(restore.begin(), restore.end(), [](const auto &a, const auto &b) { return a.transform.order < b.transform.order; });
@@ -5554,6 +5769,8 @@ QJsonObject PulseMotionEngine::runAction(const QString &idOrName, const QString 
 	if (!prepareExecution(*execution, error) || !preserveOriginals(*execution, error))
 		return {{"ok", false}, {"message", error}};
 	if (active) {
+		if (active->phase != "changing_stage")
+			setAppliedLook({});
 		complete(false, "Transition replaced by the next stage look.");
 		for (Track &track : execution->tracks)
 			track.baseline = track.from = capture(track.item);
@@ -5603,6 +5820,8 @@ void PulseMotionEngine::beginAfterStage()
 			stageTimer.start(50); return;
 		}
 	}
+	if (active->action.value("kind") == "layout")
+		active->lookScope = currentLookScope();
 	if (active->preloadedStage) {
 		finishMove();
 		return;
@@ -5870,7 +6089,7 @@ void PulseMotionEngine::finishMove()
 	}
 	lastRestore = active->tracks;
 	for (Track &track : lastRestore) track.item = nullptr;
-	complete(true, "Reached the saved layout.");
+	complete(true, "Reached the saved layout.", active->action.value("kind") == "layout");
 }
 
 void PulseMotionEngine::beginRestore(const QString &reason, bool operatorRequested)
@@ -5896,7 +6115,7 @@ void PulseMotionEngine::beginRestore(const QString &reason, bool operatorRequest
 	}
 }
 
-void PulseMotionEngine::complete(bool ok, const QString &message)
+void PulseMotionEngine::complete(bool ok, const QString &message, bool reachedLayout)
 {
 	if (!active) return;
 	animationTimer.stop();
@@ -5908,12 +6127,21 @@ void PulseMotionEngine::complete(bool ok, const QString &message)
 	const QString name = active->action.value("name").toString();
 	const QString requestId = active->requestId;
 	const bool returnStage = ok && active->action.value("returnStage").toBool() &&
-		!active->previousStage.isEmpty() && activeStageName() == active->actionStage;
+		!active->previousStage.isEmpty() && active->previousStage != active->actionStage &&
+		activeStageName() == active->actionStage;
 	const QString previousStage = active->previousStage;
+	const QJsonObject scope = active->lookScope;
+	const bool applied = ok && reachedLayout && !returnStage && scope == currentLookScope() &&
+		scope.value("stage").toString() == active->actionStage &&
+		(!scope.value("horizontal").toString().isEmpty() || !scope.value("vertical").toString().isEmpty());
 	active.reset();
 	if (returnStage) {
 		const int previous = findStage(previousStage);
 		if (previous >= 0) switchStage(previous);
+	}
+	if (applied) {
+		setAppliedLook({{"id", actionId}, {"scope", scope}});
+		obs_frontend_save();
 	}
 	setStatus(message);
 	const QJsonObject result{{"ok", ok}, {"executionId", executionId}, {"action", actionId}, {"name", name},
@@ -5947,7 +6175,12 @@ QJsonObject PulseMotionEngine::stopAction(const QString &executionId, bool resto
 	animationTimer.stop();
 	stageTimer.stop();
 	const QString id = active->id;
+	const bool wasLayout = active->action.value("kind") == "layout";
 	active.reset();
+	if (wasLayout) {
+		setAppliedLook({});
+		obs_frontend_save();
+	}
 	return {{"ok", true}, {"executionId", id}, {"message", "Motion stopped at its current position."}};
 }
 
@@ -5963,6 +6196,10 @@ QJsonObject PulseMotionEngine::restoreLast()
 		++restored;
 	}
 	lastRestore.clear();
+	if (restored) {
+		setAppliedLook({});
+		obs_frontend_save();
+	}
 	const QString message = restored ? QString("Restored %1 source%2.").arg(restored).arg(restored == 1 ? "" : "s") :
 		QString("The saved sources no longer exist, so nothing was changed.");
 	setStatus(message, restored == 0);
@@ -6000,6 +6237,7 @@ void PulseMotionEngine::frontendEvent(obs_frontend_event event)
 				if (track.item) apply(track.item, track.baseline, true);
 		active.reset();
 		lastRestore.clear();
+		setAppliedLook({});
 		requestResults.clear();
 		expectedStageIndex = -1;
 		previewScene = nullptr;
@@ -6020,9 +6258,16 @@ void PulseMotionEngine::frontendEvent(obs_frontend_event event)
 		return;
 	}
 	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING || event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED) {
-		QTimer::singleShot(0, this, [this] { refreshEditor(); });
+		QTimer::singleShot(0, this, [this] {
+			refreshEditor();
+			if (pendingAppliedLook)
+				setAppliedLook(*std::exchange(pendingAppliedLook, std::nullopt));
+		});
 		return;
 	}
+	if (event == OBS_FRONTEND_EVENT_SCENE_CHANGED || event == OBS_FRONTEND_EVENT_CANVAS_ADDED ||
+	    event == OBS_FRONTEND_EVENT_CANVAS_REMOVED)
+		validateAppliedLook();
 	if (event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED || event == OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED) {
 		populateScenes();
 		populateSources();
@@ -6053,6 +6298,7 @@ QJsonObject PulseMotionEngine::stateJson() const
 {
 	QJsonObject state = catalogueJson();
 	state.insert("active", bool(active));
+	state.insert("activeLook", activeLookJson());
 	if (active) state.insert("execution", QJsonObject{{"id", active->id}, {"action", active->action.value("id")},
 		{"name", active->action.value("name")}, {"state", active->phase}, {"stage", activeStageName()}});
 	return state;

@@ -1044,6 +1044,72 @@ private:
 	int aspectHeight;
 };
 
+class PulseStageChoice final : public QPushButton {
+	QString stageName, lookName;
+
+	void refreshText()
+	{
+		const auto metrics = fontMetrics();
+		const QString arrow = "  ▾";
+		const QString separator = " · ";
+		const int space = qMax(0, width() - 24 - metrics.horizontalAdvance(arrow));
+		QString title = stageName;
+		if (!lookName.isEmpty()) {
+			title += separator + lookName;
+			if (metrics.horizontalAdvance(title) > space) {
+				const int available = qMax(0, space - metrics.horizontalAdvance(separator));
+				const int stageSpace = qMin(metrics.horizontalAdvance(stageName), available * 5 / 9);
+				title = metrics.elidedText(stageName, Qt::ElideRight, stageSpace) + separator +
+					metrics.elidedText(lookName, Qt::ElideRight, available - stageSpace);
+			}
+		}
+		setText(metrics.elidedText(title, Qt::ElideRight, space) + arrow);
+	}
+
+public:
+	using QPushButton::QPushButton;
+
+	void setTitle(const QString &stage, const QString &look)
+	{
+		stageName = stage;
+		lookName = look;
+		refreshText();
+	}
+
+protected:
+	void resizeEvent(QResizeEvent *event) override
+	{
+		QPushButton::resizeEvent(event);
+		refreshText();
+	}
+
+	void changeEvent(QEvent *event) override
+	{
+		QPushButton::changeEvent(event);
+		if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange)
+			refreshText();
+	}
+};
+
+class PulseOperatorProperties final : public QObject {
+	std::function<void(const QByteArray &)> changed;
+
+public:
+	PulseOperatorProperties(QObject *source, QObject *owner, std::function<void(const QByteArray &)> callback)
+		: QObject(owner), changed(std::move(callback))
+	{
+		source->installEventFilter(this);
+	}
+
+protected:
+	bool eventFilter(QObject *, QEvent *event) override
+	{
+		if (event->type() == QEvent::DynamicPropertyChange)
+			changed(static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName());
+		return false;
+	}
+};
+
 class PulseResponsiveStageBar final : public QWidget {
 public:
 	explicit PulseResponsiveStageBar(QWidget *parent = nullptr) : QWidget(parent), grid(new QGridLayout(this))
@@ -1369,28 +1435,6 @@ void OBSBasic::InitPulseWeaverShell()
 #endif
 	auto *appearanceMenu = studioMenu->addMenu("Appearance");
 	appearanceMenu->setObjectName("PulseWeaverAppearanceMenu");
-	auto *themeActions = new QActionGroup(appearanceMenu);
-	for (const auto &preset : QList<QPair<QString, QString>>{
-		{"Backstage", "com.pulseweaver.Studio"}, {"Marquee", "com.pulseweaver.Marquee"},
-		{"Electric", "com.pulseweaver.Electric"}}) {
-		auto *action = appearanceMenu->addAction(preset.first);
-		action->setCheckable(true);
-		action->setData(preset.second);
-		themeActions->addAction(action);
-		connect(action, &QAction::triggered, this, [id = preset.second] {
-			if (App()->SetTheme(id)) {
-				config_set_string(App()->GetUserConfig(), "Appearance", "Theme", id.toUtf8().constData());
-				config_save_safe(App()->GetUserConfig(), "tmp", nullptr);
-			}
-		});
-	}
-	auto syncThemeActions = [themeActions] {
-		for (auto *action : themeActions->actions())
-			action->setChecked(App()->GetTheme() && action->data().toString() == App()->GetTheme()->id);
-	};
-	connect(App(), &OBSApp::StyleChanged, this, syncThemeActions);
-	syncThemeActions();
-	appearanceMenu->addSeparator();
 	auto *feedback = appearanceMenu->addAction("Interaction feedback");
 	feedback->setCheckable(true);
 	config_set_default_bool(App()->GetUserConfig(), "Appearance", "InteractionFeedback", true);
@@ -1555,12 +1599,52 @@ void OBSBasic::InitPulseWeaverShell()
 	lumiaGuide->setIconSize(QSize(17, 27));
 	lumiaGuide->setFixedSize(32, 34);
 	lumiaGuide->setAccessibleName("Lumia Stream setup guide");
-	lumiaGuide->setToolTip("Lumia Stream · overlay setup and command instructions");
+	auto *lumiaDot = new QLabel(lumiaGuide);
+	lumiaDot->setAttribute(Qt::WA_TransparentForMouseEvents);
+	lumiaDot->setGeometry(22, 24, 8, 8);
+	auto syncLumiaGuide = [this, lumiaGuide, lumiaDot] {
+		const bool connected = property("pulseLumiaKeypadConnected").toBool();
+		const QString result = property("pulseLumiaKeypadResult").toString();
+		const QString status = connected ? "Lumia keypad connected" : "Lumia keypad disconnected";
+		const QString detail = result.isEmpty() ? status : status + "\n" + result;
+		lumiaDot->setStyleSheet(connected
+			? "background:#60dfa3; border:1px solid #0e2538; border-radius:4px;"
+			: "background:#8394a7; border:1px solid #0e2538; border-radius:4px;");
+		lumiaGuide->setToolTip(detail + "\nOpen Lumia setup guide");
+		lumiaGuide->setAccessibleDescription(detail);
+	};
+	new PulseOperatorProperties(this, lumiaGuide, [syncLumiaGuide](const QByteArray &name) {
+		if (name == "pulseLumiaKeypadConnected" || name == "pulseLumiaKeypadResult")
+			syncLumiaGuide();
+	});
+	syncLumiaGuide();
 	lumiaGuide->setCursor(Qt::PointingHandCursor);
 	connect(lumiaGuide, &QToolButton::clicked, this, [this] { PulseInstructions::openDialog(this); });
 	guideButtons->addWidget(lumiaGuide);
 	auto *refreshBrowsers = new QToolButton(contributorGuides);
-	PulseBrowserRefresh::configure(refreshBrowsers);
+	PulseBrowserRefresh::configure(refreshBrowsers, [this] {
+		std::vector<OBSSource> scenes;
+		if (!pulseStageSelector || pulseStageSelector->currentIndex() < 0)
+			return scenes;
+		const QJsonObject stage = QJsonDocument::fromJson(pulseStageSelector->currentData().toString().toUtf8()).object();
+		OBSCanvasAutoRelease verticalCanvas = PulseWeaverGetVerticalCanvas();
+		auto addScene = [&](const QString &route, const QString &name) {
+			if (name.isEmpty())
+				return;
+			const QByteArray utf8Name = name.toUtf8();
+			OBSSourceAutoRelease source = route == "vertical" ?
+				(verticalCanvas ? obs_canvas_get_source_by_name(verticalCanvas, utf8Name.constData()) : nullptr) :
+				obs_get_source_by_name(utf8Name.constData());
+			if (source && obs_scene_from_source(source))
+				scenes.emplace_back(source.Get());
+		};
+		for (const QString &route : {QString("horizontal"), QString("vertical")}) {
+			addScene(route, stage.value(route).toString());
+			for (const QString &provider : {QString("twitch"), QString("youtube"), QString("kick"), QString("recording")})
+				addScene(route, pulseStageAssignment(stage, provider, route).value("scene").toString());
+		}
+		return scenes;
+	});
 	connect(App(), &OBSApp::StyleChanged, refreshBrowsers, [refreshBrowsers] { PulseBrowserRefresh::updateIcon(refreshBrowsers); });
 	guideButtons->addWidget(refreshBrowsers);
 	showHead->addWidget(contributorGuides);
@@ -2174,7 +2258,7 @@ void OBSBasic::InitPulseWeaverShell()
 	// The native controller remains authoritative for saved stages and API
 	// commands. Operators choose through a focused grid of stage cards.
 	pulseStageSelector->hide();
-	auto *stageChoice = new QPushButton("Choose a stage", stageBar);
+	auto *stageChoice = new PulseStageChoice("Choose a stage", stageBar);
 	stageChoice->setObjectName("PulseWeaverStageChoice");
 	stageChoice->setMinimumSize(180, 34);
 	stageChoice->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
@@ -2183,14 +2267,25 @@ void OBSBasic::InitPulseWeaverShell()
 	stageChoice->setCursor(Qt::PointingHandCursor);
 	stageBar->addWidget(stageChoice, 1);
 	const QPointer<QComboBox> stageController = pulseStageSelector;
-	auto syncStageChoice = [stageController, stageChoice] {
+	auto syncStageChoice = [this, stageController, stageChoice] {
 		if(!stageController) return;
 		const QJsonObject stage = QJsonDocument::fromJson(stageController->currentData().toString().toUtf8()).object();
 		const QString name = stage.value("name").toString(stageController->currentText());
-		stageChoice->setText((name.isEmpty() ? QString("Choose a stage") : name) + "  ▾");
-		stageChoice->setToolTip(name.isEmpty() ? "Open saved stage cards" : name + " · Open saved stage cards");
-		stageChoice->setAccessibleDescription("Current stage: " + name + ". Open the stage cards to choose another.");
+		QString look = property("pulseWeaverActiveLookName").toString();
+		if (name.isEmpty() || property("pulseWeaverActiveLookStage").toString() != name)
+			look.clear();
+		const QString prefix = name + " · ";
+		if (look.startsWith(prefix))
+			look.remove(0, prefix.size());
+		const QString title = name.isEmpty() ? QString("Choose a stage") : look.isEmpty() ? name : name + " · " + look;
+		stageChoice->setTitle(name.isEmpty() ? QString("Choose a stage") : name, look);
+		stageChoice->setToolTip(title + "\nOpen saved stage cards");
+		stageChoice->setAccessibleDescription(title + ". Open the stage cards to choose another Stage.");
 	};
+	new PulseOperatorProperties(this, stageChoice, [syncStageChoice](const QByteArray &name) {
+		if (name == "pulseWeaverActiveLookName")
+			syncStageChoice();
+	});
 	connect(pulseStageSelector, &QComboBox::currentIndexChanged, stageChoice, [syncStageChoice](int) {syncStageChoice();});
 	connect(pulseStageSelector->model(), &QAbstractItemModel::dataChanged, stageChoice, [syncStageChoice] {syncStageChoice();});
 	connect(pulseStageSelector->model(), &QAbstractItemModel::rowsInserted, stageChoice, [syncStageChoice] {syncStageChoice();});
@@ -3818,7 +3913,7 @@ void OBSBasic::InitPulseWeaverShell()
 			"Could not save the active profile. Check its folder permissions.");
 	});
 
-	auto *systemSection = section("Automation and app", "Keep Lumia connection, appearance, updates and recovery discoverable from the same settings workspace.");
+	auto *systemSection = section("Automation and app", "Manage the Lumia connection, updates and recovery.");
 	auto *apiCard = card(systemSection, "Local automation API", "Lumia connects to this port on this PC. Changing it requires restarting Pulse Weaver and matching the port in Lumia.");
 	char apiPathBuffer[512] = {};
 	const QString apiPath = GetAppConfigPath(apiPathBuffer, sizeof(apiPathBuffer), "obs-studio/plugin_config/pulse-weaver-core/pulse-weaver.ini") > 0 ?
@@ -3841,21 +3936,6 @@ void OBSBasic::InitPulseWeaverShell()
 		portStatus->setText(settings.status() == QSettings::NoError ?
 			"Saved. Restart Pulse Weaver and set the same port in Lumia." : "Could not save this port.");
 	});
-	auto *appearanceCard = card(systemSection, "Appearance", "Choose a Pulse Weaver theme. This changes the interface immediately and is remembered with your settings.");
-	auto *themeRow = new QHBoxLayout;
-	appearanceCard->addLayout(themeRow);
-	for (const auto &[label, id] : std::vector<std::pair<QString, QString>>{{"Backstage", "com.pulseweaver.Studio"},
-		{"Marquee", "com.pulseweaver.Marquee"}, {"Electric", "com.pulseweaver.Electric"}}) {
-		auto *choice = new QPushButton(label);
-		choice->setMinimumHeight(42);
-		themeRow->addWidget(choice);
-		connect(choice, &QPushButton::clicked, this, [id] {
-			if (App()->SetTheme(id)) {
-				config_set_string(App()->GetUserConfig(), "Appearance", "Theme", id.toUtf8().constData());
-				config_save_safe(App()->GetUserConfig(), "tmp", nullptr);
-			}
-		});
-	}
 	auto *recoveryCard = card(systemSection, "Updates and recovery", "Try alpha or unstable builds through Studio → Updates. Every packaged installer creates a verified backup before replacement.");
 	action(recoveryCard, "Open updates and recovery", "Use the Studio menu to check channels or restore a backup", [studioMenuButton] { studioMenuButton->showMenu(); });
 	action(recoveryCard, "Advanced OBS options", "Open the remaining OBS engine settings", [this] { on_action_Settings_triggered(); });

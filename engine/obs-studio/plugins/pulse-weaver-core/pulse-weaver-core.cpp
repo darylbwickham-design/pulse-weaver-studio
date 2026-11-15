@@ -4789,9 +4789,10 @@ private:
 			{"recording", mainWindow && mainWindow->property("pulseWeaverRecordingActive").toBool()},
 			{"activeStage", stageSelector ? pulseLumiaStageName(stageSelector, stageSelector->currentIndex()) : QString()},
 			{"activeStageIndex", stageSelector ? stageSelector->currentIndex() : -1},
-			{"stages", stages}, {"destinations", destinations}, {"status", status}};
+			{"stages", stages}, {"destinations", destinations}, {"status", status}, {"activeLook", QJsonValue::Null}};
 		if (motion) {
 			const QJsonObject motionState = motion->stateJson();
+			state.insert("activeLook", motionState.value("activeLook"));
 			state.insert("motionActions", motionState.value("actions"));
 			state.insert("motion", motionState);
 		}
@@ -4940,6 +4941,10 @@ private:
 					else if (method == "POST" && path == "/api/v1/lumia/source") {
 						const QJsonObject result = lumiaBridge->operateSource(query);
 						respond(socket, result.value("ok").toBool() ? 200 : 400, result);
+					}
+					else if (method == "POST" && path == "/api/v1/lumia/keypad/result") {
+						const bool ok = keypadCapable && lumiaBridge->acknowledgeKeypad(query);
+						respond(socket, ok ? 200 : 400, QJsonObject{{"ok", ok}});
 					}
 					else if (method == "POST" && (path == "/api/v1/lumia/destination/start" || path == "/api/v1/lumia/destination/stop")) {
 						QWidget *window = static_cast<QWidget *>(obs_frontend_get_main_window());

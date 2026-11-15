@@ -3,6 +3,7 @@
 #include <obs.hpp>
 #include <QByteArray>
 #include <QIcon>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointer>
@@ -19,7 +20,7 @@
 
 namespace PulseBrowserRefresh {
 
-inline constexpr const char *ToolTip = "Refresh all browser sources on every canvas, including inactive sources";
+inline constexpr const char *ToolTip = "Refresh all browser sources on every canvas. Right-click to refresh only the current Stage.";
 
 inline void updateIcon(QToolButton *button)
 {
@@ -59,31 +60,60 @@ inline void updateIcon(QToolButton *button)
 	button->setIconSize(QSize(24, 24));
 }
 
+struct BrowserSourceSnapshot {
+	std::vector<OBSSource> sources;
+	QSet<QByteArray> uuids;
+	QSet<obs_source_t *> pointers;
+
+	void include(obs_source_t *source)
+	{
+		const char *id = source ? obs_source_get_unversioned_id(source) : nullptr;
+		if (!source || obs_source_removed(source) || !id || std::strcmp(id, "browser_source") != 0)
+			return;
+		const QByteArray uuid(obs_source_get_uuid(source));
+		if (pointers.contains(source) || (!uuid.isEmpty() && uuids.contains(uuid)))
+			return;
+		OBSSource reference(source);
+		if (reference) {
+			pointers.insert(source);
+			if (!uuid.isEmpty())
+				uuids.insert(uuid);
+			sources.emplace_back(std::move(reference));
+		}
+	}
+};
+
 inline std::vector<OBSSource> collectSources()
 {
-	struct Snapshot {
-		std::vector<OBSSource> sources;
-		QSet<QByteArray> uuids;
-		QSet<obs_source_t *> pointers;
-	} snapshot;
+	BrowserSourceSnapshot snapshot;
 	// This registry is global across canvases, unlike canvas/scene enumeration.
 	// Snapshot strong references under its lock; refresh only after it is released.
 	obs_enum_all_sources([](void *opaque, obs_source_t *source) {
-		auto &snapshot = *static_cast<Snapshot *>(opaque);
-		const char *id = source ? obs_source_get_unversioned_id(source) : nullptr;
-		if (!source || obs_source_removed(source) || !id || std::strcmp(id, "browser_source") != 0)
-			return true;
-		const QByteArray uuid(obs_source_get_uuid(source));
-		if (snapshot.pointers.contains(source) || (!uuid.isEmpty() && snapshot.uuids.contains(uuid)))
-			return true;
-		OBSSource reference(source);
-		if (reference) {
-			snapshot.pointers.insert(source);
-			if (!uuid.isEmpty()) snapshot.uuids.insert(uuid);
-			snapshot.sources.emplace_back(std::move(reference));
-		}
+		static_cast<BrowserSourceSnapshot *>(opaque)->include(source);
 		return true;
 	}, &snapshot);
+	return std::move(snapshot.sources);
+}
+
+inline std::vector<OBSSource> collectStageSources(std::vector<OBSSource> pending)
+{
+	BrowserSourceSnapshot snapshot;
+	QSet<obs_source_t *> visited;
+	for (size_t index = 0; index < pending.size(); ++index) {
+		const OBSSource source = pending[index];
+		if (!source || obs_source_removed(source) || visited.contains(source))
+			continue;
+		visited.insert(source);
+		snapshot.include(source);
+		// Queue child references while enumerating one container at a time.
+		// This avoids holding scene locks across group and nested-scene traversal.
+		if (obs_scene_t *scene = obs_group_or_scene_from_source(source)) {
+			obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) {
+				static_cast<std::vector<OBSSource> *>(opaque)->emplace_back(obs_sceneitem_get_source(item));
+				return true;
+			}, &pending);
+		}
+	}
 	return std::move(snapshot.sources);
 }
 
@@ -124,16 +154,17 @@ class Batch final : public QObject {
 	}
 
 public:
-	Batch(QObject *owner, std::function<void(Summary)> finished) : QObject(owner), completed(std::move(finished))
+	Batch(QObject *owner, std::function<std::vector<OBSSource>()> collect, std::function<void(Summary)> finished)
+		: QObject(owner), completed(std::move(finished))
 	{
-		QTimer::singleShot(0, this, [this] {
-			sources = collectSources();
+		QTimer::singleShot(0, this, [this, collect = std::move(collect)] {
+			sources = collect();
 			next();
 		});
 	}
 };
 
-inline void configure(QToolButton *button)
+inline void configure(QToolButton *button, std::function<std::vector<OBSSource>()> stageScenes)
 {
 	button->setObjectName("PulseWeaverRefreshBrowsers");
 	button->setFixedSize(32, 34);
@@ -144,18 +175,19 @@ inline void configure(QToolButton *button)
 	button->setFocusPolicy(Qt::StrongFocus);
 	button->setAutoRepeat(false);
 	updateIcon(button);
-	QObject::connect(button, &QToolButton::clicked, button, [button] {
+	auto refresh = [button](std::function<std::vector<OBSSource>()> collect, bool currentStage) {
 		if (button->property("pulseBrowserRefreshBusy").toBool()) return;
 		button->setProperty("pulseBrowserRefreshBusy", true);
 		button->setEnabled(false);
 		button->setToolTip("Requesting browser refreshes…");
-		new Batch(button, [button](Summary summary) {
+		new Batch(button, std::move(collect), [button, currentStage](Summary summary) {
 			const QString message = summary.requested ?
-				QString("Refresh requested for %1 browser source%2%3.").arg(summary.requested)
+				QString("Refresh requested for %1 browser source%2%3%4.").arg(summary.requested)
 					.arg(summary.requested == 1 ? "" : "s")
+					.arg(currentStage ? " in the current Stage" : "")
 					.arg(summary.unavailable ? QString("; %1 unavailable").arg(summary.unavailable) : QString()) :
 				summary.unavailable ? QString("%1 browser sources are unavailable.").arg(summary.unavailable) :
-				QString("No browser sources found.");
+				currentStage ? QString("No browser sources found in the current Stage.") : QString("No browser sources found.");
 			button->setToolTip(message + "\n" + ToolTip);
 			button->setAccessibleDescription(message);
 			QToolTip::showText(button->mapToGlobal(QPoint(button->width() / 2, button->height())), message, button, QRect(), 3000);
@@ -165,6 +197,19 @@ inline void configure(QToolButton *button)
 				button->setEnabled(true);
 			});
 		});
+	};
+	QObject::connect(button, &QToolButton::clicked, button, [refresh] { refresh(collectSources, false); });
+
+	auto *menu = new QMenu(button);
+	auto *refreshStage = menu->addAction("Refresh current Stage");
+	refreshStage->setObjectName("PulseWeaverRefreshStageBrowsers");
+	QObject::connect(refreshStage, &QAction::triggered, button, [refresh, stageScenes = std::move(stageScenes)] {
+		refresh([scenes = stageScenes()]() mutable { return collectStageSources(std::move(scenes)); }, true);
+	});
+	button->setContextMenuPolicy(Qt::CustomContextMenu);
+	QObject::connect(button, &QToolButton::customContextMenuRequested, menu, [button, menu](const QPoint &position) {
+		if (button->isEnabled())
+			menu->popup(button->mapToGlobal(position));
 	});
 }
 

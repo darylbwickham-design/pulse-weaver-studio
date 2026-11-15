@@ -165,6 +165,8 @@ class PulseWeaverPlugin extends Plugin {
     if (!this.state) return;
     const updates = ['twitch','kick','youtube'].map(platform => this.setVariable(`${platform}_status`, this.outputStatus(platform).toUpperCase()));
     updates.push(this.setVariable('active_stage', this.state.activeStage || ''));
+    updates.push(this.setVariable('active_look', this.state.activeLook?.name || ''));
+    updates.push(this.setVariable('active_look_id', this.state.activeLook?.id || ''));
     updates.push(this.setVariable('previous_stage', this.previousPresentation?.stage || ''));
     updates.push(this.setVariable('previous_look', this.previousPresentation?.look?.name || ''));
     updates.push(this.setVariable('motion_status', String(this.state.motion?.execution?.state || (this.state.motion?.active ? 'running' : 'ready')).toUpperCase()));
@@ -227,14 +229,25 @@ class PulseWeaverPlugin extends Plugin {
           payload.buttonName.length > 32 || !Number.isSafeInteger(payload.sequence) || payload.sequence <= this.lastKeypadSequence) return;
       if (!(this.manifest.config.alerts || []).some(item => item.key === alert)) return;
       this.lastKeypadSequence = payload.sequence;
-      const accepted = await this.lumia.triggerAlert({ alert, showInEventList: false,
-        extraSettings: { buttonIndex: slot, buttonName: payload.buttonName, message: payload.buttonName } });
-      if (current()) await this.setVariable('last_result', accepted === false ?
-        `Keypad ${String(slot).padStart(2, '0')} was not run. Check that its Lumia alert is enabled.` :
-        `Keypad ${String(slot).padStart(2, '0')}: ${payload.buttonName}`);
+      const title = `Keypad ${String(slot).padStart(2, '0')}`;
+      let result = 'accepted';
+      try {
+        const accepted = await this.lumia.triggerAlert({ alert, showInEventList: false,
+          extraSettings: { buttonIndex: slot, buttonName: payload.buttonName, message: payload.buttonName } });
+        if (accepted === false) result = 'rejected';
+      } catch {
+        result = 'error';
+      }
+      if (!current()) return;
+      if (this.state.keypadFeedbackApi === 1)
+        void this.request(`/keypad/result?sequence=${payload.sequence}&result=${result}`, 'POST').catch(() => {});
+      await this.setVariable('last_result', result === 'accepted' ? `${title}: ${payload.buttonName}` :
+        result === 'rejected' ? `${title} was declined. Check that its Lumia alert is enabled.` :
+        `${title} could not trigger its Lumia alert.`);
       return;
     }
     if (alert === 'stage_changed') this.state.activeStage = payload.stage || '';
+    if (alert === 'active_look_changed') this.state.activeLook = payload.activeLook || null;
     if (alert === 'motion_catalogue_changed') {
       const state = await this.request('/state');
       if (!current()) return;

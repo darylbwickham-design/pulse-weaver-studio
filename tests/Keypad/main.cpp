@@ -42,16 +42,38 @@ int main(int argc,char **argv){
 	check(visibleEmpty==1,"fresh keypad shows one add button instead of 15 empty placeholders");
 	check(obs_startup("en-US",nullptr,nullptr),"isolated event bridge startup");
 	{
-		PulseLumiaBridge bridge(nullptr,[]{return QJsonObject{};});
-		check(!bridge.pressKeypad(1,"Gameplay"),"offline presses are rejected rather than queued");
+		QString appliedLook;
+		bool moving = false;
+		PulseLumiaBridge bridge(nullptr,[&] {
+			return QJsonObject{{"activeLook", QJsonObject{{"id", appliedLook}}},
+				{"motion", QJsonObject{{"active", moving}}}};
+		});
+		check(!bridge.pressKeypad(1,"Gameplay",{}),"offline presses are rejected rather than queued");
 		QTcpServer server;check(server.listen(QHostAddress::LocalHost,0),"isolated loopback server");
 		QTcpSocket client;client.connectToHost(QHostAddress::LocalHost,server.serverPort());check(client.waitForConnected(1000),"local subscriber connects");check(server.waitForNewConnection(1000),"local subscriber accepted");auto *peer=server.nextPendingConnection();bridge.subscribe(peer);events();client.readAll();
-		check(!bridge.pressKeypad(1,"Gameplay"),"older plugins without keypad capability are rejected");
+		check(!bridge.pressKeypad(1,"Gameplay",{}),"older plugins without keypad capability are rejected");
 		peer->setProperty("pulseLumiaKeypad",true);
-		check(!bridge.pressKeypad(0,"Bad")&&!bridge.pressKeypad(16,"Bad")&&!bridge.pressKeypad(1,"  "),"invalid button requests are rejected");
-		check(bridge.pressKeypad(1,"Gameplay"),"one explicit press reaches a capable subscriber");events();const auto data=client.readAll();
+		check(!bridge.pressKeypad(0,"Bad",{})&&!bridge.pressKeypad(16,"Bad",{})&&!bridge.pressKeypad(1,"  ",{}),"invalid button requests are rejected");
+		check(bridge.pressKeypad(1,"Gameplay",{}),"one explicit press reaches a capable subscriber");events();const auto data=client.readAll();
 		check(data.contains("\"event\":\"keypad_01\"")&&data.contains("\"buttonName\":\"Gameplay\"")&&data.contains("\"buttonIndex\":1"),"Lumia receives the exact numbered alert and button label");
-		peer->disconnectFromHost();events();check(!bridge.pressKeypad(1,"Gameplay"),"disconnect stops delivery immediately");
+		check(!bridge.pressKeypad(2, "Facecam", "gameplay"), "required Look blocks a press when no Look is applied");
+		appliedLook = "printer";
+		check(!bridge.pressKeypad(2, "Facecam", "gameplay"), "required Look blocks a different Look");
+		appliedLook = "gameplay";
+		moving = true;
+		check(!bridge.pressKeypad(2, "Facecam", "gameplay"), "required Look blocks a press during motion");
+		moving = false;
+		check(bridge.pressKeypad(2, "Facecam", "gameplay"), "matching applied Look enables its assigned keypad button");
+		events();
+		const auto frame = client.readAll();
+		const auto event = QJsonDocument::fromJson(frame.mid(6).trimmed()).object();
+		check(event.value("event").toString() == "keypad_02", "only the allowed Keypad 02 press reaches Lumia");
+		QUrlQuery confirmation;
+		confirmation.addQueryItem("sequence", QString::number(event.value("sequence").toInteger()));
+		confirmation.addQueryItem("result", "accepted");
+		check(bridge.acknowledgeKeypad(confirmation), "accepts a confirmation for the latest press");
+		check(!bridge.acknowledgeKeypad(confirmation), "ignores a duplicate confirmation");
+		peer->disconnectFromHost();events();check(!bridge.pressKeypad(1,"Gameplay",{}),"disconnect stops delivery immediately");
 	}
 	obs_shutdown();std::printf("PASS: %d keypad sizing, persistence, edit safety, compatibility and event-delivery checks.\n",checks);
 }

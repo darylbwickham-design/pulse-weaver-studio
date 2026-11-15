@@ -16,6 +16,7 @@
 #include <functional>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 class QCheckBox;
@@ -25,7 +26,9 @@ class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QSpinBox;
+class QToolButton;
 class QTreeWidget;
+class QTreeWidgetItem;
 class QSlider;
 class QLayout;
 class PulseMotionCanvas;
@@ -98,6 +101,7 @@ private:
 		QString previousStage;
 		QString actionStage;
 		QString phase;
+		QJsonObject lookScope;
 		std::vector<Track> tracks;
 		std::vector<CoveragePair> coveragePairs;
 		QElapsedTimer clock;
@@ -117,6 +121,10 @@ private:
 	QJsonObject originalScenes;
 	QJsonObject storageRoot;
 	bool originalStoreValid = true;
+	QJsonObject appliedLookRecord;
+	std::optional<QJsonObject> pendingAppliedLook;
+	QJsonValue publishedAppliedLook{QJsonValue::Null};
+	QTimer lookValidationTimer;
 	std::unique_ptr<Execution> active;
 	std::vector<Track> lastRestore;
 	QTimer animationTimer;
@@ -164,7 +172,11 @@ private:
 	QHash<QString, ParkedDraft> pairedPreviews;
 	QJsonArray loadedTargets;
 	void activateDraft(const QString &container);
-	void includeDraftItem(qint64 originalId);
+	bool includeDraftItem(qint64 originalId);
+	enum class LookVisibility { LeaveAsIs, Show, Hide };
+	void setDraftVisibility(qint64 originalId, LookVisibility visibility);
+	QToolButton *createVisibilityButton(const QTreeWidgetItem *row, QWidget *parent);
+	void updateVisibilityButton(QToolButton *button, const QTreeWidgetItem *row) const;
 	void addDraftSource(QString selected = {});
 	void adaptPortrait();
 	void swapFocus();
@@ -216,6 +228,11 @@ private:
 
 	void load();
 	bool save();
+	QJsonObject currentLookScope() const;
+	QJsonValue activeLookJson() const;
+	void setAppliedLook(QJsonObject record);
+	void validateAppliedLook();
+	static void saveAppliedLook(obs_data_t *data, bool saving, void *context);
 	bool preserveOriginals(const Execution &execution, QString &error);
 	QJsonObject actionByIdentity(const QString &idOrName) const;
 	void setStatus(const QString &text, bool error = false);
@@ -259,7 +276,7 @@ private:
 	void tick();
 	void finishMove();
 	void beginRestore(const QString &reason, bool operatorRequested = false);
-	void complete(bool ok, const QString &message);
+	void complete(bool ok, const QString &message, bool reachedLayout = false);
 	void cancelForManualStageChange();
 	int stageReadinessDelay(const QJsonObject &action) const;
 	QString activeStageName() const;

@@ -15,9 +15,10 @@ function load(lumia,port,overrides={}) {
  vm.runInNewContext(fs.readFileSync(path.join(root,'main.js'),'utf8'),sandbox,{filename:'main.js'});
  return new sandbox.module.exports(manifest,{});
 }
-async function fixture(lumiaOverrides={}) {
+async function fixture(lumiaOverrides={},stateOverrides={}) {
  const alerts=[],variables=new Map(),options=[],requests=[],toasts=[],sockets=new Set();
  const state={operatorApi:2,activeStage:'Starting',stages:['Starting','Gaming'],destinations:{twitch:'horizontal',kick:'horizontal',youtube:'dual'},outputs:{},motion:{active:false,status:'READY',execution:null},motionActions:[{id:'motion-1',name:'Camera close-up',stage:'Gaming'}],sources:[{id:'mic',name:'Microphone',audio:true},{id:'media',name:'Clip',media:true},{id:'scene',name:'Main',items:[{itemId:'22',name:'Camera',visible:true}]}]};
+ Object.assign(state,stateOverrides);
  let subscriber; const outputTimers = new Map();
  const emit = event => { if(event.platform)state.outputs[event.output || event.platform]=event; subscriber?.write('data: '+JSON.stringify({kind:'event',...event})+'\n\n'); };
  const server = http.createServer((req,res)=>{
@@ -27,6 +28,10 @@ async function fixture(lumiaOverrides={}) {
   if(url.pathname.endsWith('/events')){ subscriber=res;res.writeHead(200,{'Content-Type':'text/event-stream'});const frame='data: '+JSON.stringify({kind:'snapshot',state})+'\n\n';res.write(frame.slice(0,23));setTimeout(()=>res.write(frame.slice(23)),5);return; }
   res.setHeader('Content-Type','application/json');
   if(url.pathname.endsWith('/state'))return res.end(JSON.stringify(state));
+  if(url.pathname.endsWith('/keypad/result')){
+   assert.equal(req.method,'POST');assert.equal(state.keypadFeedbackApi,1);
+   return res.end(JSON.stringify({ok:true}));
+  }
   if(url.pathname.endsWith('/end-stream')) {
    assert.equal(state.live, false, 'Legacy cleanup must never click a live/stale toggle');
    return res.end(JSON.stringify({ok:true}));
@@ -54,7 +59,7 @@ async function fixture(lumiaOverrides={}) {
 }
 test('Manifest includes the P logo, operating controls and native alerts; no editing or raw action',()=>{
  assert.equal(manifest.icon,'./assets/icon.png');assert.ok(fs.statSync(path.join(root,manifest.icon)).size>1000);
- assert.equal(manifest.id,'pulseweavermotionpreview');assert.equal(manifest.name,'PulseWeaver Stream Studio');assert.equal(manifest.version,'1.5.2');
+ assert.equal(manifest.id,'pulseweavermotionpreview');assert.equal(manifest.name,'PulseWeaver Stream Studio');assert.equal(manifest.version,'1.5.3');
  assert.equal(manifest.config.settings.find(setting=>setting.key==='port').defaultValue,18755);
  assert.equal(manifest.config.actions.length,17);assert.equal(manifest.config.alerts.length,51);
  assert.ok(manifest.config.actions.some(action=>action.type==='run_motion' && action.fields[0].dynamicOptions));
@@ -152,11 +157,25 @@ test('Keypad reconnect accepts the new stream without replay, and unload blocks 
 });
 
 test('A disabled Lumia keypad alert reports rejection and is not retried',async()=>{
- let calls=0;const f=await fixture({triggerAlert:async()=>{calls++;return false;}});try{
+ let calls=0;const f=await fixture({triggerAlert:async()=>{calls++;return false;}},{keypadFeedbackApi:1});try{
   f.emit({event:'keypad_03',buttonIndex:3,buttonName:'Newsroom',sequence:1});
-  await until(()=>f.variables.get('last_result')?.includes('not run'));
+  await until(()=>f.variables.get('last_result')?.includes('declined') &&
+   f.requests.includes('/api/v1/lumia/keypad/result?sequence=1&result=rejected'));
   assert.equal(calls,1);assert.match(f.variables.get('last_result'),/Keypad 03/);
   f.emit({event:'keypad_03',buttonIndex:3,buttonName:'Newsroom',sequence:1});await sleep(30);assert.equal(calls,1);
+ }finally{await f.close();}
+});
+
+test('Applied Look metadata and keypad acknowledgement use the Studio connection',async()=>{
+ const activeLook={id:'look-1',name:'Gameplay',stage:'Gaming'};
+ const f=await fixture({}, {activeStage:'Gaming',activeLook,keypadFeedbackApi:1});try{
+  assert.equal(f.variables.get('active_look'),'Gameplay');
+  assert.equal(f.variables.get('active_look_id'),'look-1');
+  f.emit({event:'active_look_changed',activeLook:null});
+  await until(()=>f.variables.get('active_look')==='' && f.variables.get('active_look_id')==='');
+  f.emit({event:'keypad_02',buttonIndex:2,buttonName:'Camera',sequence:44});
+  await until(()=>f.requests.includes('/api/v1/lumia/keypad/result?sequence=44&result=accepted'));
+  assert.equal(f.alerts.length,1);
  }finally{await f.close();}
 });
 

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.5.2',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.5.3',
     [string]$OutputDirectory,
     [string]$ConfigPath
 )

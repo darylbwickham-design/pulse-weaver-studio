@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -58,14 +59,15 @@ inline QIcon icon(const QString &name, const QColor &color = QColor("#76d7ed")) 
 	else {for(int y=0;y<3;++y)for(int x=0;x<3;++x)p.drawRoundedRect(QRectF(3+x*7,3+y*7,4,4),1,1);}
 	return QIcon(pixels);
 }
-struct Button { QString name, glyph = "Camera", image; bool assigned() const { return !name.isEmpty(); } };
+struct Button { QString name, glyph = "Camera", image, requiredLook; bool assigned() const { return !name.isEmpty(); } };
 inline QString imagePath(const QString &settingsFile, const QString &relative) {
 	if (!relative.startsWith("keypad-icons/") || relative.contains("..") || QDir::isAbsolutePath(relative)) return {};
 	return QFileInfo(settingsFile).dir().filePath(relative);
 }
 inline Button load(QSettings &settings, int slot) {
 	settings.beginGroup(QString("keypad/button%1").arg(slot));
-	Button button{cleanName(settings.value("name").toString()), settings.value("glyph", "Camera").toString(), settings.value("image").toString()};
+	Button button{cleanName(settings.value("name").toString()), settings.value("glyph", "Camera").toString(),
+		settings.value("image").toString(), settings.value("requiredLook").toString()};
 	settings.endGroup();
 	if (!iconNames().contains(button.glyph)) button.glyph = "Camera";
 	if (imagePath(settings.fileName(), button.image).isEmpty()) button.image.clear();
@@ -74,6 +76,8 @@ inline Button load(QSettings &settings, int slot) {
 inline void save(QSettings &settings, int slot, const Button &button) {
 	settings.beginGroup(QString("keypad/button%1").arg(slot));
 	settings.setValue("name", cleanName(button.name));settings.setValue("glyph", button.glyph);settings.setValue("image", button.image);
+	if (button.requiredLook.isEmpty()) settings.remove("requiredLook");
+	else settings.setValue("requiredLook", button.requiredLook);
 	settings.endGroup();settings.sync();
 }
 inline QImage readIcon(const QString &file) {
@@ -143,6 +147,7 @@ class Panel final : public QWidget {
 			auto *key=keys[size_t(slot)];const auto &definition=definitions[size_t(slot)];
 			key->assigned=definition.assigned();key->edit=editing;key->setFixedSize(side,side);
 			key->setProperty("pulseKeypadConfigured",definition.assigned());key->setProperty("pulseKeypadName",definition.name);
+			key->setProperty("pulseKeypadRequiredLook", definition.requiredLook);
 			key->label=definition.assigned()?definition.name:"Add button";
 			key->setText(key->label);key->setAccessibleName(definition.assigned()?(editing?"Edit ":"Trigger ")+definition.name+" · "+alertTitle(slot+1):"Add Lumia keypad button");
 			key->setToolTip(definition.assigned()?definition.name+"\nLumia: "+alertTitle(slot+1):"Add a named button and choose its icon");
@@ -159,6 +164,28 @@ class Panel final : public QWidget {
 		auto *layout=new QVBoxLayout(&dialog);layout->addWidget(new QLabel(alertTitle(slot+1)+" · PulseWeaver Stream Studio"));
 		auto *name=new QLineEdit(value.name);name->setMaxLength(32);name->setPlaceholderText("Button name, e.g. Gameplay");name->setAccessibleName("Button name");layout->addWidget(name);
 		auto *help=new QLabel("In Lumia, find this numbered alert and add the scene change or other reactions you want. Renaming this button keeps the same alert.");help->setWordWrap(true);layout->addWidget(help);
+		auto *look = new QComboBox(&dialog);
+		look->setAccessibleName("Required Look");
+		look->setToolTip("Only send this keypad alert when the selected saved Look is applied.");
+		look->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		look->setMinimumContentsLength(18);
+		look->addItem("Any Look", QString());
+		for (const auto &option : property("pulseKeypadLookOptions").toList()) {
+			const auto entry = option.toMap();
+			if (entry.value("kind").toString() != "layout") continue;
+			const auto id = entry.value("id").toString();
+			const auto title = entry.value("name").toString();
+			if (!id.isEmpty() && !title.isEmpty()) look->addItem(title, id);
+		}
+		if (!value.requiredLook.isEmpty() && look->findData(value.requiredLook) < 0)
+			look->addItem("Saved Look unavailable", value.requiredLook);
+		look->setCurrentIndex(qMax(0, look->findData(value.requiredLook)));
+		auto *lookRow = new QHBoxLayout;
+		auto *lookLabel = new QLabel("Required Look", &dialog);
+		lookLabel->setBuddy(look);
+		lookRow->addWidget(lookLabel);
+		lookRow->addWidget(look, 1);
+		layout->addLayout(lookRow);
 		auto *choices=new QGridLayout;auto *group=new QButtonGroup(&dialog);group->setExclusive(true);layout->addLayout(choices);
 		int index=0;
 		for(const auto &glyph:iconNames()){
@@ -175,11 +202,12 @@ class Panel final : public QWidget {
 		});
 		auto *buttons=new QDialogButtonBox(QDialogButtonBox::Save|QDialogButtonBox::Cancel);layout->addWidget(buttons);
 		if(value.assigned()){
-			auto *clear=buttons->addButton("Clear button",QDialogButtonBox::ResetRole);connect(clear,&QPushButton::clicked,&dialog,[&]{name->clear();value={};imported={};});
+			auto *clear=buttons->addButton("Clear button",QDialogButtonBox::ResetRole);connect(clear,&QPushButton::clicked,&dialog,[&]{name->clear();look->setCurrentIndex(0);value={};imported={};});
 		}
 		connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
 		connect(buttons,&QDialogButtonBox::accepted,&dialog,[&]{
 			value.name=cleanName(name->text());
+			value.requiredLook = value.assigned() ? look->currentData().toString() : QString();
 			if(value.name.isEmpty()&&!definitions[size_t(slot)].assigned()){error->setText("Give this button a name.");return;}
 			if(!imported.isNull() && value.assigned()){
 				value.image="keypad-icons/"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".png";

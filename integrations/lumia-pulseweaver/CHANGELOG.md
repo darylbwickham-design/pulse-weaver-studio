@@ -1,3 +1,8 @@
+# 1.5.3
+
+- Exposes the applied Look name and ID when connected to Pulse Weaver Studio 2.0.4 or later.
+- Reports whether Lumia accepted the keypad alert back to Studio when supported.
+
 # 1.5.2
 
 - Clarified that the complete printable manual opens from Pulse Weaver Studio's Help menu or About dialog. The Lumia plugin contains no manual action or manual files.
